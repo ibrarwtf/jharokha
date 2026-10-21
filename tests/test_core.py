@@ -63,7 +63,8 @@ def test_find_exact_fuzzy_regex_and_all():
     assert text.find(lines, "0rder ABl2")[0].text == "Order AB12"  # OCR lookalikes folded
     assert text.find(lines, "succeded")[0].text == "succeeded"  # fuzzy fallback
     assert [m.ref for m in text.find(lines, "order", all=True)] == ["L1", "L2"]
-    assert text.find(lines, r"AB1\d", regex=True, all=True)[1].ref == "L2"
+    rx = text.find(lines, r"AB1\d", regex=True, all=True)
+    assert rx[1].ref == "L2" and rx[0].text == "AB12" and rx[0].box == (52, 40, 28, 12)
     assert text.find(lines, "missing") == []
 
 

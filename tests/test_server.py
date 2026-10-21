@@ -39,7 +39,8 @@ async def test_status(source):
     s = json.loads(text(r))
     assert s["found"] and s["state"] == "normal" and s["client_size"] == [640, 400]
     source.minimized = True
-    assert json.loads(text(await call(source, "jharokha_status")))["state"] == "minimized"
+    s = json.loads(text(await call(source, "jharokha_status")))
+    assert s["found"] and s["state"] == "minimized"
     source.present = False
     assert json.loads(text(await call(source, "jharokha_status")))["state"] == "window_not_found"
 

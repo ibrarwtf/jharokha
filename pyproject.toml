@@ -1,6 +1,6 @@
 [project]
 name = "jharokha"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local MCP server that reads a Windows remote-desktop window as text. Looks; does not touch."
 readme = "README.md"
 license = "MIT"

@@ -70,16 +70,17 @@ def build_server(source: Source) -> MCPServer:
         window_title (a substring) when more than one session is open."""
         info: dict[str, Any] = {"found": False, "state": "window_not_found"}
         try:
-            w = screen.window(window_title)
-            info = {
-                "found": True,
-                "title": w.title,
-                "process": w.process,
-                "state": "normal",
-                "client_size": list(w.client_size),
-                "dpi_scale": w.dpi_scale,
-                "foreground": w.foreground,
-            }
+            w = screen.source.window(window_title)
+            if w is not None:
+                info = {
+                    "found": True,
+                    "title": w.title,
+                    "process": w.process,
+                    "state": "normal",
+                    "client_size": list(w.client_size),
+                    "dpi_scale": w.dpi_scale,
+                    "foreground": w.foreground,
+                }
             read(window_title, None)
         except ScreenError as e:
             info["state"] = e.code
