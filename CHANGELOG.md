@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.1
+
+- Panels: a chat thread with your own messages right-aligned is one panel again, not split into a left and a right column. Two sides count as columns only when a third of the smaller side's lines have a line beside them. On a live Teams chat the thread went from three panels to one; synthetic eval scores are unchanged.
+
 ## v0.7.0
 
 - Layout variants: tables named `app@variant` with `anchor_at = [x, y]` are one app measured several ways, such as once per zoom level; a region like `teams.thread` uses the variant whose anchor text is nearest to where it was measured. `jharokha_layout` names the variant in use. On a live session, eight zoom levels were each matched to their own variant.

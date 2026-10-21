@@ -47,7 +47,8 @@ def panels(lines: list[Line], bounds: Box | None = None) -> list[tuple[Box, list
     h = heights[len(heights) // 2]
     extent = union(ln.box for ln in lines)
     # A toolbar or a label row has wide gaps too; only something taller is columns.
-    if extent[3] >= 3 * h and (cut := _cut(lines, 0, 3 * h)):
+    cut = _cut(lines, 0, 3 * h) if extent[3] >= 3 * h else None
+    if cut and _side_by_side(cut[0], cut[1]):
         a, b = _split(cell, 0, cut[2])
         return panels(cut[0], a) + panels(cut[1], b)
     if cut := _cut(lines, 1, 1.5 * h):
@@ -61,6 +62,18 @@ def panels(lines: list[Line], bounds: Box | None = None) -> list[tuple[Box, list
                 out.append((box, ls))
         return out
     return [(cell, list(lines))]
+
+
+def _side_by_side(a: list[Line], b: list[Line]) -> bool:
+    """Columns share rows: a third of the smaller side's lines have a line beside them on the
+    other side. A chat thread's own messages sit right-aligned but never beside the others,
+    so they stay one column."""
+    small, big = sorted((a, b), key=len)
+    beside = sum(
+        any(ln.box[1] < m.box[1] + m.box[3] and m.box[1] < ln.box[1] + ln.box[3] for m in big)
+        for ln in small
+    )
+    return beside * 3 >= len(small)
 
 
 def _split(cell: Box, axis: int, at: int) -> tuple[Box, Box]:
