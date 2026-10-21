@@ -105,3 +105,17 @@ def test_cache_ignores_cursor_sized_changes_only():
     assert cache.get(cursor, None) == []
     changed = render([("hello world", 10, 10)])
     assert cache.get(changed, None) is None
+
+
+def test_suspect_lines_and_applying_second_readings():
+    lines = lines_for([("Ticket T-IO 34 resolved", 0, 0), ("see you soon", 0, 20)])
+    assert text.suspect(lines[0]) and not text.suspect(lines[1])
+    assert text.agree("AB 12", "AB12") and not text.agree("AB12", "ABI2")
+    fixed = text.apply_verified(lines, {0: "Ticket T-1034 resolved", 1: "see you soon"})
+    assert fixed[0].text == "Ticket T-1034 resolved" and fixed[0].words == (
+        Word("Ticket T-1034 resolved", lines[0].box),
+    )
+    assert fixed[1] is lines[1]
+    out = text.format_concise(lines, alt={0: "Ticket T-1034 resolved", 1: "see you soon"})
+    assert "L0 [0,0] Ticket T-IO 34 resolved | verify: Ticket T-1034 resolved" in out
+    assert "L1 [0,20] see you soon\n" in out
