@@ -40,21 +40,25 @@ Real Windows 365 window, 1166x1181 client area:
 - Fake window (`terminal` screen, 900x600): capture 59 ms, OCR 51 ms, ~52 tokens concise. Windows OCR dropped a lone `0` and `\work>` on white-on-black Consolas 12 pt; use a `region` to zoom when a value matters.
 - Final check on the real window (69 text lines): `jharokha read` ~1066 tokens concise, `bench` OCR 198 ms, peak RSS 80 MB. Targets (< 300 ms, < 1.5k tokens, < 150 MB) met.
 
-### OCR accuracy (`uv run python tests/eval_ocr.py`)
+### Read accuracy (`uv run python tests/eval_ocr.py`)
 
-Character error rate on synthetic Consolas screens, dark and light backgrounds behave the same:
+Synthetic screens at the real client size: a Consolas terminal, a Segoe UI Teams-like chat (list beside thread), an Outlook-like mailbox (folders, list, reading pane) and lookalike-heavy IDs. CER is on the text in reading order, so it punishes misreads and panels read in the wrong order; `lines` is the share of lines read exactly, ignoring order.
 
-| screen | pt | 1.0x | 1.5x | 2.0x |
+| screen | px | CER 1.0x | CER 2.0x | lines exact |
 |---|---|---|---|---|
-| terminal | 11 / 14 / 18 | .115 / .088 / .026 | .080 / .067 / .040 | .080 / .026 / .000 |
-| chat | 11 / 14 / 18 | .167 / .160 / .024 | .143 / .000 / .000 | .143 / .018 / .018 |
-| table | 11 / 14 / 18 | .185 / .123 / .104 | .148 / .071 / .026 | .148 / .065 / .026 |
-| ids (lookalike-heavy) | 11 / 14 / 18 | .211 / .189 / .149 | .149 / .129 / .068 | .230 / .081 / .068 |
+| terminal | 13 / 16 / 20 | .146 / .060 / .046 | .073 / .082 / .041 | .00 / .43 / .43 |
+| chat | 13 / 16 / 20 | .046 / .040 / .043 | .040 / .040 / .033 | .47 / .47 / .41 |
+| mail | 13 / 16 / 20 | .028 / .001 / .546 | .005 / .001 / .546 | .71 / .95 / .90 |
+| ids | 13 / 16 / 20 | .065 / .101 / .101 | .047 / .101 / .101 | .25 / .00 / .00 |
 
-Upscaling helps a lot from 14 pt up and costs 2x time on a full frame, which would break the 300 ms budget; so the full frame stays at 1.0x and a region of at most a quarter of the frame is read at 2.0x. 11 pt text and strings of lookalikes (`0O1lI5S8B`) stay unreliable at any scale: `detailed` output flags them, and the SKILL tells agents to zoom and double-check.
+- Before panel-aware reading order (v0.3.0) chat and mail scored CER .56 and .62 with the same lines exact: the columns were interleaved. Reading order now cuts a region at a blank band that runs its full height (three line heights or wider) into side-by-side panels, then at full-width bands into blocks, then rows.
+- mail at 20 px fails the panel split because the list column runs into the reading pane with no gap; real Outlook truncates list text, so the gap exists there.
+- Low `lines exact` on the terminal is Windows OCR splitting wide-spaced columns into separate lines and reading `0` as `e` in Consolas; upscaling does not fix it. The `ids` screen is lookalikes by design.
+- Upscaling costs 4x time for little gain on these screens, so the full frame stays at 1.0x and regions of at most a quarter frame use 2.0x.
 
 ## Open
 
+- TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.
 - Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 - Recommend a fixed session resolution in the README for stable coordinates?
