@@ -44,6 +44,8 @@ Pass `window_title` (a substring) when more than one session is open. Pass `regi
 
 Terminal: `jharokha status | read | find <query> | bench`, all with `--window-title`.
 
+`skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
+
 ## Limits
 
 - RDP sends no frames to a minimized window. Covered by other windows is fine; minimized is not.
