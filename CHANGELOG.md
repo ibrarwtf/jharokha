@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.0
+
+- `verify` on `jharokha_read_text` and `jharokha_find_text`: a second reading of lines by RapidOCR (recognition only, on Windows OCR's line boxes), `flagged` for lines with digits or capitals, `all` for every line, at most 40 per call. Disagreements show as `| verify: …` in concise output and a `verify` field in detailed; `find_text` searches the second reading. Optional extra `jharokha[verify]`; without it the option fails with `verify_unavailable`. On the synthetic lookalike screen, lines read exactly go from 0 of 4 to 3 of 4.
+- Detailed output no longer has the always-null `conf` field.
+- A click or scroll refused with `covered` now restores the previous foreground window and cursor.
+- `tests/eval_ocr.py` scores verify; `fake_session.py` shows the eval screens at true pixel size.
+
 ## v0.4.0
 
 - `jharokha_watch` and `jharokha_changes`: a background watcher that logs every text change on the window (lines added and removed, timestamp, changed area), and a query for what changed since a sequence number. Without the watcher, `jharokha_changes` is a one-shot diff against your last read. OCR runs only when pixels changed; the watcher stops itself after 10 minutes without a `jharokha_changes` call.

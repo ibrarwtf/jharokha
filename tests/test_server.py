@@ -147,3 +147,32 @@ def test_real_ocr_reads_fixture_screen():
     got = " ".join(ln.text for ln in lines).lower()
     assert "build succeeded" in got and "file not found" in got
     assert abs(lines[0].box[1] - 20) < 8
+
+
+async def test_verify_shows_and_searches_the_second_reading(source):
+    source.items.append(("Ticket INC0012345 resolved", 10, 100))
+    source.misreads = {"Ticket INC0012345 resolved": "Ticket INCOOI 2345 resolved"}
+    r = text(await call(source, "jharokha_read_text", verify="flagged"))
+    assert r.split("\n", 1)[0].endswith("verified=3 differ=1")  # lines with digits
+    assert "INCOOI 2345 resolved | verify: Ticket INC0012345 resolved" in r
+    assert "| verify" not in text(await call(source, "jharokha_read_text"))
+    r = await call(source, "jharokha_find_text", query=r"INC\d{7}", regex=True)
+    assert json.loads(text(r))["matches"] == []
+    r = await call(source, "jharokha_find_text", query=r"INC\d{7}", regex=True, verify="all")
+    assert json.loads(text(r))["matches"][0]["text"] == "Ticket INC0012345 resolved"
+    r = text(await call(source, "jharokha_read_text", verify="all", response_format="detailed"))
+    assert '"verify":"second column"' in r and "differ=1" in r
+
+
+@pytest.mark.windows
+def test_real_verifier_rereads_a_line():
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("Windows")
+    from jharokha.win.verify import Verifier
+
+    from .conftest import lines_for, render
+
+    items = [("Order AB12 shipped", 20, 20)]
+    assert Verifier().read(render(items), [lines_for(items)[0].box]) == ["Order AB12 shipped"]

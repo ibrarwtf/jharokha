@@ -7,7 +7,8 @@ Screens imitate what a VDI shows: a terminal, a Teams-like chat (list beside thr
 Outlook-like mailbox (folders, list, reading pane) and a block of lookalike-heavy IDs.
 Ground truth is the text as rendered, column by column, so the character error rate (CER)
 punishes both misreads and columns read in the wrong order; `lines` is the share of truth
-lines that came back exactly, ignoring order, which separates the two.
+lines that came back exactly, ignoring order, which separates the two. A `+ver` row is the
+1.0x read with verify=flagged applied (needs the verify extra); its ms is the re-read alone.
 """
 
 from __future__ import annotations
@@ -20,8 +21,9 @@ from dataclasses import dataclass
 from PIL import Image, ImageDraw, ImageFont
 
 from jharokha.core.models import Frame
-from jharokha.core.text import reading_order
+from jharokha.core.text import apply_verified, reading_order, suspect
 from jharokha.win.ocr import Ocr
+from jharokha.win.verify import Verifier, VerifyUnavailable
 
 W, H = 1166, 1181
 FONTS = {"consolas": "consola.ttf", "segoe": "segoeui.ttf", "segoe-semibold": "seguisb.ttf"}
@@ -174,6 +176,10 @@ def main() -> None:
     only = sys.argv[1] if len(sys.argv) > 1 else None
     sizes = [int(sys.argv[2])] if len(sys.argv) > 2 else [13, 16, 20]
     ocr = Ocr()
+    try:
+        verifier = Verifier()
+    except VerifyUnavailable:
+        verifier = None
     print(f"{'screen':9} {'px':>3} {'up':>4} {'ms':>5} {'CER':>6} {'lines':>6}  lookalike misses")
     for name, (theme, cols) in SCREENS.items():
         if only and name != only:
@@ -186,6 +192,18 @@ def main() -> None:
                 ms = (time.perf_counter() - t) * 1000
                 cer, exact, misses = score(truth, got)
                 print(f"{name:9} {px:3} {up:4.1f} {ms:5.0f} {cer:6.3f} {exact:6.2f}  {misses}")
+                if verifier and up == 1.0:
+                    # The server's verify=flagged: second reading of suspect lines.
+                    lines = reading_order(ocr.recognize(frame))
+                    which = [i for i, ln in enumerate(lines) if suspect(ln)]
+                    t = time.perf_counter()
+                    texts = verifier.read(frame, [lines[i].box for i in which])
+                    ms = (time.perf_counter() - t) * 1000
+                    alt = dict(zip(which, texts, strict=True))
+                    got = [ln.text for ln in apply_verified(lines, alt)]
+                    cer, exact, misses = score(truth, got)
+                    row = f"{name:9} {px:3} {'+ver':>4} {ms:5.0f} {cer:6.3f} {exact:6.2f}  {misses}"
+                    print(f"{row}  ({len(which)} lines re-read)")
 
 
 if __name__ == "__main__":

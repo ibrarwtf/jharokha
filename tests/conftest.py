@@ -42,6 +42,8 @@ class FakeSource:
     present: bool = True
     ocr_calls: int = 0
     frame_id: int = 0
+    misreads: dict[str, str] = field(default_factory=dict)  # what the first OCR gets wrong
+    reread_boxes: list[Box] = field(default_factory=list)
 
     def window(self, window_title: str | None) -> WindowInfo | None:
         if not self.present or (window_title and window_title.lower() not in self.title.lower()):
@@ -58,11 +60,17 @@ class FakeSource:
 
     def ocr(self, frame: Frame, region: Box | None) -> list[Line]:
         self.ocr_calls += 1
-        lines = lines_for(self.items)
+        lines = lines_for([(self.misreads.get(t, t), x, y) for t, x, y in self.items])
         if region is None:
             return lines
         x, y, w, h = region
         return [ln for ln in lines if x <= ln.box[0] < x + w and y <= ln.box[1] < y + h]
+
+    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]:
+        """The truth for each line, found by its top-left corner."""
+        self.reread_boxes.extend(boxes)
+        truth = {(x, y): t for t, x, y in self.items}
+        return [truth[(b[0], b[1])] for b in boxes]
 
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
         self.items = [(t, ix, iy + 20 * ticks) for t, ix, iy in self.items]

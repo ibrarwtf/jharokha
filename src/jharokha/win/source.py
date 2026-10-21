@@ -7,7 +7,7 @@ from typing import Any
 
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError
-from jharokha.win import capture, ocr, window
+from jharokha.win import capture, ocr, verify, window
 
 
 class WindowsSource:
@@ -18,6 +18,7 @@ class WindowsSource:
             tuple(p.strip().lower() for p in env.split(",")) if env else window.DEFAULT_PROCESSES
         )
         self._ocr: ocr.Ocr | None = None
+        self._verifier: verify.Verifier | None = None
 
     def window(self, window_title: str | None) -> WindowInfo | None:
         found = window.find_window(window_title, self.processes)
@@ -41,6 +42,14 @@ class WindowsSource:
             return self._ocr.recognize(frame, region, upscale=2.0 if small else 1.0)
         except ocr.OcrUnavailable as e:
             raise ScreenError("ocr_unavailable", str(e)) from e
+
+    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]:
+        try:
+            if self._verifier is None:
+                self._verifier = verify.Verifier()
+            return self._verifier.read(frame, boxes)
+        except verify.VerifyUnavailable as e:
+            raise ScreenError("verify_unavailable", str(e)) from e
 
     def _input(self, w: WindowInfo, fn: str, *args: Any) -> None:
         from jharokha.win import input

@@ -10,12 +10,12 @@ from PIL import Image
 
 from jharokha.core.cache import FrameCache
 from jharokha.core.models import Box, Frame, Line, WindowInfo
-from jharokha.core.text import reading_order
+from jharokha.core.text import clean, reading_order
 
 
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
-    ocr_unavailable, region_out_of_bounds, timeout, covered, bad_key."""
+    ocr_unavailable, region_out_of_bounds, timeout, covered, bad_key, verify_unavailable."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -27,6 +27,7 @@ class Source(Protocol):
     def candidates(self) -> list[str]: ...
     def frame(self, w: WindowInfo) -> Frame: ...
     def ocr(self, frame: Frame, region: Box | None) -> list[Line]: ...
+    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]: ...
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None: ...
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None: ...
     def type_text(self, w: WindowInfo, text: str) -> None: ...
@@ -75,6 +76,15 @@ class Screen:
             lines = reading_order(self.source.ocr(frame, region))
             self.cache.put(frame, region, lines)
         return frame, lines
+
+    def verify(self, frame: Frame, lines: list[Line], which: list[int]) -> dict[int, str]:
+        """Second readings of lines[i] for i in which (at most MAX_VERIFY), by index."""
+        which = which[:MAX_VERIFY]
+        texts = self.source.reread(frame, [lines[i].box for i in which]) if which else []
+        return {i: clean(t) for i, t in zip(which, texts, strict=True)}
+
+
+MAX_VERIFY = 40  # 30 to 60 ms each: a couple of seconds at most
 
 
 def check_region(region: Box, frame: Frame) -> None:

@@ -75,6 +75,22 @@ Measured on the same laptop, synthetic 16 px screens plus four live frames of th
 - RapidOCR as a full second pass is too slow, but recognition-only on the boxes Windows OCR already found is 20 to 30 ms a line and fixes the lookalike problem. That is the shape to ship: a `verify` pass over flagged or selected lines.
 - onnxruntime must be imported before any `winrt` module or the process crashes; RapidOCR confidences are above 0.9 on nearly everything, so they are not a useful signal on their own.
 
+### verify (v0.5.0)
+
+`eval_ocr.py` `+ver` rows, 1.0x read plus verify=flagged:
+
+| screen | px | CER before / after | lines exact before / after | lookalike misses before / after | re-read |
+|---|---|---|---|---|---|
+| terminal | 16 | .060 / .020 | .43 / .57 | 5 / 0 | 5 lines, 357 ms |
+| chat | 16 | .040 / .005 | .47 / .76 | 10 / 0 | 11 lines, 667 ms |
+| mail | 13 | .028 / .001 | .71 / .95 | 4 / 0 | 10 lines, 507 ms |
+| ids | 16 | .101 / .009 | .00 / .75 | 9 / 1 | 4 lines, 169 ms |
+
+- mail at 20 px stays at .546: that is the reading-order problem, not misreads.
+- Live through the MCP server on the fake `ids` window: plain read 248 ms; first verify 3.1 s (RapidOCR loads); later verify adds ~10 ms for 4 lines. Memory with the extra installed: 108 MB idle (onnxruntime preloaded), 185 MB peak after verify. Without the extra nothing changes (80 MB).
+- `jharokha.win` imports onnxruntime when it is installed, because loading it after WinRT segfaults the process (reproduced: Windows OCR, then `import onnxruntime`, then a RapidOCR call).
+- The extra is ~240 MB on disk: OpenCV 113, onnxruntime 43, rapidocr (models) 32, numpy 22. Running the rec model on onnxruntime directly would drop OpenCV and rapidocr, at the cost of shipping the model and the CTC decode ourselves.
+
 ## Open
 
 - TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.
