@@ -11,12 +11,12 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PIL import Image, ImageChops
+from PIL import ImageChops
 
 from jharokha.core.models import Box, Frame, Line
 from jharokha.core.text import clean, wrap_untrusted
 
-_MAX_CHANGED_AREA = 100  # px^2, same as the read cache: a caret is not a change
+_MAX_CHANGED_AREA = 100  # px^2: a text caret, not a character
 
 
 @dataclass(frozen=True)
@@ -48,9 +48,7 @@ def changed_bbox(old: Frame | None, new: Frame) -> Box | None:
         return (0, 0, new.width, new.height)
     if old.bgra == new.bgra:
         return None
-    a = Image.frombuffer("RGBA", (old.width, old.height), old.bgra, "raw", "BGRA", 0, 1)
-    b = Image.frombuffer("RGBA", (new.width, new.height), new.bgra, "raw", "BGRA", 0, 1)
-    bb = ImageChops.difference(a, b).getbbox(alpha_only=False)
+    bb = ImageChops.difference(old.image(), new.image()).getbbox(alpha_only=False)
     if bb is None or (bb[2] - bb[0]) * (bb[3] - bb[1]) <= _MAX_CHANGED_AREA:
         return None
     return (bb[0], bb[1], bb[2] - bb[0], bb[3] - bb[1])
@@ -80,7 +78,7 @@ class Watcher:
     interval_s: float = 0.5
     idle_s: float = 600
     maxlen: int = 200
-    log: deque[Change] = field(default_factory=lambda: deque(maxlen=200))
+    log: deque[Change] = field(init=False)
     seq: int = 0
     frames: int = 0
     error: str | None = None
@@ -90,6 +88,9 @@ class Watcher:
     _stop: threading.Event = field(default_factory=threading.Event)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _last_asked: float = field(default_factory=time.monotonic)
+
+    def __post_init__(self) -> None:
+        self.log = deque(maxlen=self.maxlen)
 
     @property
     def running(self) -> bool:

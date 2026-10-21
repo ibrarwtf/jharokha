@@ -9,10 +9,10 @@ uv run pytest            # includes one test on the real Windows OCR engine
 
 ## Try it without a remote session
 
-`tests/harness/fake_session.py` opens a local window with known text. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
+`tests/harness/fake_session.py` opens a local window showing one of the synthetic `eval_ocr` screens. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
 
 ```
-uv run python tests/harness/fake_session.py terminal     # also: chat, mail, table, lock
+uv run python tests/harness/fake_session.py terminal     # also: chat, mail, ids, lock; optional px
 $env:JHAROKHA_PROCESSES = "python.exe,pythonw.exe"
 uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
@@ -26,8 +26,6 @@ MCP end to end: `npx @modelcontextprotocol/inspector --cli uv run jharokha --met
 - Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 - Recommend a fixed session resolution in the README for stable coordinates?
-- Watcher (later): which window does Windows.Graphics.Capture need, the Windows App top-level window or the session child?
-- Input tools, a watcher with a change log and more OCR engines are later minor releases, each opt-in.
 
 ## Release
 

@@ -1,6 +1,6 @@
 # jharokha: notes for agents working on this repo
 
-Read-only MCP server that OCRs a Windows remote-desktop window. See README.md for what it does, DEVELOPMENT.md for how to run it.
+MCP server that OCRs a Windows remote-desktop window; read-only unless started with `--allow-input`. See README.md for what it does, DEVELOPMENT.md for how to run it.
 
 ## Layout
 - `src/jharokha/core/`: pure logic. Imports neither `mcp` nor any Windows API; `tests/test_core.py` fails if it does. Models, reading order (panels, blocks, rows), concise/detailed formatting, fuzzy find, untrusted-text wrapping, frame cache, the `Source` protocol, the change watcher.

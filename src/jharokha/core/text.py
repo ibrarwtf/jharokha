@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from jharokha.core.models import Box, Line, Word
+from jharokha.core.models import Box, Line, Word, union
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏ -‮⁠-⁤﻿]")
 _LOOKALIKE = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")
@@ -113,7 +113,6 @@ def format_detailed(lines: list[Line], offset: int = 0, limit: int = 200) -> str
                 }
                 for w in ln.words
             ],
-            "conf": None,
         }
         for i, ln in enumerate(page)
     ]
@@ -132,16 +131,8 @@ def _fold(s: str) -> str:
     return clean(s).lower().translate(_FOLD)
 
 
-def _span_box(words: tuple[Word, ...]) -> Box:
-    x1 = min(w.box[0] for w in words)
-    y1 = min(w.box[1] for w in words)
-    x2 = max(w.box[0] + w.box[2] for w in words)
-    y2 = max(w.box[1] + w.box[3] for w in words)
-    return (x1, y1, x2 - x1, y2 - y1)
-
-
 def _match(ref: str, words: tuple[Word, ...]) -> Match:
-    box = _span_box(words)
+    box = union(w.box for w in words)
     return Match(
         ref,
         clean(" ".join(w.text for w in words)),
