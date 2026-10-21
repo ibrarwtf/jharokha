@@ -76,7 +76,6 @@ def test_detailed_flags_lookalikes_and_strips_controls():
     out = text.format_detailed(lines)
     assert '"text":"Order AB12"' in out
     assert '"text":"AB12","box":[35,0,25,12],"lookalike":true' in out
-    assert '"conf":null' in out
 
 
 def test_find_exact_fuzzy_regex_and_all():

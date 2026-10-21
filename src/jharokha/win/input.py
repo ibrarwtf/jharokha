@@ -126,13 +126,13 @@ def _active(hwnd: int, x: int | None = None, y: int | None = None) -> Iterator[N
     time.sleep(0.1)
     old = _POINT()
     user32.GetCursorPos(ctypes.byref(old))
-    if x is not None and y is not None:
-        pt = _POINT(x, y)
-        user32.ClientToScreen(hwnd, ctypes.byref(pt))
-        if user32.GetAncestor(user32.WindowFromPoint(pt), GA_ROOT) != hwnd:
-            raise Covered("another window covers that point")
-        user32.SetCursorPos(pt.x, pt.y)
     try:
+        if x is not None and y is not None:
+            pt = _POINT(x, y)
+            user32.ClientToScreen(hwnd, ctypes.byref(pt))
+            if user32.GetAncestor(user32.WindowFromPoint(pt), GA_ROOT) != hwnd:
+                raise Covered("another window covers that point")
+            user32.SetCursorPos(pt.x, pt.y)
         yield
     finally:
         user32.SetCursorPos(old.x, old.y)

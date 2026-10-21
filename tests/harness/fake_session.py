@@ -1,6 +1,6 @@
-"""A local window that stands in for a remote session: known text, no real data.
+"""A local window that stands in for a remote session: the synthetic eval screens, no real data.
 
-    uv run python tests/harness/fake_session.py [terminal|chat|mail|table|lock]
+    uv run python tests/harness/fake_session.py [terminal|chat|mail|ids|lock] [px]
 
 Then, in another terminal, let the allowlist accept python:
 
@@ -10,50 +10,33 @@ Then, in another terminal, let the allowlist accept python:
 
 from __future__ import annotations
 
+import base64
+import ctypes
+import io
 import sys
 import tkinter as tk
+from pathlib import Path
 
-SCREENS = {
-    "terminal": [
-        "PS C:\\work> npm run build",
-        "> build",
-        "> tsc -p tsconfig.json",
-        "Found 0 errors. Build succeeded in 12.4s",
-        "PS C:\\work> _",
-    ],
-    "chat": [
-        "Teams",
-        "Alice  10:02  can you check order AB12?",
-        "Bob  10:05  on it",
-        "Alice  10:07  thanks",
-    ],
-    "mail": [
-        "Inbox",
-        "Alice   Re: budget   09:12",
-        "Bob   Build failed on main   08:40",
-        "IT   Patch window tonight   07:55",
-    ],
-    "table": [
-        "Order   Status     Total",
-        "AB12    Shipped    120.00",
-        "AB13    Pending     45.50",
-        "AB14    Cancelled    0.00",
-    ],
-    "lock": ["", "", "Press Ctrl+Alt+Del to unlock"],
-}
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from eval_ocr import SCREENS, Col, render  # noqa: E402
+
+SCREENS = {**SCREENS, "lock": ("light", [Col(420, 560, ["Press Ctrl+Alt+Del to unlock"])])}
 
 
 def main() -> None:
     name = sys.argv[1] if len(sys.argv) > 1 else "terminal"
+    px = int(sys.argv[2]) if len(sys.argv) > 2 else 16
+    theme, cols = SCREENS[name]
+    frame, _ = render(cols, px, theme == "dark")
+    buf = io.BytesIO()
+    frame.image().save(buf, "PNG")
+    # Otherwise Windows stretches the window by the display scale and the pixels no longer
+    # match the ground truth.
+    ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     root = tk.Tk()
     root.title(f"Fake Remote Desktop - {name}")
-    root.geometry("900x600")
-    root.configure(bg="black" if name == "terminal" else "white")
-    fg = "white" if name == "terminal" else "black"
-    for i, line in enumerate(SCREENS[name]):
-        tk.Label(root, text=line, fg=fg, bg=root["bg"], font=("Consolas", 12), anchor="w").place(
-            x=20, y=20 + 28 * i
-        )
+    img = tk.PhotoImage(data=base64.b64encode(buf.getvalue()))
+    tk.Label(root, image=img, borderwidth=0).pack()
     root.mainloop()
 
 

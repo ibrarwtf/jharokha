@@ -1,4 +1,5 @@
-"""The MCP tools. Everything here is read-only: it looks at the window, never touches it."""
+"""The MCP tools. Read-only unless built with allow_input, which adds scroll, click, type
+and press."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from jharokha.core.models import Box
+from jharokha.core.models import Box, Line
 from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
 from jharokha.core.text import (
     find,
@@ -61,6 +62,12 @@ def _box(region: list[int] | None) -> Box | None:
     return (region[0], region[1], region[2], region[3])
 
 
+def _unlocked(lines: list[Line]) -> list[Line]:
+    if looks_locked(lines):
+        raise ScreenError("locked", "The session shows a lock screen. Unlock it and retry.")
+    return lines
+
+
 def build_server(source: Source, allow_input: bool = False) -> MCPServer:
     screen = Screen(source)
     mcp = MCPServer("jharokha", instructions=INSTRUCTIONS, version=version("jharokha"))
@@ -71,8 +78,7 @@ def build_server(source: Source, allow_input: bool = False) -> MCPServer:
 
     def read(window_title: str | None, region: Box | None):  # noqa: ANN202
         frame, lines = screen.read(window_title, region)
-        if looks_locked(lines):
-            raise ScreenError("locked", "The session shows a lock screen. Unlock it and retry.")
+        _unlocked(lines)
         if region is None and not watcher.running:
             watcher.baseline(frame, lines)  # so jharokha_changes can diff against this read
         return frame, lines
@@ -269,6 +275,7 @@ def build_server(source: Source, allow_input: bool = False) -> MCPServer:
             box = _box(region)
             watcher.stop()
             frame, lines = screen.read(window_title, box)
+            _unlocked(lines)
             watch_args.update(window_title=window_title, region=box)
             watcher.interval_s = min(max(interval_s, 0.2), 5.0)
             watcher.baseline(frame, lines)
@@ -290,9 +297,7 @@ def build_server(source: Source, allow_input: bool = False) -> MCPServer:
             changes = watcher.since(since_seq, max(1, min(limit, 200)))
         else:
             frame, lines = screen.read(window_title, None)
-            if looks_locked(lines):
-                raise ScreenError("locked", "The session shows a lock screen. Unlock it and retry.")
-            change = watcher.observe(frame, lines)
+            change = watcher.observe(frame, _unlocked(lines))
             changes = [change] if change else []
         head = json.dumps({**watch_state(), "returned": len(changes)})
         return head + "\n" + format_changes(changes)

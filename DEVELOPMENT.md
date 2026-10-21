@@ -9,10 +9,10 @@ uv run pytest            # includes one test on the real Windows OCR engine
 
 ## Try it without a remote session
 
-`tests/harness/fake_session.py` opens a local window with known text. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
+`tests/harness/fake_session.py` opens a local window showing one of the synthetic `eval_ocr` screens. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
 
 ```
-uv run python tests/harness/fake_session.py terminal     # also: chat, mail, table, lock
+uv run python tests/harness/fake_session.py terminal     # also: chat, mail, ids, lock; optional px
 $env:JHAROKHA_PROCESSES = "python.exe,pythonw.exe"
 uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
@@ -56,7 +56,7 @@ Synthetic screens at the real client size: a Consolas terminal, a Segoe UI Teams
 - Low `lines exact` on the terminal is Windows OCR splitting wide-spaced columns into separate lines and reading `0` as `e` in Consolas; upscaling does not fix it. The `ids` screen is lookalikes by design.
 - Upscaling costs 4x time for little gain on these screens, so the full frame stays at 1.0x and regions of at most a quarter frame use 2.0x.
 
-### UI detector or second OCR? (`tests/eval_vision.py`, 2026-10-21)
+### UI detector or second OCR? (2026-10-21; the experiment script is in git history, commit 2495068)
 
 Question: what to add next to Windows OCR, a UI element detector or a second OCR with confidence. Candidates from a literature pass: YOLO detectors ScreenParser (55 classes, 1280 px), Salesforce GPA (1 class, 640 px), carwin (1 class, 640 px), exported to ONNX and run with onnxruntime; RapidOCR (PP-OCR mobile, onnxruntime). Small VLMs were ruled out on paper: 260 MB to 2.5 GB and seconds per frame on CPU.
 
@@ -81,8 +81,6 @@ Measured on the same laptop, synthetic 16 px screens plus four live frames of th
 - Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 - Recommend a fixed session resolution in the README for stable coordinates?
-- Watcher (later): which window does Windows.Graphics.Capture need, the Windows App top-level window or the session child?
-- Input tools, a watcher with a change log and more OCR engines are later minor releases, each opt-in.
 
 ## Release
 

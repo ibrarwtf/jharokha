@@ -8,7 +8,7 @@ from collections.abc import Coroutine
 from concurrent.futures import Future
 from typing import Any
 
-from jharokha.core.models import Box, Frame, Line, Word
+from jharokha.core.models import Box, Frame, Line, Word, union
 
 _MAX_DIM = 7500  # OcrEngine.max_image_dimension on current Windows
 
@@ -50,7 +50,7 @@ class Ocr:
         from winrt.windows.storage.streams import Buffer
 
         ox, oy = 0, 0
-        img = Image.frombuffer("RGBA", (frame.width, frame.height), frame.bgra, "raw", "BGRA", 0, 1)
+        img = frame.image()
         if region:
             ox, oy, rw, rh = region
             img = img.crop((ox, oy, ox + rw, oy + rh))
@@ -75,9 +75,5 @@ class Ocr:
         lines: list[Line] = []
         for ln in result.lines:
             words = tuple(Word(w.text, box(w.bounding_rect)) for w in ln.words)
-            x1 = min(w.box[0] for w in words)
-            y1 = min(w.box[1] for w in words)
-            x2 = max(w.box[0] + w.box[2] for w in words)
-            y2 = max(w.box[1] + w.box[3] for w in words)
-            lines.append(Line(ln.text, (x1, y1, x2 - x1, y2 - y1), words))
+            lines.append(Line(ln.text, union(w.box for w in words), words))
         return lines

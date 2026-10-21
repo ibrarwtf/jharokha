@@ -15,7 +15,7 @@ from jharokha.core.text import reading_order
 
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
-    ocr_unavailable, region_out_of_bounds."""
+    ocr_unavailable, region_out_of_bounds, timeout, covered, bad_key."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -90,7 +90,7 @@ def check_region(region: Box, frame: Frame) -> None:
 def png(frame: Frame, region: Box | None, max_long_edge: int) -> tuple[bytes, Box, float]:
     """PNG of the region (or whole frame), downscaled so the long edge fits. Returns the
     bytes, the region used, and the scale from client pixels to image pixels."""
-    img = Image.frombuffer("RGBA", (frame.width, frame.height), frame.bgra, "raw", "BGRA", 0, 1)
+    img = frame.image()
     box = region or (0, 0, frame.width, frame.height)
     if region:
         check_region(region, frame)
