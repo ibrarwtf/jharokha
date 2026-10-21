@@ -20,6 +20,14 @@ uv run jharokha --window-title "Fake Remote" bench
 
 MCP end to end: `npx @modelcontextprotocol/inspector --cli uv run jharokha --method tools/list`, or register it in Claude Code with `claude mcp add --transport stdio jharokha -- uv run --directory <repo> jharokha`.
 
+## Open
+
+- Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
+- No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
+- Recommend a fixed session resolution in the README for stable coordinates?
+- Watcher (later): which window does Windows.Graphics.Capture need, the Windows App top-level window or the session child?
+- Input tools, a watcher with a change log and more OCR engines are later minor releases, each opt-in.
+
 ## Release
 
 By hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — summary`, tag `vX.Y.Z`, push. PyPI publishing is added at the first PyPI release.
