@@ -40,3 +40,13 @@ class WindowsSource:
             return self._ocr.recognize(frame, region, upscale=2.0 if small else 1.0)
         except ocr.OcrUnavailable as e:
             raise ScreenError("ocr_unavailable", str(e)) from e
+
+    def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
+        from jharokha.win import input
+
+        try:
+            input.scroll(w.hwnd, x, y, ticks)
+        except input.Covered as e:
+            raise ScreenError(
+                "covered", f"{e} on '{w.title}'. Bring the session window to the front and retry."
+            ) from e

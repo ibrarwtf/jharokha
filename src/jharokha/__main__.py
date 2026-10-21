@@ -22,6 +22,7 @@ def _source():  # noqa: ANN202
 def main() -> None:
     p = argparse.ArgumentParser(prog="jharokha", description=__doc__)
     p.add_argument("--window-title", help="substring of the window title to pick")
+    p.add_argument("--allow-input", action="store_true", help="also serve jharokha_scroll")
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     sub.add_parser("read")
@@ -32,7 +33,7 @@ def main() -> None:
     if args.cmd is None:
         from jharokha.server import build_server
 
-        build_server(source).run("stdio")
+        build_server(source, allow_input=args.allow_input).run("stdio")
         return
     screen = Screen(source)
     try:

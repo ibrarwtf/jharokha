@@ -64,6 +64,9 @@ class FakeSource:
         x, y, w, h = region
         return [ln for ln in lines if x <= ln.box[0] < x + w and y <= ln.box[1] < y + h]
 
+    def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
+        self.items = [(t, ix, iy + 20 * ticks) for t, ix, iy in self.items]
+
 
 @pytest.fixture
 def source() -> FakeSource:
