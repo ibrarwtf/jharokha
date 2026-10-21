@@ -172,3 +172,17 @@ def test_variants_are_chosen_by_where_the_anchor_is():
     assert layout.choose(group, {"Find": (295, 20, 50, 12)}, 1000, 1000) is layouts["app@small"]
     assert layout.choose(group, {"Find": None}, 1000, 1000) is None
     assert layout.choose([layouts["bar"]], {}, 1000, 1000) is layouts["bar"]
+
+
+def test_right_aligned_own_messages_stay_in_the_thread():
+    lines = lines_for(
+        [
+            ("Alice 10:02", 10, 10),
+            ("can you check order AB12", 10, 30),
+            ("on it", 400, 70),
+            ("Alice 10:07", 10, 110),
+            ("thanks", 10, 130),
+            ("sent the tracking id", 400, 170),
+        ]
+    )
+    assert len(text.panels(lines, (0, 0, 640, 400))) == 1
