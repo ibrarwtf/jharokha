@@ -132,8 +132,16 @@ def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) 
     for i, ln in enumerate(lines):
         ref = f"L{i}"
         if pat:
-            if pat.search(clean(ln.text)):
-                exact.append(_match(ref, ln.words))
+            joined = clean(" ".join(w.text for w in ln.words))
+            if m := pat.search(joined):
+                # Words whose character span overlaps the match.
+                pos, hit = 0, []
+                for w in ln.words:
+                    end = pos + len(clean(w.text))
+                    if pos < m.end() and end > m.start():
+                        hit.append(w)
+                    pos = end + 1
+                exact.append(_match(ref, tuple(hit) or ln.words))
             continue
         spans = [
             (size, ln.words[s : s + size])

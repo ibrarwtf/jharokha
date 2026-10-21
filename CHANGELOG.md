@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.1
+
+- `jharokha_find_text` with `regex=true` now returns the box of the words the pattern matched, not the whole line, so the center can be used for the matched value.
+- `jharokha_status` reports `found: true` with `state: minimized` for a window that exists but is minimized; `found: false` is only for `window_not_found`.
+
 ## v0.1.0
 
 First release. Read-only.
