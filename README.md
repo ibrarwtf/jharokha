@@ -43,6 +43,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? |
 | `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). Paged. |
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
+| `jharokha_layout` | How the screen is divided: detected panels (`P0`, `P1`, ...) with their boxes and first line, and your named regions with whether their app is on screen. |
 | `jharokha_screenshot` | PNG of the window or a region, downscaled to `max_long_edge`, with the scale. |
 | `jharokha_wait_for_text` | Wait up to 30 s for text to appear or (`gone`) disappear. |
 | `jharokha_watch` | Start / stop / status of a background watcher that logs every text change with a timestamp. OCR only when pixels change; stops itself after 10 idle minutes. |
@@ -52,7 +53,11 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter. |
 | `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. |
 
-Pass `window_title` (a substring) when more than one session is open. Pass `region` `[x, y, width, height]` to read a part of the screen; small regions are upscaled so small text resolves.
+Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or a named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
+
+Panels come from the blank space between text: side-by-side columns (a chat list and its thread, a mail list and the reading pane) and the bands above and below them, each covering its whole cell so text that arrives later still falls inside. They need no setup but follow the screen, so `P1` can change when the screen does.
+
+Named regions are yours: a TOML file of boxes as fractions of the client area, one table per app, with an optional `anchor` text that must be on screen or the read fails with `layout_mismatch`. Start from [`layouts.example.toml`](layouts.example.toml); the server reads `--layouts PATH`, else `$JHAROKHA_LAYOUTS`, else `./layouts.toml` (git-ignored in this repo).
 
 `verify` on `read_text` and `find_text` (`flagged` or `all`, needs the `verify` extra) re-reads lines with RapidOCR, recognition only, on the line boxes Windows OCR found: 30 to 60 ms a line, at most 40 lines. `flagged` picks lines with digits or runs of capitals, where IDs hide. Where the engines disagree, `read_text` shows both (`L0 [20,26] Ticket INCOOI 2345 | verify: Ticket INC0012345`) and `find_text` searches the second reading, so a regex for an ID still matches. On the synthetic lookalike screen it takes lines read exactly from 0 of 4 to 3 of 4.
 

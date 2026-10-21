@@ -27,22 +27,52 @@ def clean(s: str) -> str:
 
 
 def reading_order(lines: list[Line]) -> list[Line]:
-    """Panels before rows: a blank band running the full height of a region (three line
-    heights or wider) splits it into side-by-side columns read one after the other, a blank
-    band running the full width splits it into stacked blocks; inside, rows top to bottom and
-    left to right. That keeps a chat list separate from the thread beside it."""
+    """Panel by panel, rows top to bottom and left to right inside each. That keeps a chat
+    list separate from the thread beside it."""
+    return [ln for _, p in panels(lines) for ln in _rows(p)]
+
+
+def panels(lines: list[Line], bounds: Box | None = None) -> list[tuple[Box, list[Line]]]:
+    """Side-by-side columns and the bands above or below them, in reading order, each with
+    its cell: bounds split at the middle of the blank bands, so text that appears later
+    still falls inside. A blank band running the full height of a region (three line
+    heights or wider) splits it into columns; one running the full width (1.5 line heights)
+    into stacked blocks; stacked blocks of the same width merge back into one panel."""
+    if not lines:
+        return []
+    cell = bounds or union(ln.box for ln in lines)
     if len(lines) < 2:
-        return list(lines)
+        return [(cell, list(lines))]
     heights = sorted(ln.box[3] for ln in lines)
     h = heights[len(heights) // 2]
-    cut = _cut(lines, 0, 3 * h) or _cut(lines, 1, 1.5 * h)
-    if cut:
-        return reading_order(cut[0]) + reading_order(cut[1])
-    return _rows(lines)
+    extent = union(ln.box for ln in lines)
+    # A toolbar or a label row has wide gaps too; only something taller is columns.
+    if extent[3] >= 3 * h and (cut := _cut(lines, 0, 3 * h)):
+        a, b = _split(cell, 0, cut[2])
+        return panels(cut[0], a) + panels(cut[1], b)
+    if cut := _cut(lines, 1, 1.5 * h):
+        a, b = _split(cell, 1, cut[2])
+        out = panels(cut[0], a)
+        for box, ls in panels(cut[1], b):
+            prev, pls = out[-1]
+            if (prev[0], prev[2]) == (box[0], box[2]) and prev[1] + prev[3] == box[1]:
+                out[-1] = ((prev[0], prev[1], prev[2], prev[3] + box[3]), pls + ls)
+            else:
+                out.append((box, ls))
+        return out
+    return [(cell, list(lines))]
 
 
-def _cut(lines: list[Line], axis: int, min_gap: float) -> tuple[list[Line], list[Line]] | None:
-    """Split at the widest empty band along axis (0 = x, 1 = y) if it is at least min_gap."""
+def _split(cell: Box, axis: int, at: int) -> tuple[Box, Box]:
+    x, y, w, h = cell
+    if axis == 0:
+        return (x, y, at - x, h), (at, y, x + w - at, h)
+    return (x, y, w, at - y), (x, at, w, y + h - at)
+
+
+def _cut(lines: list[Line], axis: int, min_gap: float) -> tuple[list[Line], list[Line], int] | None:
+    """Split at the widest empty band along axis (0 = x, 1 = y) if it is at least min_gap;
+    also returns the middle of the band."""
     spans = sorted((ln.box[axis], ln.box[axis] + ln.box[axis + 2]) for ln in lines)
     end, best = spans[0][1], (0.0, 0)
     for start, stop in spans[1:]:
@@ -53,7 +83,7 @@ def _cut(lines: list[Line], axis: int, min_gap: float) -> tuple[list[Line], list
         return None
     before = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] <= best[1]]
     after = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] > best[1]]
-    return before, after
+    return before, after, int(best[1] + best[0] / 2)
 
 
 def _rows(lines: list[Line]) -> list[Line]:

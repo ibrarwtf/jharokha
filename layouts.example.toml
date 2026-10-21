@@ -1,0 +1,21 @@
+# Named regions for jharokha. Copy to layouts.toml (git-ignored) and measure your own:
+# `jharokha_layout` prints the detected panels in client pixels; divide by the client size.
+#
+# One table per app. Each region is [x, y, width, height] as fractions 0..1 of the client
+# area, so the file fits any window size. `anchor` (optional) is text that must be on
+# screen for the layout to apply; a tool given `teams.thread` while it is missing fails
+# with layout_mismatch instead of reading the wrong part of the screen.
+#
+# Picked up from --layouts PATH, else $JHAROKHA_LAYOUTS, else ./layouts.toml.
+# These values fit the synthetic chat and mail screens in tests/eval_ocr.py.
+
+[teams]
+anchor = "Chat"
+list = [0, 0, 0.24, 1]
+thread = [0.24, 0, 0.76, 1]
+
+[outlook]
+anchor = "Inbox"
+folders = [0, 0, 0.14, 1]
+list = [0.14, 0, 0.325, 1]
+reading = [0.465, 0, 0.535, 1]

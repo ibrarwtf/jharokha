@@ -1,7 +1,9 @@
 import ast
 import pathlib
 
-from jharokha.core import text
+import pytest
+
+from jharokha.core import layout, text
 from jharokha.core.cache import FrameCache
 from jharokha.core.models import Line, Word
 
@@ -119,3 +121,41 @@ def test_suspect_lines_and_applying_second_readings():
     out = text.format_concise(lines, alt={0: "Ticket INC0012345 resolved", 1: "see you soon"})
     assert "L0 [0,0] Ticket INCOOI 2345 resolved | verify: Ticket INC0012345 resolved" in out
     assert "L1 [0,20] see you soon\n" in out
+
+
+def test_panels_cover_their_whole_cell():
+    lines = lines_for(
+        [
+            ("Search messages files and people in this org", 10, 5),
+            ("Alice", 10, 50),
+            ("Alice 10:02", 300, 50),
+            ("Bob", 10, 90),
+        ]
+    )
+    cells = text.panels(lines, (0, 0, 640, 400))
+    assert [(box, [ln.text for ln in ps]) for box, ps in cells] == [
+        ((0, 0, 640, 33), ["Search messages files and people in this org"]),
+        ((0, 33, 172, 367), ["Alice", "Bob"]),
+        ((172, 33, 468, 367), ["Alice 10:02"]),
+    ]
+
+
+def test_layouts_parse_validate_and_scale():
+    example = pathlib.Path(__file__).resolve().parents[1] / "layouts.example.toml"
+    layouts = layout.load(example)
+    assert layouts["teams"].anchor == "Chat" and "thread" in layouts["teams"].regions
+    assert layout.to_box(layouts["teams"].regions["thread"], 1000, 500) == (240, 0, 760, 500)
+    for bad in ("[a]\nr = [0, 0, 2, 1]", "[a]\nr = [0.5, 0, 0.6, 1]", "[a]\nr = [0, 0]", "a = 1"):
+        with pytest.raises(layout.LayoutError):
+            layout.parse(bad)
+
+
+def test_stacked_blocks_of_one_width_are_one_panel():
+    long = "a line that runs across the whole width of the window here"
+    lines = lines_for(
+        [(long, 10, 5), (long, 10, 60), (long, 10, 120), ("ok", 10, 200), ("ok", 10, 230)]
+    )
+    lines += lines_for([("cancel", 400, 200), ("cancel", 400, 230)])
+    cells = text.panels(lines, (0, 0, 640, 400))
+    assert [len(ps) for _, ps in cells] == [3, 2, 2]
+    assert cells[0][0] == (0, 0, 640, 166)

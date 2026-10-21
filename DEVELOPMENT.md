@@ -91,6 +91,10 @@ Measured on the same laptop, synthetic 16 px screens plus four live frames of th
 - `jharokha.win` imports onnxruntime when it is installed, because loading it after WinRT segfaults the process (reproduced: Windows OCR, then `import onnxruntime`, then a RapidOCR call).
 - The extra is ~240 MB on disk: OpenCV 113, onnxruntime 43, rapidocr (models) 32, numpy 22. Running the rec model on onnxruntime directly would drop OpenCV and rapidocr, at the cost of shipping the model and the CTC decode ourselves.
 
+### Panels (v0.6.0)
+
+Live session, one OCR frame each, panels found: with the first rule (columns wherever a 3-line-height gap runs the full height) 19, mostly toolbar buttons and labels split into columns; requiring a region to be at least 3 lines tall before it can split into columns, 13; merging stacked blocks of the same width, 5 where pairwise merging gave 9 on the same frames (the body was 5 full-width slices). Eval CER and lines exact unchanged on all synthetic screens. `jharokha_layout` 360 ms, a panel read ~210 ms on the fake windows.
+
 ## Open
 
 - TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.

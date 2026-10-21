@@ -5,6 +5,7 @@ import pytest
 from mcp import Client
 from mcp.types import TextContent
 
+from jharokha.core.layout import parse
 from jharokha.server import build_server
 
 from .conftest import FakeSource
@@ -26,6 +27,7 @@ async def test_lists_read_only_tools(source):
     assert sorted(t.name for t in tools) == [
         "jharokha_changes",
         "jharokha_find_text",
+        "jharokha_layout",
         "jharokha_read_text",
         "jharokha_screenshot",
         "jharokha_status",
@@ -176,3 +178,28 @@ def test_real_verifier_rereads_a_line():
 
     items = [("Order AB12 shipped", 20, 20)]
     assert Verifier().read(render(items), [lines_for(items)[0].box]) == ["Order AB12 shipped"]
+
+
+async def test_layout_panels_and_named_regions(source):
+    layouts = parse(
+        '[app]\nanchor = "Build"\nright = [0.4, 0, 0.6, 1]\n'
+        '[other]\nanchor = "Zzz"\nall = [0, 0, 1, 1]'
+    )
+    async with Client(build_server(source, layouts=layouts)) as c:
+        r = text(await c.call_tool("jharokha_layout", {}))
+        assert "P0 [0,0,232,400] 3 lines: Build succeeded in 12s" in r
+        assert "P1 [232,0,408,400] 1 lines: second column" in r
+        assert "layout app (on screen): app.right=[256,0,384,400]" in r
+        assert "layout other (anchor 'Zzz' not on screen)" in r
+        r = text(await c.call_tool("jharokha_read_text", {"region": "P1"}))
+        assert "second column" in r and "Build" not in r
+        r = text(
+            await c.call_tool("jharokha_find_text", {"query": "column", "region": "app.right"})
+        )
+        assert json.loads(r)["matches"][0]["text"] == "column"
+        r = await c.call_tool("jharokha_read_text", {"region": "other.all"})
+        assert r.is_error and text(r).startswith("layout_mismatch:")
+        r = await c.call_tool("jharokha_read_text", {"region": "nope.x"})
+        assert r.is_error and "app.right" in text(r) and text(r).startswith("region_unknown:")
+        r = await c.call_tool("jharokha_read_text", {"region": "P9"})
+        assert r.is_error and "2 panels" in text(r)
