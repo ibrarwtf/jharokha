@@ -40,6 +40,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
 include = ["src", "tests"]
+exclude = ["tests/eval_vision.py"]  # runs with `uv run --with rapidocr --with onnxruntime`
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
