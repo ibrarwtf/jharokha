@@ -45,7 +45,7 @@ Pass `window_title` (a substring) when more than one session is open. Pass `regi
 
 Terminal: `jharokha status | read | find <query> | bench`, all with `--window-title`.
 
-Input is off by default. Start the server with `--allow-input` (add it to the `args` of the registration) to also get `jharokha_scroll`. It parks the real cursor over the window for a moment, so the window must not be covered at that point. No clicks or typing yet.
+Input is off by default. Start the server with `--allow-input` (add it to the `args` of the registration) to also get `jharokha_scroll`. The RDP client only takes input while it is the active window, so scrolling brings it to the front and parks the real cursor over the point for a fraction of a second, then gives both back. No clicks or typing yet.
 
 `skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
 
