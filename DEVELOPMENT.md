@@ -56,6 +56,25 @@ Synthetic screens at the real client size: a Consolas terminal, a Segoe UI Teams
 - Low `lines exact` on the terminal is Windows OCR splitting wide-spaced columns into separate lines and reading `0` as `e` in Consolas; upscaling does not fix it. The `ids` screen is lookalikes by design.
 - Upscaling costs 4x time for little gain on these screens, so the full frame stays at 1.0x and regions of at most a quarter frame use 2.0x.
 
+### UI detector or second OCR? (`tests/eval_vision.py`, 2026-10-21)
+
+Question: what to add next to Windows OCR, a UI element detector or a second OCR with confidence. Candidates from a literature pass: YOLO detectors ScreenParser (55 classes, 1280 px), Salesforce GPA (1 class, 640 px), carwin (1 class, 640 px), exported to ONNX and run with onnxruntime; RapidOCR (PP-OCR mobile, onnxruntime). Small VLMs were ruled out on paper: 260 MB to 2.5 GB and seconds per frame on CPU.
+
+Measured on the same laptop, synthetic 16 px screens plus four live frames of the real session (83 OCR lines):
+
+| candidate | load RSS | full frame wall | adds |
+|---|---|---|---|
+| Windows OCR | +8 MB | 50 to 210 ms | baseline |
+| RapidOCR, full frame | +77 MB | 1.4 to 5.5 s | CER terminal .060 to .022, chat .040 to .005, ids .101 to .009; per-line confidence |
+| RapidOCR, recognition only on a Windows OCR line box | same | 20 to 30 ms per line | lookalike lines exact 3/4 vs 0/4 for Windows OCR |
+| ScreenParser 1280 | +624 MB | 2.8 s | 26 elements on the live screen (Text, Utility Button, App Icon, Link) |
+| GPA 640 | +227 MB | 0.55 s | 26 "icon" boxes, mostly around text |
+| carwin 640 | +28 MB | 0.1 s | 21 unlabeled "element" boxes |
+
+- No detector is worth shipping: the one with semantics is 2.8 s and 624 MB; the light ones give unlabeled boxes.
+- RapidOCR as a full second pass is too slow, but recognition-only on the boxes Windows OCR already found is 20 to 30 ms a line and fixes the lookalike problem. That is the shape to ship: a `verify` pass over flagged or selected lines.
+- onnxruntime must be imported before any `winrt` module or the process crashes; RapidOCR confidences are above 0.9 on nearly everything, so they are not a useful signal on their own.
+
 ## Open
 
 - TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.
