@@ -6,6 +6,11 @@
 # screen for the layout to apply; a tool given `teams.thread` while it is missing fails
 # with layout_mismatch instead of reading the wrong part of the screen.
 #
+# Variants: tables named `app@variant` (quote the name: ["teams@zoom90"]) are one app
+# measured several ways, e.g. once per zoom level. Each sets `anchor_at = [x, y]`, the
+# fractions where its anchor text sat when measured; `teams.thread` then uses the variant
+# whose anchor is nearest to where it is now.
+#
 # Picked up from --layouts PATH, else $JHAROKHA_LAYOUTS, else ./layouts.toml.
 # These values fit the synthetic chat and mail screens in tests/eval_ocr.py.
 

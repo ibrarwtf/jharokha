@@ -159,3 +159,16 @@ def test_stacked_blocks_of_one_width_are_one_panel():
     cells = text.panels(lines, (0, 0, 640, 400))
     assert [len(ps) for _, ps in cells] == [3, 2, 2]
     assert cells[0][0] == (0, 0, 640, 166)
+
+
+def test_variants_are_chosen_by_where_the_anchor_is():
+    layouts = layout.parse(
+        '["app@small"]\nanchor = "Find"\nanchor_at = [0.3, 0.02]\nr = [0, 0, 0.5, 1]\n'
+        '["app@big"]\nanchor = "Find"\nanchor_at = [0.25, 0.02]\nr = [0, 0, 0.6, 1]\n'
+        "[bar]\nr = [0, 0.9, 1, 0.1]"
+    )
+    group = [la for la in layouts.values() if la.app == "app"]
+    assert layout.choose(group, {"Find": (260, 20, 50, 12)}, 1000, 1000).name == "app@big"
+    assert layout.choose(group, {"Find": (295, 20, 50, 12)}, 1000, 1000).name == "app@small"
+    assert layout.choose(group, {"Find": None}, 1000, 1000) is None
+    assert layout.choose([layouts["bar"]], {}, 1000, 1000) is layouts["bar"]

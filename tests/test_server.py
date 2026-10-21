@@ -190,7 +190,7 @@ async def test_layout_panels_and_named_regions(source):
         assert "P0 [0,0,232,400] 3 lines: Build succeeded in 12s" in r
         assert "P1 [232,0,408,400] 1 lines: second column" in r
         assert "layout app (on screen): app.right=[256,0,384,400]" in r
-        assert "layout other (anchor 'Zzz' not on screen)" in r
+        assert "layout other (not on screen: needs 'Zzz')" in r
         r = text(await c.call_tool("jharokha_read_text", {"region": "P1"}))
         assert "second column" in r and "Build" not in r
         r = text(

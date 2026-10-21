@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.0
+
+- Layout variants: tables named `app@variant` with `anchor_at = [x, y]` are one app measured several ways, such as once per zoom level; a region like `teams.thread` uses the variant whose anchor text is nearest to where it was measured. `jharokha_layout` names the variant in use. On a live session, eight zoom levels were each matched to their own variant.
+
 ## v0.6.0
 
 - `jharokha_layout`: the panels on screen (`P0`, `P1`, ...: side-by-side columns and the bands around them, found from blank space) with their boxes and first line, plus named regions and whether their app is on screen.

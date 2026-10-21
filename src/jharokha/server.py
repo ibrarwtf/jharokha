@@ -16,7 +16,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-from jharokha.core.layout import Layout, to_box
+from jharokha.core.layout import Layout, choose, to_box
 from jharokha.core.models import Box, Frame, Line
 from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
 from jharokha.core.text import (
@@ -117,23 +117,36 @@ def build_server(
                     f"{region}: the screen has {len(cells)} panels now; see jharokha_layout.",
                 )
             return cells[int(region[1:])][0]
-        name, _, key = region.partition(".")
-        lay = layouts.get(name)
-        if lay is None or key not in lay.regions:
-            known = ", ".join(f"{n}.{k}" for n, la in layouts.items() for k in la.regions)
+        app, _, key = region.partition(".")
+        group = [la for la in layouts.values() if la.app == app]
+        if not group or key not in group[0].regions:
+            known = sorted({f"{la.app}.{k}" for la in layouts.values() for k in la.regions})
             raise ScreenError(
                 "region_unknown",
-                f"no region '{region}'. Named regions: {known or 'none (no layouts file)'}; "
-                "panels are P0, P1, ...; see jharokha_layout.",
+                f"no region '{region}'. Named regions: "
+                f"{', '.join(known) or 'none (no layouts file)'}; panels are P0, P1, ...; "
+                "see jharokha_layout.",
             )
         frame, lines = read(window_title, None)
-        if lay.anchor and not find(lines, lay.anchor):
+        lay = pick(group, frame, lines)
+        if lay is None:
             raise ScreenError(
                 "layout_mismatch",
-                f"layout '{name}' applies when '{lay.anchor}' is on screen, and it is not. "
+                f"layout '{app}' applies when {anchors(group)} is on screen, and it is not. "
                 "Bring that app up, or see jharokha_layout.",
             )
         return to_box(lay.regions[key], frame.width, frame.height)
+
+    def pick(group: list[Layout], frame: Frame, lines: list[Line]) -> Layout | None:
+        found = {}
+        for la in group:
+            if la.anchor:
+                m = find(lines, la.anchor)
+                found[la.anchor] = m[0].box if m else None
+        return choose(group, found, frame.width, frame.height)
+
+    def anchors(group: list[Layout]) -> str:
+        return " or ".join(sorted({f"'{la.anchor}'" for la in group if la.anchor}))
 
     # One watcher per server; its closures read watch_args, rebound on every start.
     watch_args: dict[str, Any] = {"window_title": None, "region": None}
@@ -290,14 +303,18 @@ def build_server(
         ]
         out = [f"frame_id={frame.frame_id} size={frame.width}x{frame.height}"]
         out.append(wrap_untrusted("\n".join(rows) or "(no text)"))
-        for lay in layouts.values():
-            on = not lay.anchor or bool(find(lines, lay.anchor))
-            state = "on screen" if on else f"anchor '{lay.anchor}' not on screen"
+        for app in dict.fromkeys(la.app for la in layouts.values()):
+            group = [la for la in layouts.values() if la.app == app]
+            lay = pick(group, frame, lines)
+            if lay is None:
+                out.append(f"layout {app} (not on screen: needs {anchors(group)})")
+                continue
             boxes = " ".join(
-                f"{lay.name}.{k}=[{','.join(map(str, to_box(f, frame.width, frame.height)))}]"
+                f"{app}.{k}=[{','.join(map(str, to_box(f, frame.width, frame.height)))}]"
                 for k, f in lay.regions.items()
             )
-            out.append(f"layout {lay.name} ({state}): {boxes}")
+            variant = f", variant {lay.name}" if lay.name != app else ""
+            out.append(f"layout {app} (on screen{variant}): {boxes}")
         return "\n".join(out)
 
     def jharokha_scroll(
