@@ -88,6 +88,7 @@ tests/                     pytest; fixtures/ = synthetic screens rendered with P
 - Semver pre-1.0: `0.x.0` a feature, `0.x.y` a fix or polish.
 - CHANGELOG: one `## vX.Y.Z` section per release, newest first, written as user-facing notes; internals in their own bullet.
 - Release by hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — one-line summary`, tag `vX.Y.Z`, push. A GitHub Actions workflow on the tag (PyPI Trusted Publishing + GitHub release from the CHANGELOG section) is added at the first PyPI release, not before. No release script.
+- Git: trunk-based on `main`, small Conventional Commits (`feat:` / `fix:` / `docs:` / `test:` / `refactor:` / `chore:`; `feat` -> next `0.x.0`, `fix` -> next `0.x.y`), push only when checks are green; the release commit alone is `vX.Y.Z — summary` with tag `vX.Y.Z`.
 - Comments explain why, never what. Match existing naming. Boilerplate over indirection.
 - Public from the first push: no personal data, no client names, hostnames, user names or real screenshots. `gitleaks` as a pre-commit hook and in CI; `.gitignore` blocks `*.png` outside `tests/fixtures/`.
 
