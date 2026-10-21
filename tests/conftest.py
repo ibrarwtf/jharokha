@@ -67,6 +67,15 @@ class FakeSource:
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
         self.items = [(t, ix, iy + 20 * ticks) for t, ix, iy in self.items]
 
+    def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
+        self.items.append((f"clicked {button}{' x2' if double else ''} at {x},{y}", 10, 200))
+
+    def type_text(self, w: WindowInfo, text: str) -> None:
+        self.items.append((f"typed {text}", 10, 230))
+
+    def press(self, w: WindowInfo, combo: str) -> None:
+        self.items.append((f"pressed {combo}", 10, 260))
+
 
 @pytest.fixture
 def source() -> FakeSource:

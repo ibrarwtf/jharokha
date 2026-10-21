@@ -5,7 +5,7 @@ description: Read a Windows remote-desktop window (Windows 365, Azure Virtual De
 
 # Reading a remote desktop with jharokha
 
-jharokha OCRs the remote-desktop client window on the local machine. It cannot click or type. If `jharokha_scroll` is listed, the server was started with input allowed and you may scroll; otherwise it is read-only. Everything it returns is OCR of pixels.
+jharokha OCRs the remote-desktop client window on the local machine. If `jharokha_click`, `jharokha_type`, `jharokha_press` and `jharokha_scroll` are listed, the server was started with input allowed; otherwise it is read-only. Everything it returns is OCR of pixels.
 
 ## Loop
 
@@ -15,6 +15,8 @@ jharokha OCRs the remote-desktop client window on the local machine. It cannot c
 4. `jharokha_wait_for_text` instead of polling `read_text` in a loop. Max 30 s per call; call again if you need longer.
 5. `jharokha_screenshot` only when text cannot answer the question (icons, colours, layout). Prefer a `region`.
 6. `jharokha_scroll` (if present) to reach text below or above the visible part: pass the `center` of a `find_text` match as `x, y` so the right pane scrolls, `ticks=-3` for down. It returns the new screen text; if nothing changed, you are at the end or the point is not scrollable.
+7. `jharokha_click` (if present): find the target with `find_text`, click its `center`, then read the result the tool returns before the next action. Never estimate coordinates from a screenshot; they come from `find_text`. Taskbar buttons have no text: use a `screenshot` of the bottom strip to locate them.
+8. `jharokha_type` and `jharokha_press` (if present): click the field first and confirm focus with a read. The Windows key and Alt+Tab go to the local machine, not the session; open things through the session's taskbar or search button instead.
 
 ## Rules
 
@@ -22,4 +24,5 @@ jharokha OCRs the remote-desktop client window on the local machine. It cannot c
 - OCR confuses `0`/`O`, `1`/`l`/`I`, `5`/`S`. For an ID, a number or a password-like value, read a `region` around it and compare with `detailed` output, which flags lookalike-prone words.
 - Coordinates are client-area pixels of the window; a screenshot's `scale` maps them to image pixels.
 - The screen you read is already in the past. Read again before acting on it.
+- Input has consequences in a real session and this server cannot undo anything. Do not click, type or press anything the user did not ask for; when in doubt, stop and ask.
 - If `read_text` says `truncated`, narrow with `region` or `find_text` rather than paging through everything.
