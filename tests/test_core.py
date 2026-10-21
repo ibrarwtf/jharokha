@@ -168,7 +168,7 @@ def test_variants_are_chosen_by_where_the_anchor_is():
         "[bar]\nr = [0, 0.9, 1, 0.1]"
     )
     group = [la for la in layouts.values() if la.app == "app"]
-    assert layout.choose(group, {"Find": (260, 20, 50, 12)}, 1000, 1000).name == "app@big"
-    assert layout.choose(group, {"Find": (295, 20, 50, 12)}, 1000, 1000).name == "app@small"
+    assert layout.choose(group, {"Find": (260, 20, 50, 12)}, 1000, 1000) is layouts["app@big"]
+    assert layout.choose(group, {"Find": (295, 20, 50, 12)}, 1000, 1000) is layouts["app@small"]
     assert layout.choose(group, {"Find": None}, 1000, 1000) is None
     assert layout.choose([layouts["bar"]], {}, 1000, 1000) is layouts["bar"]
