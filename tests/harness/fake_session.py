@@ -21,9 +21,24 @@ SCREENS = {
         "Found 0 errors. Build succeeded in 12.4s",
         "PS C:\\work> _",
     ],
-    "chat": ["Teams", "Alice  10:02  can you check order AB12?", "Bob  10:05  on it", "Alice  10:07  thanks"],
-    "mail": ["Inbox", "Alice   Re: budget   09:12", "Bob   Build failed on main   08:40", "IT   Patch window tonight   07:55"],
-    "table": ["Order   Status     Total", "AB12    Shipped    120.00", "AB13    Pending     45.50", "AB14    Cancelled    0.00"],
+    "chat": [
+        "Teams",
+        "Alice  10:02  can you check order AB12?",
+        "Bob  10:05  on it",
+        "Alice  10:07  thanks",
+    ],
+    "mail": [
+        "Inbox",
+        "Alice   Re: budget   09:12",
+        "Bob   Build failed on main   08:40",
+        "IT   Patch window tonight   07:55",
+    ],
+    "table": [
+        "Order   Status     Total",
+        "AB12    Shipped    120.00",
+        "AB13    Pending     45.50",
+        "AB14    Cancelled    0.00",
+    ],
     "lock": ["", "", "Press Ctrl+Alt+Del to unlock"],
 }
 
