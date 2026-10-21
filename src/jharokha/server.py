@@ -174,9 +174,10 @@ def build_server(source: Source, allow_input: bool = False) -> MCPServer:
     ) -> str:
         """Turn the mouse wheel over the remote-desktop window: ticks < 0 scrolls down,
         ticks > 0 scrolls up, one tick is about three lines. x, y is the client point to scroll
-        at (default: the centre); use a find_text center to scroll a specific pane. The real
-        cursor is parked there briefly and put back. Returns the screen text after scrolling,
-        so compare it with the previous read to see what moved."""
+        at (default: the centre); use a find_text center to scroll a specific pane. The session
+        window is briefly made active and the cursor parked there; both are restored. Returns
+        the screen text after scrolling, so compare it with the previous read to see what moved.
+        """
         w, frame = screen.frame(window_title)
         cx = frame.width // 2 if x is None else x
         cy = frame.height // 2 if y is None else y
