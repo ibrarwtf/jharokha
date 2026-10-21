@@ -107,6 +107,22 @@ async def test_scroll_is_opt_in_and_returns_the_new_screen(source):
         assert r.is_error and text(r).startswith("region_out_of_bounds")
 
 
+async def test_click_type_press_are_opt_in_and_return_the_new_screen(source):
+    for name in ("jharokha_click", "jharokha_type", "jharokha_press"):
+        assert (await call(source, name, x=1, y=1, text="a", keys="a")).is_error
+    async with Client(build_server(source, allow_input=True)) as c:
+        r = await c.call_tool(
+            "jharokha_click", {"x": 20, "y": 30, "button": "right", "double": True}
+        )
+        assert "clicked right x2 at 20,30" in text(r)
+        r = await c.call_tool("jharokha_click", {"x": 20, "y": 9999})
+        assert r.is_error and text(r).startswith("region_out_of_bounds")
+        r = await c.call_tool("jharokha_type", {"text": "hello"})
+        assert "typed hello" in text(r)
+        r = await c.call_tool("jharokha_press", {"keys": "ctrl+c"})
+        assert "pressed ctrl+c" in text(r)
+
+
 async def test_unchanged_screen_is_not_ocrd_twice(source):
     async with Client(build_server(source)) as c:
         await c.call_tool("jharokha_read_text", {})

@@ -22,7 +22,9 @@ def _source():  # noqa: ANN202
 def main() -> None:
     p = argparse.ArgumentParser(prog="jharokha", description=__doc__)
     p.add_argument("--window-title", help="substring of the window title to pick")
-    p.add_argument("--allow-input", action="store_true", help="also serve jharokha_scroll")
+    p.add_argument(
+        "--allow-input", action="store_true", help="also serve scroll, click, type and press"
+    )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     sub.add_parser("read")

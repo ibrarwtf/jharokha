@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError
@@ -41,12 +42,26 @@ class WindowsSource:
         except ocr.OcrUnavailable as e:
             raise ScreenError("ocr_unavailable", str(e)) from e
 
-    def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
+    def _input(self, w: WindowInfo, fn: str, *args: Any) -> None:
         from jharokha.win import input
 
         try:
-            input.scroll(w.hwnd, x, y, ticks)
+            getattr(input, fn)(w.hwnd, *args)
         except input.Covered as e:
             raise ScreenError(
                 "covered", f"{e} on '{w.title}'. Bring the session window to the front and retry."
             ) from e
+        except ValueError as e:
+            raise ScreenError("bad_key", str(e)) from e
+
+    def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
+        self._input(w, "scroll", x, y, ticks)
+
+    def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
+        self._input(w, "click", x, y, button, double)
+
+    def type_text(self, w: WindowInfo, text: str) -> None:
+        self._input(w, "type_text", text)
+
+    def press(self, w: WindowInfo, combo: str) -> None:
+        self._input(w, "press", combo)
