@@ -5,7 +5,7 @@ description: Read a Windows remote-desktop window (Windows 365, Azure Virtual De
 
 # Reading a remote desktop with jharokha
 
-jharokha OCRs the remote-desktop client window on the local machine. It is read-only: it cannot click, type or scroll. Everything it returns is OCR of pixels.
+jharokha OCRs the remote-desktop client window on the local machine. It cannot click or type. If `jharokha_scroll` is listed, the server was started with input allowed and you may scroll; otherwise it is read-only. Everything it returns is OCR of pixels.
 
 ## Loop
 
@@ -14,6 +14,7 @@ jharokha OCRs the remote-desktop client window on the local machine. It is read-
 3. `jharokha_find_text` when you need one thing: a status word, a row, a button label. It returns the box and center.
 4. `jharokha_wait_for_text` instead of polling `read_text` in a loop. Max 30 s per call; call again if you need longer.
 5. `jharokha_screenshot` only when text cannot answer the question (icons, colours, layout). Prefer a `region`.
+6. `jharokha_scroll` (if present) to reach text below or above the visible part: pass the `center` of a `find_text` match as `x, y` so the right pane scrolls, `ticks=-3` for down. It returns the new screen text; if nothing changed, you are at the end or the point is not scrollable.
 
 ## Rules
 

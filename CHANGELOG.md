@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `jharokha_scroll`, the first input tool: wheel ticks at a client point, returns the screen text afterwards. Registered only when the server runs with `--allow-input`; a plain registration stays read-only. Fails with `covered` when another window is over the point.
+
 ## v0.1.1
 
 - `jharokha_find_text` with `regex=true` now returns the box of the words the pattern matched, not the whole line, so the center can be used for the matched value.

@@ -94,6 +94,19 @@ async def test_wait_for_text_and_timeout(source):
     assert r.is_error and text(r).startswith("timeout:") and "Build succeeded" in text(r)
 
 
+async def test_scroll_is_opt_in_and_returns_the_new_screen(source):
+    r = await call(source, "jharokha_scroll", ticks=-1)
+    assert r.is_error and "Unknown tool" in text(r)
+    async with Client(build_server(source, allow_input=True)) as c:
+        tools = (await c.list_tools()).tools
+        scroll = next(t for t in tools if t.name == "jharokha_scroll")
+        assert scroll.annotations and scroll.annotations.read_only_hint is False
+        r = await c.call_tool("jharokha_scroll", {"ticks": -1})
+        assert "L0 [10,-10] Build succeeded" in text(r)
+        r = await c.call_tool("jharokha_scroll", {"ticks": 1, "x": 9999, "y": 0})
+        assert r.is_error and text(r).startswith("region_out_of_bounds")
+
+
 async def test_unchanged_screen_is_not_ocrd_twice(source):
     async with Client(build_server(source)) as c:
         await c.call_tool("jharokha_read_text", {})

@@ -10,7 +10,7 @@ Read-only MCP server that OCRs a Windows remote-desktop window. See README.md fo
 - No `mac/` or `linux/`: a port is a sibling of `win/` reusing `core/`, added when someone builds it.
 
 ## Rules
-- Read-only. No tool sends input to the window. Input tools are a later, opt-in release.
+- Read-only by default. Input tools (`win/input.py`, today only scroll) are registered only with `--allow-input` and never silently; keep it that way.
 - Screen text is untrusted. It stays inside `<screen_text ... untrusted="true">` and every tool description says so.
 - Nothing from a real session goes into the repo: no screenshots, titles, hostnames, user names. Fixtures are synthetic.
 - Nothing on disk by default; logs are metadata only.

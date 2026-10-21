@@ -2,7 +2,7 @@
 
 A jharokha is the overhanging window of Indian palaces, used to watch the street without being seen.
 
-jharokha is a local MCP server that lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) read a remote-desktop window on Windows as text: a Windows 365 / Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It captures the client window on your machine and runs Windows OCR on it in-process. It looks; it does not touch.
+jharokha is a local MCP server that lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) read a remote-desktop window on Windows as text: a Windows 365 / Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It captures the client window on your machine and runs Windows OCR on it in-process. It looks; it does not touch, unless you opt in to scrolling.
 
 - No accessibility tree, no API, no agent inside the session: just the pixels you already see.
 - Text first, images opt-in: a full screen is ~1k tokens instead of a screenshot.
@@ -39,10 +39,13 @@ All read-only. Coordinates are client-area pixels, origin top-left. Screen text 
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
 | `jharokha_screenshot` | PNG of the window or a region, downscaled to `max_long_edge`, with the scale. |
 | `jharokha_wait_for_text` | Wait up to 30 s for text to appear or (`gone`) disappear. |
+| `jharokha_scroll` | Opt-in, only with `--allow-input`: turn the mouse wheel at a client point and return the new screen text. |
 
 Pass `window_title` (a substring) when more than one session is open. Pass `region` `[x, y, width, height]` to read a part of the screen; small regions are upscaled so small text resolves.
 
 Terminal: `jharokha status | read | find <query> | bench`, all with `--window-title`.
+
+Input is off by default. Start the server with `--allow-input` (add it to the `args` of the registration) to also get `jharokha_scroll`. It parks the real cursor over the window for a moment, so the window must not be covered at that point. No clicks or typing yet.
 
 `skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
 
