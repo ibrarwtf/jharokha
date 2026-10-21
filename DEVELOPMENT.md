@@ -22,6 +22,7 @@ MCP end to end: `npx @modelcontextprotocol/inspector --cli uv run jharokha --met
 
 ## Open
 
+- TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.
 - Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 - Recommend a fixed session resolution in the README for stable coordinates?

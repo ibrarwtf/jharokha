@@ -26,8 +26,37 @@ def clean(s: str) -> str:
 
 
 def reading_order(lines: list[Line]) -> list[Line]:
-    """Rows top to bottom, left to right inside a row. Two lines share a row when their
-    vertical centres are closer than half a line height."""
+    """Panels before rows: a blank band running the full height of a region (three line
+    heights or wider) splits it into side-by-side columns read one after the other, a blank
+    band running the full width splits it into stacked blocks; inside, rows top to bottom and
+    left to right. That keeps a chat list separate from the thread beside it."""
+    if len(lines) < 2:
+        return list(lines)
+    heights = sorted(ln.box[3] for ln in lines)
+    h = heights[len(heights) // 2]
+    cut = _cut(lines, 0, 3 * h) or _cut(lines, 1, 1.5 * h)
+    if cut:
+        return reading_order(cut[0]) + reading_order(cut[1])
+    return _rows(lines)
+
+
+def _cut(lines: list[Line], axis: int, min_gap: float) -> tuple[list[Line], list[Line]] | None:
+    """Split at the widest empty band along axis (0 = x, 1 = y) if it is at least min_gap."""
+    spans = sorted((ln.box[axis], ln.box[axis] + ln.box[axis + 2]) for ln in lines)
+    end, best = spans[0][1], (0.0, 0)
+    for start, stop in spans[1:]:
+        if start - end >= max(min_gap, best[0]):
+            best = (start - end, end)
+        end = max(end, stop)
+    if not best[0]:
+        return None
+    before = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] <= best[1]]
+    after = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] > best[1]]
+    return before, after
+
+
+def _rows(lines: list[Line]) -> list[Line]:
+    """Two lines share a row when their vertical centres are closer than half a line height."""
     rows: list[list[Line]] = []
     for ln in sorted(lines, key=lambda ln: ln.box[1]):
         cy = ln.box[1] + ln.box[3] / 2

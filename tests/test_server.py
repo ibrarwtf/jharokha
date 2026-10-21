@@ -50,7 +50,7 @@ async def test_read_text_concise_detailed_and_region(source):
     assert not r.is_error
     body = text(r)
     assert body.startswith("frame_id=1 ")
-    assert "L0 [10,10] Build succeeded in 12s\nL1 [300,10] second column\nL2 [10,40]" in body
+    assert "L2 [10,70] Order AB12 shipped\nL3 [300,10] second column" in body
     r = await call(source, "jharokha_read_text", response_format="detailed", limit=1)
     assert '"text":"12s","box":[143,10,21,12],"lookalike":true' in text(r)
     assert "offset=1" in text(r)
@@ -76,7 +76,7 @@ async def test_errors_carry_code_and_next_step(source):
 async def test_find_text(source):
     r = await call(source, "jharokha_find_text", query="file not found")
     m = json.loads(text(r))["matches"]
-    assert len(m) == 1 and m[0]["ref"] == "L2" and m[0]["text"] == "file not found"
+    assert len(m) == 1 and m[0]["ref"] == "L1" and m[0]["text"] == "file not found"
     assert m[0]["center"][1] == 46
 
 

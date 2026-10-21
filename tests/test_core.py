@@ -27,8 +27,33 @@ def test_core_imports_neither_mcp_nor_windows():
 
 
 def test_reading_order_rows_then_columns():
-    lines = lines_for([("right", 300, 10), ("left", 10, 12), ("below", 10, 40)])
+    lines = lines_for([("right", 60, 10), ("left", 10, 12), ("below", 10, 40)])
     assert [ln.text for ln in text.reading_order(lines)] == ["left", "right", "below"]
+
+
+def test_reading_order_reads_side_by_side_panels_one_after_the_other():
+    # A header across the top, then a chat list beside a thread; words are 7 px, lines 12 px.
+    lines = lines_for(
+        [
+            ("Search everything here", 10, 5),
+            ("Alice", 10, 50),
+            ("Alice 10:02", 300, 50),
+            ("hello there", 10, 70),
+            ("can you check order AB12", 300, 70),
+            ("Bob", 10, 90),
+            ("on it", 300, 90),
+        ]
+    )
+    got = [ln.text for ln in text.reading_order(lines)]
+    assert got == [
+        "Search everything here",
+        "Alice",
+        "hello there",
+        "Bob",
+        "Alice 10:02",
+        "can you check order AB12",
+        "on it",
+    ]
 
 
 def test_concise_format_and_truncation():
