@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
+from pathlib import Path
 
+from jharokha.core.layout import Layout, LayoutError, load
 from jharokha.core.screen import Screen, ScreenError
 from jharokha.core.text import find, format_concise
 
@@ -25,6 +28,10 @@ def main() -> None:
     p.add_argument(
         "--allow-input", action="store_true", help="also serve scroll, click, type and press"
     )
+    p.add_argument(
+        "--layouts",
+        help="TOML file of named regions (default: $JHAROKHA_LAYOUTS, else ./layouts.toml)",
+    )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     sub.add_parser("read")
@@ -35,7 +42,8 @@ def main() -> None:
     if args.cmd is None:
         from jharokha.server import build_server
 
-        build_server(source, allow_input=args.allow_input).run("stdio")
+        layouts = _layouts(args.layouts)
+        build_server(source, allow_input=args.allow_input, layouts=layouts).run("stdio")
         return
     screen = Screen(source)
     try:
@@ -51,6 +59,17 @@ def main() -> None:
             bench(screen, args.window_title)
     except ScreenError as e:
         sys.exit(str(e))
+
+
+def _layouts(flag: str | None) -> dict[str, Layout]:
+    given = flag or os.environ.get("JHAROKHA_LAYOUTS")
+    path = Path(given or "layouts.toml")
+    if not given and not path.exists():
+        return {}
+    try:
+        return load(path)
+    except (OSError, LayoutError) as e:
+        sys.exit(f"layouts: {e}")
 
 
 def bench(screen: Screen, window_title: str | None) -> None:

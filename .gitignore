@@ -4,3 +4,4 @@ __pycache__/
 .claude/
 *.png
 !tests/fixtures/**/*.png
+layouts.toml

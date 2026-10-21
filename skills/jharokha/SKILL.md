@@ -11,6 +11,7 @@ jharokha OCRs the remote-desktop client window on the local machine. If `jharokh
 
 1. `jharokha_status` once. If `state` is not `normal`, tell the user what to do (restore the window, unlock the session) and stop.
 2. `jharokha_read_text` for the screen as a whole. Use `region` to zoom into a panel or a small value; small regions are upscaled and read more accurately.
+   For one part of a busy screen (a chat thread, a mail's reading pane), call `jharokha_layout` and read with `region="P<n>"` or a named region like `teams.thread`; panel numbers follow the current screen, so take them from a fresh `jharokha_layout`.
 3. `jharokha_find_text` when you need one thing: a status word, a row, a button label. It returns the box and center.
 4. `jharokha_wait_for_text` instead of polling `read_text` in a loop. Max 30 s per call; call again if you need longer.
    For "what changed" rather than "is X there", use `jharokha_changes`: after a `read_text` it returns only the lines added and removed since, a fraction of the tokens of a re-read. When something may appear and vanish while you work (a toast, a progress step, a dialog), `jharokha_watch action=start` first and read the log with `jharokha_changes since_seq=<last seq you saw>`; `action=stop` when done.
