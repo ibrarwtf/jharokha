@@ -24,6 +24,7 @@ class Ocr:
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True, name="jharokha-ocr").start()
         self._engine = self._run(self._create()).result()
+        self._busy = threading.Lock()  # the engine refuses a second RecognizeAsync in flight
 
     def _run(self, coro: Coroutine[Any, Any, Any]) -> Future[Any]:
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -40,7 +41,8 @@ class Ocr:
         self, frame: Frame, region: Box | None = None, upscale: float = 1.0
     ) -> list[Line]:
         """Lines in client coordinates. region crops before OCR; upscale helps small text."""
-        return self._run(self._recognize(frame, region, upscale)).result()
+        with self._busy:
+            return self._run(self._recognize(frame, region, upscale)).result()
 
     async def _recognize(self, frame: Frame, region: Box | None, upscale: float) -> list[Line]:
         from PIL import Image

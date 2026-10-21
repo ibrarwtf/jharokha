@@ -20,15 +20,17 @@ def text(r: Any, i: int = 0) -> str:
     return r.content[i].text
 
 
-async def test_lists_five_read_only_tools(source):
+async def test_lists_read_only_tools(source):
     async with Client(build_server(source)) as c:
         tools = (await c.list_tools()).tools
     assert sorted(t.name for t in tools) == [
+        "jharokha_changes",
         "jharokha_find_text",
         "jharokha_read_text",
         "jharokha_screenshot",
         "jharokha_status",
         "jharokha_wait_for_text",
+        "jharokha_watch",
     ]
     assert all(t.annotations and t.annotations.read_only_hint for t in tools)
     assert all("untrusted" in (t.description or "") for t in tools)

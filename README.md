@@ -39,6 +39,8 @@ All read-only. Coordinates are client-area pixels, origin top-left. Screen text 
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
 | `jharokha_screenshot` | PNG of the window or a region, downscaled to `max_long_edge`, with the scale. |
 | `jharokha_wait_for_text` | Wait up to 30 s for text to appear or (`gone`) disappear. |
+| `jharokha_watch` | Start / stop / status of a background watcher that logs every text change with a timestamp. OCR only when pixels change; stops itself after 10 idle minutes. |
+| `jharokha_changes` | Lines added and removed since a sequence number while watching, or a one-shot diff against your last read when not. |
 | `jharokha_scroll` | Opt-in, only with `--allow-input`: turn the mouse wheel at a client point and return the new screen text. |
 | `jharokha_click` | Opt-in: click (left / right / middle, optional double) at a client point, normally a `find_text` center. |
 | `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter. |
