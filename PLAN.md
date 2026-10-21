@@ -117,15 +117,15 @@ tests/                     pytest; fixtures/ = synthetic screens rendered with P
 - 2 read: `jharokha read` against the fake window returns its text in reading order; CER on fixtures recorded; `jharokha bench` within the targets or the gap written here.
 - 3 server: all five tools covered by in-process tests incl. errors and truncation; Inspector CLI lists and calls them; `claude -p` calls `jharokha_read_text` successfully.
 - 4 skill + evals: SKILL.md written; evals run with numbers recorded; one check against the real session passes.
-- 5 release: CHANGELOG `v0.1.0`, tag, GitHub release, repo public after a last gitleaks + personal-data review.
+- 5 release: CHANGELOG `v0.1.0`, tag, GitHub release, after a last gitleaks + personal-data review.
 
 ## Build order
 0. Spikes on a real session, numbers written back here: S1 in-process OCR speed (target < 200 ms per full frame); S2 accuracy at 1.0 / 1.5 / 2.0x upscale, colour vs grey, counting lookalike errors on ~20 crops; S3 minimized and locked behaviour, so status reports it right. Real crops stay on the machine, never in the repo.
-1. Repo skeleton: pyproject, `src/jharokha/core` + `win`, minimal docs, CI (ruff, pyright, pytest, gitleaks on `windows-latest`), MIT licence; private GitHub repo `ibrarwtf/jharokha`, pushed as we go, made public at release.
+1. Repo skeleton: pyproject, `src/jharokha/core` + `win`, minimal docs, CI (ruff, pyright, pytest, gitleaks on `windows-latest`), MIT licence. The repo `ibrarwtf/jharokha` is public from the start; push after each green step.
 2. `win` + `core` behind the terminal command: `jharokha read` works.
 3. `server` with the five tools; tests; Inspector.
 4. `SKILL.md`; try it from Claude Code and Cowork; evals.
-5. Release 0.1.0: CHANGELOG, tag, GitHub release, repo public. PyPI later; until then install from git: `uvx --from git+https://github.com/ibrarwtf/jharokha jharokha`.
+5. Release 0.1.0: CHANGELOG, tag, GitHub release. PyPI later; until then install from git: `uvx --from git+https://github.com/ibrarwtf/jharokha jharokha`.
 
 ## Open
 - Can the Claude Desktop extension (`uv` type) install without a system Python? Test before shipping an `.mcpb`.
