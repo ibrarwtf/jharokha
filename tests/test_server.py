@@ -125,6 +125,10 @@ async def test_click_type_press_are_opt_in_and_return_the_new_screen(source):
         assert "typed hello" in text(r)
         r = await c.call_tool("jharokha_press", {"keys": "ctrl+c"})
         assert "pressed ctrl+c" in text(r)
+        r = await c.call_tool("jharokha_type", {"text": "dir", "focus_at": [40, 50]})
+        assert "typed dir after a click at 40,50" in text(r)
+        r = await c.call_tool("jharokha_type", {"text": "dir", "focus_at": [40, 9999]})
+        assert r.is_error and text(r).startswith("region_out_of_bounds")
 
 
 async def test_unchanged_screen_is_not_ocrd_twice(source):

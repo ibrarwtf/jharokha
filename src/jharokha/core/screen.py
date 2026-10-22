@@ -9,13 +9,14 @@ from typing import Protocol
 from PIL import Image
 
 from jharokha.core.cache import FrameCache
-from jharokha.core.models import Box, Frame, Line, WindowInfo
+from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.text import clean, reading_order
 
 
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
-    ocr_unavailable, region_out_of_bounds, timeout, covered, bad_key, verify_unavailable."""
+    ocr_unavailable, region_out_of_bounds, timeout, covered, not_foreground, bad_key,
+    verify_unavailable."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -30,8 +31,8 @@ class Source(Protocol):
     def reread(self, frame: Frame, boxes: list[Box]) -> list[str]: ...
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None: ...
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None: ...
-    def type_text(self, w: WindowInfo, text: str) -> None: ...
-    def press(self, w: WindowInfo, combo: str) -> None: ...
+    def type_text(self, w: WindowInfo, text: str, focus_at: Point | None = None) -> None: ...
+    def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None: ...
 
 
 class Screen:

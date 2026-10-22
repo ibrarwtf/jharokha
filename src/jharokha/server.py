@@ -17,7 +17,7 @@ from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from jharokha.core.layout import Layout, choose, to_box
-from jharokha.core.models import Box, Frame, Line
+from jharokha.core.models import Box, Frame, Line, Point
 from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
 from jharokha.core.text import (
     agree,
@@ -68,6 +68,15 @@ def _guard(fn: Callable[..., Any]) -> Callable[..., Any]:
             return CallToolResult(content=[TextContent(type="text", text=str(e))], is_error=True)
 
     return inner
+
+
+def _point(p: list[int] | None, frame: Frame) -> Point | None:
+    if p is None:
+        return None
+    if len(p) != 2:
+        raise ScreenError("region_out_of_bounds", f"focus_at must be [x, y], got {p}")
+    check_region((p[0], p[1], 1, 1), frame)
+    return (p[0], p[1])
 
 
 def _box(region: list[int] | None) -> Box | None:
@@ -357,22 +366,29 @@ def build_server(
         screen.source.click(w, x, y, button, double)
         return after_input(window_title)
 
-    def jharokha_type(text: str, window_title: str | None = None) -> str:
+    def jharokha_type(
+        text: str, focus_at: list[int] | None = None, window_title: str | None = None
+    ) -> str:
         """Type text into whatever has keyboard focus inside the remote session. Click or
-        focus the field first and confirm with a read. Newlines are sent as Enter. Returns the
-        screen text after typing."""
-        w, _ = screen.frame(window_title)
-        screen.source.type_text(w, text)
+        focus the field first and confirm with a read. Newlines are sent as Enter. Nothing is
+        sent unless the session window is in the foreground (error not_foreground); if
+        Windows will not bring it there, pass focus_at, a blank client point [x, y] to click
+        first, such as empty terminal space. Returns the screen text after typing."""
+        w, frame = screen.frame(window_title)
+        screen.source.type_text(w, text, _point(focus_at, frame))
         return after_input(window_title)
 
-    def jharokha_press(keys: str, window_title: str | None = None) -> str:
+    def jharokha_press(
+        keys: str, focus_at: list[int] | None = None, window_title: str | None = None
+    ) -> str:
         """Press a key or chord inside the remote session, like 'enter', 'esc', 'ctrl+c',
         'alt+tab', 'win', 'f5'. Names: enter, tab, esc, space, backspace, delete, home, end,
         pageup, pagedown, up, down, left, right, win, ctrl, alt, shift, f1-f12, single
         characters. The Windows key, Alt+Tab and Ctrl+Alt+Del usually go to the local machine,
-        not the session. Returns the screen text after the key."""
-        w, _ = screen.frame(window_title)
-        screen.source.press(w, keys)
+        not the session. focus_at works as in jharokha_type. Returns the screen text after
+        the key."""
+        w, frame = screen.frame(window_title)
+        screen.source.press(w, keys, _point(focus_at, frame))
         return after_input(window_title)
 
     def jharokha_watch(

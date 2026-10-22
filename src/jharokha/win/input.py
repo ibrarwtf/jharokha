@@ -107,6 +107,10 @@ class Covered(RuntimeError):
     pass
 
 
+class NotForeground(RuntimeError):
+    pass
+
+
 def _bring_to_front(hwnd: int) -> None:
     """A process without a window may not take the foreground; attaching to the current
     foreground thread lifts that restriction."""
@@ -185,11 +189,30 @@ def click(hwnd: int, x: int, y: int, button: str = "left", double: bool = False)
             time.sleep(0.05)
 
 
-def type_text(hwnd: int, text: str) -> None:
+def _ensure_foreground(hwnd: int, click_focus: bool) -> None:
+    """Keys go to whatever window is in the foreground, so none is sent unless that is the
+    session. Windows may refuse SetForegroundWindow; a real click in the client, at the point
+    _active parked the cursor on, activates it where that fails."""
+    if user32.GetForegroundWindow() == hwnd:
+        return
+    if click_focus:
+        down, up = BUTTONS["left"]
+        _send(_mouse(down), _mouse(up))
+        time.sleep(0.3)
+    if user32.GetForegroundWindow() != hwnd:
+        raise NotForeground("the session did not take the foreground, so nothing was sent")
+
+
+def type_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> None:
     """Characters on the current keyboard layout go as scan codes (with shift when needed),
-    anything else as a unicode event."""
-    with _active(hwnd):
+    anything else as a unicode event. focus_at is a client point to click when the session
+    does not come to the front by itself."""
+    x, y = focus_at or (None, None)
+    with _active(hwnd, x, y):
+        _ensure_foreground(hwnd, focus_at is not None)
         for ch in text:
+            if user32.GetForegroundWindow() != hwnd:
+                raise NotForeground("focus left the session while typing; the rest was not sent")
             if ch == "\n":
                 _send(_key(KEYS["enter"], False), _key(KEYS["enter"], True))
                 continue
@@ -205,7 +228,7 @@ def type_text(hwnd: int, text: str) -> None:
             time.sleep(0.01)
 
 
-def press(hwnd: int, combo: str) -> None:
+def press(hwnd: int, combo: str, focus_at: tuple[int, int] | None = None) -> None:
     """A chord like 'ctrl+shift+esc' or 'enter'. Single characters are keys ('ctrl+c')."""
     vks = []
     for part in combo.lower().split("+"):
@@ -215,7 +238,9 @@ def press(hwnd: int, combo: str) -> None:
             vks.append(vk & 0xFF)
         else:
             raise ValueError(f"unknown key '{part}'; use names like enter, esc, ctrl, f5")
-    with _active(hwnd):
+    x, y = focus_at or (None, None)
+    with _active(hwnd, x, y):
+        _ensure_foreground(hwnd, focus_at is not None)
         _send(*[_key(vk, False) for vk in vks])
         time.sleep(0.03)
         _send(*[_key(vk, True) for vk in reversed(vks)])
