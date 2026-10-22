@@ -1,7 +1,7 @@
 [project]
 name = "jharokha"
 version = "0.7.1"
-description = "Local MCP server that reads a Windows remote-desktop window as text. Looks; does not touch."
+description = "Local MCP server that lets AI agents read and, opt-in, operate a Windows remote-desktop session."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
