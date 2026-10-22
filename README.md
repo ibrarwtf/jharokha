@@ -8,11 +8,14 @@
 >
 > From Hindi _jharokhā_ (झरोखा).
 
-jharokha is a local MCP server that lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) read a remote-desktop window on Windows as text: a Windows 365 / Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It captures the client window on your machine and runs Windows OCR on it in-process. It looks; it does not touch, unless you opt in to input.
+jharokha lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) work with a Windows remote-desktop session they can't otherwise reach: a Windows 365 or Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It reads the session window as text with local OCR, and, only if you start it with `--allow-input`, scrolls, clicks, types and presses keys in it. Nothing is installed in the session; it works from the pixels you already see.
 
-- No accessibility tree, no API, no agent inside the session: just the pixels you already see.
-- Text first, images opt-in: a full screen is ~1k tokens instead of a screenshot.
-- Nothing on disk, no network, no telemetry. Reads happen only when a tool is called.
+- **Reads like text, not screenshots:** a full screen is about 1k tokens, in reading order, panel by panel, with boxes and exact click points.
+- **Watches for you:** waits for text to appear, and logs what changed while the agent was busy.
+- **Gets IDs right:** an optional second OCR engine re-reads lines where 0/O and 1/l get confused.
+- **Knows your apps:** detects the panels on screen, and you can name regions (a Teams thread, the compose box) for any window size and zoom.
+- **Safe by default:** read-only unless you opt in; input only reaches the session window while it's in front; screen text is treated as untrusted data.
+- **Private:** nothing on disk, no network, no telemetry.
 
 Windows 10 2004+ / 11 only. Needs an OCR language pack (installed with any Windows display language).
 
