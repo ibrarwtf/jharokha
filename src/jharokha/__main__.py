@@ -1,4 +1,5 @@
-"""`jharokha` runs the MCP server on stdio; `jharokha status|read|find|bench|measure` in a shell."""
+"""`jharokha` runs the MCP server on stdio; in a shell, `jharokha status|read|find|screenshot|
+bench|measure`, and with --allow-input `click|scroll|type|press`."""
 
 from __future__ import annotations
 
@@ -10,7 +11,8 @@ import time
 from pathlib import Path
 
 from jharokha.core.layout import Layout, LayoutError, load
-from jharokha.core.screen import Screen, ScreenError
+from jharokha.core.models import Point
+from jharokha.core.screen import Screen, ScreenError, check_region, png
 from jharokha.core.text import find, format_concise
 
 
@@ -26,7 +28,9 @@ def main() -> None:
     p = argparse.ArgumentParser(prog="jharokha", description=__doc__)
     p.add_argument("--window-title", help="substring of the window title to pick")
     p.add_argument(
-        "--allow-input", action="store_true", help="also serve scroll, click, type and press"
+        "--allow-input",
+        action="store_true",
+        help="also serve (or, in a shell, allow) scroll, click, type and press",
     )
     p.add_argument(
         "--layouts",
@@ -34,8 +38,41 @@ def main() -> None:
     )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
-    sub.add_parser("read")
+    r = sub.add_parser("read")
+    r.add_argument("--region", type=_ints(4), help="x,y,w,h in client pixels")
+    r.add_argument("--limit", type=int, default=200, help="most lines to print")
     sub.add_parser("find").add_argument("query")
+    s = sub.add_parser("screenshot", help="write a PNG of the window or a region")
+    s.add_argument("out", help="PNG file to write")
+    s.add_argument("--region", type=_ints(4), help="x,y,w,h in client pixels")
+    s.add_argument("--max-long-edge", type=int, default=1568)
+    after = argparse.ArgumentParser(add_help=False)
+    after.add_argument(
+        "--wait", type=float, default=0.4, help="seconds before reading the screen afterwards"
+    )
+    after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
+    c = sub.add_parser("click", parents=[after], help="click at a client point")
+    c.add_argument("x", type=int)
+    c.add_argument("y", type=int)
+    c.add_argument("--button", choices=["left", "right", "middle"], default="left")
+    c.add_argument("--double", action="store_true")
+    sc = sub.add_parser("scroll", parents=[after], help="turn the wheel; ticks < 0 scrolls down")
+    sc.add_argument("ticks", type=int, help="ticks; negative scrolls down")
+    sc.add_argument("--at", type=_ints(2), help="x,y to scroll at (default: the centre)")
+    focus = argparse.ArgumentParser(add_help=False)
+    focus.add_argument(
+        "--focus-at",
+        type=_ints(2),
+        help="x,y of a blank point to click first if the session will not come to the front",
+    )
+    t = sub.add_parser("type", parents=[after, focus], help="type text; newlines are Enter")
+    t.add_argument("text", nargs="?", help="text to type (or --stdin)")
+    t.add_argument(
+        "--stdin", action="store_true", help="read the text from stdin, less one final newline"
+    )
+    t.add_argument("--enter", action="store_true", help="press Enter after the text")
+    k = sub.add_parser("press", parents=[after, focus], help="a key or chord, e.g. ctrl+c")
+    k.add_argument("keys")
     sub.add_parser("bench")
     m = sub.add_parser(
         "measure",
@@ -62,8 +99,17 @@ def main() -> None:
         if args.cmd == "status":
             print(json.dumps(screen.window(args.window_title).__dict__))
         elif args.cmd == "read":
-            _, lines = screen.read(args.window_title, None)
-            print(format_concise(lines))
+            _, lines = screen.read(args.window_title, args.region)
+            print(format_concise(lines, limit=args.limit))
+        elif args.cmd == "screenshot":
+            _, frame = screen.frame(args.window_title)
+            data, box, scale = png(frame, args.region, args.max_long_edge)
+            Path(args.out).write_bytes(data)
+            print(json.dumps({"out": args.out, "region": list(box), "scale": scale}))
+        elif args.cmd in ("click", "scroll", "type", "press"):
+            if not args.allow_input:
+                sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
+            act(screen, args)
         elif args.cmd == "find":
             _, lines = screen.read(args.window_title, None)
             print(json.dumps([m.__dict__ for m in find(lines, args.query, all=True)]))
@@ -78,6 +124,43 @@ def main() -> None:
             )
     except ScreenError as e:
         sys.exit(str(e))
+
+
+def _ints(n: int):  # noqa: ANN202
+    def parse(v: str) -> tuple[int, ...]:
+        parts = v.split(",")
+        if len(parts) != n:
+            raise argparse.ArgumentTypeError(f"expected {n} comma-separated integers, got {v!r}")
+        return tuple(int(x) for x in parts)
+
+    return parse
+
+
+def act(screen: Screen, args: argparse.Namespace) -> None:
+    """One input action, then (unless --quiet) the screen text after it, as the server does."""
+    w, frame = screen.frame(args.window_title)
+    point: Point | None = getattr(args, "focus_at", None)
+    if point:
+        check_region((*point, 1, 1), frame)
+    if args.cmd == "click":
+        check_region((args.x, args.y, 1, 1), frame)
+        screen.source.click(w, args.x, args.y, args.button, args.double)
+    elif args.cmd == "scroll":
+        x, y = args.at or (frame.width // 2, frame.height // 2)
+        check_region((x, y, 1, 1), frame)
+        screen.source.scroll(w, x, y, args.ticks)
+    elif args.cmd == "type":
+        # a heredoc ends in a newline of its own; Enter is --enter's job
+        text = sys.stdin.read().removesuffix("\n") if args.stdin else args.text
+        if text is None:
+            sys.exit("type: give the text or --stdin")
+        screen.source.type_text(w, text + ("\n" if args.enter else ""), point)
+    else:
+        screen.source.press(w, args.keys, point)
+    if not args.quiet:
+        time.sleep(args.wait)
+        _, lines = screen.read(args.window_title, None)
+        print(format_concise(lines))
 
 
 def _layouts(flag: str | None) -> dict[str, Layout]:
