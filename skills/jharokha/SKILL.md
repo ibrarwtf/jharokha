@@ -18,7 +18,7 @@ jharokha OCRs the remote-desktop client window on the local machine. If `jharokh
 5. `jharokha_screenshot` only when text cannot answer the question (icons, colours, layout). Prefer a `region`.
 6. `jharokha_scroll` (if present) to reach text below or above the visible part: pass the `center` of a `find_text` match as `x, y` so the right pane scrolls, `ticks=-3` for down. It returns the new screen text; if nothing changed, you are at the end or the point is not scrollable.
 7. `jharokha_click` (if present): find the target with `find_text`, click its `center`, then read the result the tool returns before the next action. Never estimate coordinates from a screenshot; they come from `find_text`. Taskbar buttons have no text: use a `screenshot` of the bottom strip to locate them.
-8. `jharokha_type` and `jharokha_press` (if present): click the field first and confirm focus with a read. The Windows key and Alt+Tab go to the local machine, not the session; open things through the session's taskbar or search button instead.
+8. `jharokha_type` and `jharokha_press` (if present): click the field first and confirm focus with a read. The Windows key and Alt+Tab go to the local machine, not the session; open things through the session's taskbar or search button instead. If they fail with `not_foreground`, nothing was sent: retry with `focus_at`, a blank point inside the session (empty terminal space, not a button) that is clicked first to give it focus.
 
 ## Rules
 
