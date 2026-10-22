@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from jharokha.core.models import Box, Frame, Line, WindowInfo
+from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.screen import ScreenError
 from jharokha.win import capture, ocr, verify, window
 
@@ -60,6 +60,11 @@ class WindowsSource:
             raise ScreenError(
                 "covered", f"{e} on '{w.title}'. Bring the session window to the front and retry."
             ) from e
+        except input.NotForeground as e:
+            raise ScreenError(
+                "not_foreground",
+                f"{e} ('{w.title}'). Pass focus_at, a blank point in the session to click first.",
+            ) from e
         except ValueError as e:
             raise ScreenError("bad_key", str(e)) from e
 
@@ -69,8 +74,8 @@ class WindowsSource:
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
         self._input(w, "click", x, y, button, double)
 
-    def type_text(self, w: WindowInfo, text: str) -> None:
-        self._input(w, "type_text", text)
+    def type_text(self, w: WindowInfo, text: str, focus_at: Point | None = None) -> None:
+        self._input(w, "type_text", text, focus_at)
 
-    def press(self, w: WindowInfo, combo: str) -> None:
-        self._input(w, "press", combo)
+    def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
+        self._input(w, "press", combo, focus_at)

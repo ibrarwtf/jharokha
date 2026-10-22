@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 Box = tuple[int, int, int, int]  # x, y, w, h in client pixels
+Point = tuple[int, int]  # x, y in client pixels
 
 
 def union(boxes: Iterable[Box]) -> Box:
