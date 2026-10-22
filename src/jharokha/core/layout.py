@@ -4,11 +4,14 @@ layout from being used on an Outlook screen."""
 
 from __future__ import annotations
 
+import json
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from jharokha.core.models import Box
+from jharokha.core.models import Box, Line
+from jharokha.core.text import panels
 
 Fraction = tuple[float, float, float, float]
 
@@ -89,3 +92,101 @@ def load(path: Path) -> dict[str, Layout]:
 def to_box(f: Fraction, width: int, height: int) -> Box:
     x, y = round(f[0] * width), round(f[1] * height)
     return (x, y, min(round(f[2] * width), width - x), min(round(f[3] * height), height - y))
+
+
+_EDGE = 0.15  # top and bottom bars live in the outer 15% of the height
+
+
+def measure(lines: list[Line], width: int, height: int) -> dict[str, Box]:
+    """Regions read off one screen: columns at the edges of full-height panels (col1, col2,
+    ...), and the widest column as body (its tallest panel) with what lies above it as top
+    and the separate bars at its foot (a compose box, a taskbar) as bottom1, bottom2, ..."""
+    cells = panels(lines, (0, 0, width, height))
+    edges = {0, width}
+    for (x, _, w, h), _ in cells:
+        if h >= 0.6 * height:
+            edges |= {x, x + w}
+    xs = sorted(edges)
+    cols = list(zip(xs, xs[1:], strict=False))
+    wide = max(cols, key=lambda c: c[1] - c[0])
+    regions: dict[str, Box] = {}
+    n = 0
+    for x0, x1 in cols:
+        if (x0, x1) != wide:
+            n += 1
+            regions[f"col{n}"] = (x0, 0, x1 - x0, height)
+            continue
+        inside = [(b, ls) for b, ls in cells if x0 <= b[0] and b[0] + b[2] <= x1]
+        top = max(inside, key=lambda c: c[0][3])[0][1] if inside else 0
+        main = [ln for ln in lines if x0 <= ln.box[0] + ln.box[2] / 2 < x1 and ln.box[1] >= top]
+        bands = _bands(main, top, height)
+
+        # Bars above the body that panels did not already split off belong to the top.
+        i, j = 0, len(bands)
+        while i < j - 1 and max(_tops(main, bands[i])) <= _EDGE * height:
+            i += 1
+        while j - 1 > i and min(_tops(main, bands[j - 1])) >= (1 - _EDGE) * height:
+            j -= 1
+        foot = bands[j:]
+        start, end = bands[i][0], bands[j - 1][1]
+        if start:
+            regions["top"] = (x0, 0, x1 - x0, start)
+        regions["body"] = (x0, start, x1 - x0, end - start)
+        for i, (y0, y1) in enumerate(foot, 1):
+            regions[f"bottom{i}"] = (x0, y0, x1 - x0, y1 - y0)
+    return regions
+
+
+def _tops(lines: list[Line], band: tuple[int, int]) -> list[int]:
+    return [ln.box[1] for ln in lines if band[0] <= ln.box[1] < band[1]] or [band[0]]
+
+
+def _bands(lines: list[Line], y0: int, y1: int) -> list[tuple[int, int]]:
+    """y0..y1 split at the middle of every blank band of 1.5 line heights or more."""
+    if not lines:
+        return [(y0, y1)]
+    hs = sorted(ln.box[3] for ln in lines)
+    gap = 1.5 * hs[len(hs) // 2]
+    spans = sorted((ln.box[1], ln.box[1] + ln.box[3]) for ln in lines)
+    cuts, end = [y0], spans[0][1]
+    for start, stop in spans[1:]:
+        if start - end >= gap:
+            cuts.append((start + end) // 2)
+        end = max(end, stop)
+    cuts.append(y1)
+    return list(zip(cuts, cuts[1:], strict=False))
+
+
+def to_fraction(box: Box, width: int, height: int) -> Fraction:
+    x, y, w, h = box
+    return (x / width, y / height, w / width, h / height)
+
+
+def table(
+    name: str, anchor: str, regions: dict[str, Fraction], at: tuple[float, float] | None
+) -> str:
+    """One TOML table, in the format parse() reads."""
+
+    def nums(v: tuple[float, ...]) -> str:
+        return "[" + ", ".join(f"{f:.4f}".rstrip("0").rstrip(".") or "0" for f in v) + "]"
+
+    out = [f'["{name}"]' if "@" in name else f"[{name}]", f"anchor = {json.dumps(anchor)}"]
+    if at:
+        out.append(f"anchor_at = {nums(at)}")
+    out += [f"{k} = {nums(f)}" for k, f in regions.items()]
+    return "\n".join(out) + "\n"
+
+
+_HEADER = re.compile(r'^\[\s*"?([^"\]]+?)"?\s*\]\s*$')
+
+
+def replace_app(text: str, app: str, tables: str) -> str:
+    """text with every table of app (app and app@...) dropped and tables appended."""
+    keep, drop = [], False
+    for line in text.splitlines():
+        if m := _HEADER.match(line.strip()):
+            drop = m.group(1).split("@")[0] == app
+        if not drop:
+            keep.append(line)
+    body = "\n".join(keep).rstrip()
+    return (body + "\n\n" if body else "") + tables

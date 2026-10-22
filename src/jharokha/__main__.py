@@ -1,4 +1,4 @@
-"""`jharokha` runs the MCP server on stdio; `jharokha status|read|find|bench` for a terminal."""
+"""`jharokha` runs the MCP server on stdio; `jharokha status|read|find|bench|measure` in a shell."""
 
 from __future__ import annotations
 
@@ -37,6 +37,18 @@ def main() -> None:
     sub.add_parser("read")
     sub.add_parser("find").add_argument("query")
     sub.add_parser("bench")
+    m = sub.add_parser(
+        "measure",
+        help="write an app's named regions to the layouts file from what is on screen",
+    )
+    m.add_argument("app", help="layout name, e.g. teams")
+    m.add_argument("--anchor", required=True, help="text always on screen in that app")
+    m.add_argument(
+        "--zoom",
+        help="also measure zoom steps LOW..HIGH, e.g. --zoom=-5..2: presses Ctrl+0, Ctrl+= "
+        "and Ctrl+- in the session, then restores the zoom",
+    )
+    m.add_argument("--names", help="comma-separated names for the regions found, in order")
     args = p.parse_args()
     source = _source()
     if args.cmd is None:
@@ -57,6 +69,13 @@ def main() -> None:
             print(json.dumps([m.__dict__ for m in find(lines, args.query, all=True)]))
         elif args.cmd == "bench":
             bench(screen, args.window_title)
+        elif args.cmd == "measure":
+            from jharokha import measure
+
+            path = Path(args.layouts or os.environ.get("JHAROKHA_LAYOUTS") or "layouts.toml")
+            measure.run(
+                screen, args.window_title, args.app, args.anchor, path, args.zoom, args.names
+            )
     except ScreenError as e:
         sys.exit(str(e))
 
