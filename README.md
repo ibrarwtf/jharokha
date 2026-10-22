@@ -1,6 +1,10 @@
 # jharokha
 
-A jharokha is the overhanging window of Indian palaces, used to watch the street without being seen.
+<img width="1672" height="941" alt="Jharokha" src="https://github.com/user-attachments/assets/27ff1416-7567-44fb-b185-9bc7986bcb4f" />
+
+> _A jharokha is the overhanging window of Indian palaces, used to watch the street without being seen._
+
+
 
 jharokha is a local MCP server that lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) read a remote-desktop window on Windows as text: a Windows 365 / Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It captures the client window on your machine and runs Windows OCR on it in-process. It looks; it does not touch, unless you opt in to input.
 
