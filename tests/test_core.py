@@ -186,3 +186,22 @@ def test_right_aligned_own_messages_stay_in_the_thread():
         ]
     )
     assert len(text.panels(lines, (0, 0, 640, 400))) == 1
+
+
+def test_measure_finds_columns_and_bands_and_writes_toml():
+    rail = [("A", 5, 20 + 28 * i) for i in range(13)]
+    side = [(f"chat {i}", 60, 20 + 28 * i) for i in range(13)]
+    wide = [("Header title", 200, 10), ("Tabs here", 200, 30)]
+    wide += [(f"message number {i}", 200, 120 + 20 * i) for i in range(8)]
+    wide += [("Type a message", 200, 340), ("12:00", 600, 375)]
+    lines = lines_for(rail + side + wide)
+    regions = layout.measure(lines, 640, 400)
+    assert list(regions) == ["col1", "col2", "top", "body", "bottom1", "bottom2"]
+    assert regions["col1"][0] == 0 and regions["col2"][0] < regions["top"][0]
+    assert regions["top"][1] == 0 and regions["body"][1] < 120 <= regions["body"][1] + 40
+    fr = {k: layout.to_fraction(b, 640, 400) for k, b in regions.items()}
+    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02))
+    text_ = layout.replace_app('[other]\nr = [0, 0, 1, 1]\n["app@0"]\nanchor = "x"\n', "app", t)
+    parsed = layout.parse(text_)
+    assert set(parsed) == {"other", "app@-1"} and parsed["app@-1"].anchor_at == (0.3, 0.02)
+    assert layout.to_box(parsed["app@-1"].regions["body"], 640, 400) == regions["body"]

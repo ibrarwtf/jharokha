@@ -47,8 +47,8 @@ def panels(lines: list[Line], bounds: Box | None = None) -> list[tuple[Box, list
     h = heights[len(heights) // 2]
     extent = union(ln.box for ln in lines)
     # A toolbar or a label row has wide gaps too; only something taller is columns.
-    cut = _cut(lines, 0, 3 * h) if extent[3] >= 3 * h else None
-    if cut and _side_by_side(cut[0], cut[1]):
+    cols = _cuts(lines, 0, 3 * h) if extent[3] >= 3 * h else []
+    if cut := next((c for c in cols if _side_by_side(c[0], c[1])), None):
         a, b = _split(cell, 0, cut[2])
         return panels(cut[0], a) + panels(cut[1], b)
     if cut := _cut(lines, 1, 1.5 * h):
@@ -83,20 +83,28 @@ def _split(cell: Box, axis: int, at: int) -> tuple[Box, Box]:
     return (x, y, w, at - y), (x, at, w, y + h - at)
 
 
-def _cut(lines: list[Line], axis: int, min_gap: float) -> tuple[list[Line], list[Line], int] | None:
-    """Split at the widest empty band along axis (0 = x, 1 = y) if it is at least min_gap;
-    also returns the middle of the band."""
+Cut = tuple[list[Line], list[Line], int]
+
+
+def _cuts(lines: list[Line], axis: int, min_gap: float) -> list[Cut]:
+    """Every split at an empty band along axis (0 = x, 1 = y) at least min_gap wide, widest
+    first, each with the middle of its band."""
     spans = sorted((ln.box[axis], ln.box[axis] + ln.box[axis + 2]) for ln in lines)
-    end, best = spans[0][1], (0.0, 0)
+    end, gaps = spans[0][1], []
     for start, stop in spans[1:]:
-        if start - end >= max(min_gap, best[0]):
-            best = (start - end, end)
+        if start - end >= min_gap:
+            gaps.append((start - end, end))
         end = max(end, stop)
-    if not best[0]:
-        return None
-    before = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] <= best[1]]
-    after = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] > best[1]]
-    return before, after, int(best[1] + best[0] / 2)
+    out = []
+    for width, at in sorted(gaps, reverse=True):
+        before = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] <= at]
+        after = [ln for ln in lines if ln.box[axis] + ln.box[axis + 2] > at]
+        out.append((before, after, int(at + width / 2)))
+    return out
+
+
+def _cut(lines: list[Line], axis: int, min_gap: float) -> Cut | None:
+    return next(iter(_cuts(lines, axis, min_gap)), None)
 
 
 def _rows(lines: list[Line]) -> list[Line]:
@@ -111,7 +119,22 @@ def _rows(lines: list[Line]) -> list[Line]:
                 break
         else:
             rows.append([ln])
-    return [ln for row in rows for ln in sorted(row, key=lambda ln: ln.box[0])]
+    return [ln for row in rows for ln in _join(sorted(row, key=lambda ln: ln.box[0]))]
+
+
+def _join(row: list[Line]) -> list[Line]:
+    """Pieces of one line that OCR split apart (it does on monospaced terminal text) join
+    when the gap is under 1.5 line heights; wider gaps are separate cells of a table row."""
+    out = [row[0]]
+    for ln in row[1:]:
+        prev = out[-1]
+        gap = ln.box[0] - (prev.box[0] + prev.box[2])
+        if gap <= 1.5 * max(prev.box[3], ln.box[3]):
+            words = prev.words + ln.words
+            out[-1] = Line(f"{prev.text} {ln.text}", union((prev.box, ln.box)), words)
+        else:
+            out.append(ln)
+    return out
 
 
 def lookalike(word: str) -> bool:
