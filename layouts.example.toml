@@ -15,6 +15,10 @@
 # app is on screen: after a click in the chat list you get the thread that opened, not the
 # list again. `jharokha measure APP --focus NAME` writes it; remeasuring keeps it.
 #
+# `grid` (optional, needs anchor) names a region that is a character grid, a terminal's
+# body: it is read row by row on that grid, which keeps paths, numbers and table columns
+# that plain OCR splits apart. `jharokha measure APP --grid NAME` writes it.
+#
 # Picked up from --layouts PATH, else $JHAROKHA_LAYOUTS, else ./layouts.toml.
 # These values fit the synthetic chat and mail screens in tests/eval_ocr.py.
 
@@ -23,6 +27,12 @@ anchor = "Chat"
 focus = "thread"
 list = [0, 0, 0.24, 1]
 thread = [0.24, 0, 0.76, 1]
+
+[terminal]
+anchor = "PS C:"
+focus = "body"
+grid = "body"
+body = [0, 0, 1, 1]
 
 [outlook]
 anchor = "Inbox"

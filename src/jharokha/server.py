@@ -26,6 +26,7 @@ from jharokha.core.text import (
     find,
     format_concise,
     format_detailed,
+    grid,
     looks_locked,
     panels,
     reading_order,
@@ -136,6 +137,9 @@ def build_server(
     def read(window_title: str | None, region: Box | None):  # noqa: ANN202
         frame, lines = screen.read(window_title, region)
         _unlocked(lines)
+        if gridded:
+            full = lines if region is None else screen.read(window_title, None)[1]
+            lines = shape(frame, lines, full)
         if region is None and not watcher.running:
             watcher.baseline(frame, lines)  # so jharokha_changes can diff against this read
         return frame, lines
@@ -180,6 +184,16 @@ def build_server(
                 found[la.anchor] = m[0].box if m else None
         return choose(group, found, frame.width, frame.height)
 
+    gridded = any(la.grid for la in layouts.values())
+
+    def shape(frame: Frame, lines: list[Line], full: list[Line] | None = None) -> list[Line]:
+        """Grid rows in the region the app on screen says is a character grid. full is the
+        whole screen's lines when lines are a region's, to tell which app is on screen."""
+        lay = on_screen(frame, lines if full is None else full) if gridded else None
+        if lay is None or lay.grid is None:
+            return lines
+        return grid(lines, to_box(lay.regions[lay.grid], frame.width, frame.height))
+
     def anchors(group: list[Layout]) -> str:
         return " or ".join(sorted({f"'{la.anchor}'" for la in group if la.anchor}))
 
@@ -196,7 +210,7 @@ def build_server(
     watch_args: dict[str, Any] = {"window_title": None, "region": None}
     watcher = Watcher(
         capture=lambda: screen.frame(watch_args["window_title"])[1],
-        ocr=lambda frame: reading_order(source.ocr(frame, watch_args["region"])),
+        ocr=lambda frame: shape(frame, reading_order(source.ocr(frame, watch_args["region"]))),
     )
 
     def watch_state() -> dict[str, Any]:
@@ -532,10 +546,9 @@ def build_server(
             box = region_box(window_title, region)
             watcher.stop()
             frame, lines = screen.read(window_title, box)
-            _unlocked(lines)
             watch_args.update(window_title=window_title, region=box)
             watcher.interval_s = min(max(interval_s, 0.2), 5.0)
-            watcher.baseline(frame, lines)
+            watcher.baseline(frame, shape(frame, _unlocked(lines)))
             watcher.start()
         elif action == "stop":
             watcher.stop()
@@ -554,7 +567,7 @@ def build_server(
             changes = watcher.since(since_seq, max(1, min(limit, 200)))
         else:
             frame, lines = screen.read(window_title, None)
-            change = watcher.observe(frame, _unlocked(lines))
+            change = watcher.observe(frame, shape(frame, _unlocked(lines)))
             changes = [change] if change else []
         head = json.dumps({**watch_state(), "returned": len(changes)})
         return head + "\n" + format_changes(changes)

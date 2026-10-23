@@ -27,6 +27,8 @@ class Layout:
     # The region input tools report changes in while this app is on screen: the thread,
     # not the chat list beside it.
     focus: str | None = None
+    # A region that is a character grid (a terminal's body), read row by row on it.
+    grid: str | None = None
 
     @property
     def app(self) -> str:
@@ -74,7 +76,7 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
             raise LayoutError(f"{source}: {name}.anchor_at must be [x, y] fractions, with anchor")
         regions: dict[str, Fraction] = {}
         for key, v in table.items():
-            if key in ("anchor", "anchor_at", "focus"):
+            if key in ("anchor", "anchor_at", "focus", "grid"):
                 continue
             ok = isinstance(v, list) and len(v) == 4
             ok = ok and all(isinstance(f, int | float) and 0 <= f <= 1 for f in v)
@@ -84,11 +86,14 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
                     "of the client area that stay inside it"
                 )
             regions[key] = (float(v[0]), float(v[1]), float(v[2]), float(v[3]))
-        focus = table.get("focus")
-        if focus is not None and (not anchor or focus not in regions):
-            raise LayoutError(f"{source}: {name}.focus must name one of its regions, with anchor")
+        focus, grid = table.get("focus"), table.get("grid")
+        for key, v in (("focus", focus), ("grid", grid)):
+            if v is not None and (not anchor or v not in regions):
+                raise LayoutError(
+                    f"{source}: {name}.{key} must name one of its regions, with anchor"
+                )
         at_xy = (float(at[0]), float(at[1])) if at else None
-        layouts[name] = Layout(name, anchor, regions, at_xy, focus)
+        layouts[name] = Layout(name, anchor, regions, at_xy, focus, grid)
     return layouts
 
 
@@ -174,9 +179,9 @@ def table(
     anchor: str,
     regions: dict[str, Fraction],
     at: tuple[float, float] | None,
-    focus: str | None = None,
+    profile: dict[str, str] | None = None,
 ) -> str:
-    """One TOML table, in the format parse() reads."""
+    """One TOML table, in the format parse() reads. profile holds focus and grid."""
 
     def nums(v: tuple[float, ...]) -> str:
         return "[" + ", ".join(f"{f:.4f}".rstrip("0").rstrip(".") or "0" for f in v) + "]"
@@ -184,8 +189,7 @@ def table(
     out = [f'["{name}"]' if "@" in name else f"[{name}]", f"anchor = {json.dumps(anchor)}"]
     if at:
         out.append(f"anchor_at = {nums(at)}")
-    if focus:
-        out.append(f"focus = {json.dumps(focus)}")
+    out += [f"{k} = {json.dumps(v)}" for k, v in (profile or {}).items()]
     out += [f"{k} = {nums(f)}" for k, f in regions.items()]
     return "\n".join(out) + "\n"
 

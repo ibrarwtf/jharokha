@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from PIL import Image, ImageDraw, ImageFont
 
 from jharokha.core.models import Frame
-from jharokha.core.text import apply_verified, reading_order, suspect
+from jharokha.core.text import apply_verified, grid, reading_order, suspect
 from jharokha.win.ocr import Ocr
 from jharokha.win.verify import Verifier, VerifyUnavailable
 
@@ -192,6 +192,12 @@ def main() -> None:
                 ms = (time.perf_counter() - t) * 1000
                 cer, exact, misses = score(truth, got)
                 print(f"{name:9} {px:3} {up:4.1f} {ms:5.0f} {cer:6.3f} {exact:6.2f}  {misses}")
+                if theme == "dark" and up == 1.0:
+                    # A terminal read with grid = its body in the layouts file.
+                    lines = reading_order(ocr.recognize(frame))
+                    got = [ln.text.rstrip() for ln in grid(lines, (0, 0, W, H))]
+                    cer, exact, misses = score(truth, got)
+                    print(f"{name:9} {px:3} {'grid':>4} {'':>5} {cer:6.3f} {exact:6.2f}  {misses}")
                 if verifier and up == 1.0:
                     # The server's verify=flagged: second reading of suspect lines.
                     lines = reading_order(ocr.recognize(frame))

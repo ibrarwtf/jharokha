@@ -142,6 +142,81 @@ def _join(row: list[Line]) -> list[Line]:
     return out
 
 
+def grid(lines: list[Line], box: Box) -> list[Line]:
+    """Lines inside box re-read as a terminal's character grid; the others as they were.
+
+    OCR splits a terminal row into pieces that do not line up and drops the spaces that
+    align columns. A grid has a fixed row pitch and character width, so words snap to rows
+    by pitch, and the gap between two words becomes that many spaces: `dist/index . html`
+    is `dist/index.html` again and a table keeps its columns. A row that runs to the right
+    edge continues on the next one and is joined to it. Zeros read as e, @ or o inside a
+    number (slashed or dotted zeros) become 0."""
+    x0, y0, bw, bh = box
+    inside = [
+        ln
+        for ln in lines
+        if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + bw and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + bh
+    ]
+    words = [w for ln in inside for w in (ln.words or (Word(ln.text, ln.box),))]
+    if len(words) < 2:
+        return lines
+    h = sorted(w.box[3] for w in words)[len(words) // 2]
+    pitch = _pitch([w.box[1] + w.box[3] / 2 for w in words], h)
+    widths = sorted(w.box[2] / len(w.text) for w in words if len(w.text) >= 5)
+    widths = widths or sorted(w.box[2] / max(1, len(w.text)) for w in words)
+    cw = widths[len(widths) // 2]
+    left = min(w.box[0] for w in words)
+    top = min(w.box[1] + w.box[3] / 2 for w in words)
+    rows: dict[int, list[Word]] = {}
+    for w in words:
+        rows.setdefault(round((w.box[1] + w.box[3] / 2 - top) / pitch), []).append(w)
+    out: list[Line] = []
+    prev_row, wrapped = None, False
+    for r in sorted(rows):
+        ws = sorted(rows[r], key=lambda w: w.box[0])
+        text = " " * round((ws[0].box[0] - left) / cw)
+        for a, b in zip([None, *ws], ws, strict=False):
+            if a is not None:
+                # A word's box is its ink, a little narrower than its cells.
+                text += " " * max(0, round((b.box[0] - a.box[0] - a.box[2]) / cw - 0.3))
+            text += clean(b.text)
+        text = _ZERO_IN_NUMBER.sub(lambda m: _ZEROS.sub("0", m.group()), text)
+        line = Line(text, union(w.box for w in ws), tuple(ws))
+        if wrapped and prev_row == r - 1:
+            last = out[-1]
+            line = Line(
+                last.text + text.lstrip(), union((last.box, line.box)), last.words + line.words
+            )
+            out[-1] = line
+        else:
+            out.append(line)
+        prev_row = r
+        wrapped = ws[-1].box[0] + ws[-1].box[2] >= x0 + bw - 2.5 * cw
+    keep = set(map(id, inside))
+    first = next(i for i, ln in enumerate(lines) if id(ln) in keep)
+    rest = [ln for ln in lines if id(ln) not in keep]
+    return rest[:first] + out + rest[first:]
+
+
+# A number with a decimal point or separator; e, @, o and O in it are zeros misread.
+_ZERO_IN_NUMBER = re.compile(r"(?<![\w.])(?=[\w.,]*\d)(?=[\w.,]*[.,])[\d.,e@oO]+(?![\w.])")
+_ZEROS = re.compile(r"[e@oO]")
+
+
+def _pitch(centres: list[float], h: int) -> float:
+    """The row pitch: the typical distance between neighbouring rows, from word centres
+    clustered into rows."""
+    rows: list[float] = []
+    for c in sorted(centres):
+        if not rows or c - rows[-1] > h / 2:
+            rows.append(c)
+    gaps = [b - a for a, b in zip(rows, rows[1:], strict=False)]
+    if not gaps:
+        return float(h)
+    small = [g for g in gaps if g <= 1.5 * min(gaps)]
+    return sorted(small)[len(small) // 2]
+
+
 def lookalike(word: str) -> bool:
     return bool(_LOOKALIKE.search(word))
 
