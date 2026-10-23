@@ -34,7 +34,8 @@ An app's `policy` table shapes and limits input to it (core.guard.Policy):
     newline = "shift+enter"               # a typed newline adds a line, never sends
     irreversible_keys = ["enter"]         # refused unless the call passes allow="irreversible"
 
-`action` tables are accepted and kept for the actions of a later version."""
+Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions; an app's
+own `action` table is accepted and kept, unused."""
 
 from __future__ import annotations
 
@@ -425,7 +426,7 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
         raise AppError(f"{source}: {e}") from e
     if data.get("format") != FORMAT:
         raise AppError(f"{source}: needs `format = {FORMAT}` at the top")
-    _only(data, ("format", "app", "session", "calibration"), source)
+    _only(data, ("format", "app", "session", "calibration", "action"), source)
     doc = Doc()
     for aid, t in _tables(data.get("app", {}), f"{source}: app").items():
         doc.apps[aid] = _app(aid, t, f"{source}: app.{aid}", origin)
@@ -512,6 +513,10 @@ class Catalog:
 
     def views(self) -> list[str]:
         return [f"{a.id}.{v}" for a in self.apps.values() for v in a.views]
+
+    def policies(self) -> dict[str, Policy]:
+        """Each app's input policy, by app id."""
+        return {a.id: a.input_policy for a in self.apps.values()}
 
     def region_names(self) -> list[str]:
         names = [

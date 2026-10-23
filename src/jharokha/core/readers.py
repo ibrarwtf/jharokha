@@ -68,6 +68,24 @@ def as_dicts(its: Sequence[Any]) -> list[dict[str, Any]]:
     return [it.as_dict() if hasattr(it, "as_dict") else it for it in its]
 
 
+def plain(its: Sequence[Any]) -> list[dict[str, Any]]:
+    """The items as an action's result holds them: concise, and without boxes."""
+    return [{k: v for k, v in d.items() if k != "box"} for d in _concise(as_dicts(its))]
+
+
+def item_text(it: Any) -> str:
+    """An item's text, whatever its reader: a message's or entry's lines, a block's text, a
+    table's cells, a field as `label: value`."""
+    if isinstance(it, listread.Item):
+        return "\n".join(t for t in (it.sender or it.title, it.subtitle, it.text) if t)
+    if "table" in it:
+        t = it["table"]
+        return "\n".join("  ".join(r) for r in [t["header"], *t["rows"]] if any(r))
+    if "label" in it:
+        return f"{it['label']}: {it['value']}"
+    return str(it.get("text", ""))
+
+
 def _concise(v: Any) -> Any:
     """v without refs and without empty or false fields: a third fewer tokens a message."""
     if isinstance(v, dict):

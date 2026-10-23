@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import pytest
@@ -27,7 +28,9 @@ async def test_lists_read_only_tools(source):
     async with Client(build_server(source)) as c:
         tools = (await c.list_tools()).tools
     assert sorted(t.name for t in tools) == [
+        "jharokha_apps",
         "jharokha_changes",
+        "jharokha_do",  # its plan only, dry_run=true
         "jharokha_find_text",
         "jharokha_layout",
         "jharokha_read_text",
@@ -195,15 +198,53 @@ async def test_run_returns_only_the_commands_output():
         r = await c.call_tool("jharokha_run", {"command": "Get-Date"})
         assert r.is_error and text(r).startswith("wrong_app: expected terminal in front")
         assert "nothing was sent" in text(r) and shell.items[-1][0] == "PS C:\\a>"
-        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date", "expect": "any"}))
+        # A shell that prints no end marker is waited on by its prompt.
+        args = {"command": "Get-Date", "expect": "any", "shell": "other"}
+        r = text(await c.call_tool("jharokha_run", args))
         assert r.startswith("run_ms=") and " lines=1" in r
         assert "Friday 23 October" in r and "old.txt" not in r and "PS C:" not in r
-        args = {"command": "Get-Date", "clear": True, "expect": "any"}
+        args = {"command": "Get-Date", "clear": True, "expect": "any", "shell": "other"}
         r = text(await c.call_tool("jharokha_run", args))
         assert "lines=1" in r and "Friday" in r
         args = {"command": "x", "prompt": "(", "timeout_s": 1, "expect": "any"}
         r = await c.call_tool("jharokha_run", args)
         assert r.is_error and text(r).startswith("bad_prompt")
+
+
+class Marked(FakeSource):
+    """A PowerShell that answers a marked command with its output and the end marker."""
+
+    def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
+        self.items = [(f"PS C:\\a> {text}", 10, 10)]
+        if text.startswith("cmd /c exit 2"):
+            out, status = [], "False:2"
+        else:
+            out, status = [("Friday 23 October", 10, 30)], "True:"
+        a, b = re.search(r'"(\w\w)"\+"(\w{4}):', text).groups()  # type: ignore[union-attr]
+        self.pending = [*out, (f"{a}{b}:{status}", 10, 50), ("PS C:\\a>", 10, 70)]
+
+    def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
+        if combo == "ctrl+l":
+            self.items = [("PS C:\\a>", 10, 10)]
+
+    def frame(self, w):  # noqa: ANN001, ANN201
+        if getattr(self, "pending", None):
+            self.items = self.items + self.pending
+            self.pending = []
+        return super().frame(w)
+
+
+async def test_run_reads_its_end_marker_and_exit_code():
+    shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
+    async with Client(build_server(shell, allow_input=True)) as c:
+        args = {"command": "Get-Date", "expect": "any"}
+        r = text(await c.call_tool("jharokha_run", args))
+        head = r.split("\n")[0]
+        assert head.startswith("run_ms=") and " exit_code= ok=true lines=1" in head
+        assert "Friday 23 October" in r and "old.txt" not in r
+        args = {"command": "cmd /c exit 2", "expect": "any", "clear": True}
+        r = text(await c.call_tool("jharokha_run", args))
+        assert " exit_code=2 ok=false lines=0" in r.split("\n")[0]
 
 
 async def test_expect_refuses_input_unless_that_app_is_in_front(source):

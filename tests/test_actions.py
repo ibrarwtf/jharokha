@@ -7,13 +7,15 @@ from __future__ import annotations
 import base64
 import sys
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 
 import pytest
 
 from evals.scenarios import seen
-from jharokha.core import actions
-from jharokha.core.actions import ActionError, Runner, Snapshot, at_or_before, when
-from jharokha.core.locate import Hit, Miss, inside, items, locate, locator
+from jharokha.core import actions, listread
+from jharokha.core.actions import ActionError, Runner, Snapshot
+from jharokha.core.guard import Policy
+from jharokha.core.locate import Hit, Miss, RegionInfo, inside, locate, locator
 from jharokha.core.models import Box, Line
 
 from .conftest import lines_for
@@ -38,8 +40,10 @@ def test_builtin_actions_parse_and_declare_their_risk():
         "browser.click_sequence",
     }
     assert acts["terminal.run"].risk == "irreversible"
-    assert acts["teams.draft"].risk == "reversible" and acts["teams.draft"].newline == "shift+enter"
+    assert acts["teams.draft"].risk == "reversible" and acts["teams.draft"].newline is None
+    assert acts["teams.draft"].steps[-1].params["newline"] == "shift+enter"
     assert acts["outlook.unread"].max_risk == "reversible"
+    assert acts["browser.goto"].risk == "irreversible"  # Enter in a browser, as its policy says
     d = actions.describe(acts["teams.draft"])
     assert d["args"]["chat"] == {"type": "text", "required": True}
 
@@ -75,12 +79,25 @@ def test_arguments_are_checked_and_filled_literally_into_a_regex():
     assert actions.fill("{n}", {"n": 3}) == 3
 
 
-def test_times_on_screen():
-    assert when("Priya Nair  7:12") == (None, 432)
-    assert when("10/23/2026 9:41 PM") == (when("2026-10-23")[0], 21 * 60 + 41)  # type: ignore[index]
-    assert when("no time here") is None
-    assert at_or_before((None, 430), (None, 432)) and not at_or_before((None, 433), (None, 432))
-    assert at_or_before((1, 900), (2, 10))
+def test_apps_toml_holds_local_actions_beside_app_definitions():
+    text = (
+        'format = 1\n[app.x]\nname = "X"\n[app.x.view.main]\n'
+        '[action.x.hello]\nsummary = "Say hello"\nmax_risk = "reversible"\n'
+        '[[action.x.hello.step]]\ndo = "type"\ntext = "hello"\nrisk = "reversible"\n'
+    )
+    acts = actions.load(text)
+    assert acts["x.hello"].source == "local" and "teams.draft" in acts
+    from jharokha.core import apps
+
+    assert "x" in apps.catalog(apps.parse(text)).apps
+
+
+def test_before_a_time_by_the_list_reader():
+    now = datetime(2026, 10, 23, 9, 41)
+    thread = lines_for([("Ana Silva  7:05", 10, 30), ("first", 10, 52), ("You  7:12", 10, 100)])
+    its = listread.items(thread, (0, 0, 640, 400), "messages")
+    assert listread.before(its, "7:05", now) and not listread.before(its, "7:04", now)
+    assert [m.time for m in listread.since(its, "7:06", now)] == ["7:12"]
 
 
 # Locators
@@ -132,9 +149,7 @@ def test_locators_resolve_to_a_box_or_a_clear_miss():
         locator({"spot": "x", "text": "y"})
 
 
-def test_items_by_gaps_and_by_a_head_regex():
-    by_gap = items(screen_lines()[4:])
-    assert [i.text for i in by_gap] == ["Ana Silva\nRun report 120", "Ben Okoro\nInvite 381"]
+def test_the_nth_item_of_a_region_is_its_readers_item():
     thread = lines_for(
         [
             ("cut off at the top", 10, 0),
@@ -145,12 +160,12 @@ def test_items_by_gaps_and_by_a_head_regex():
             ("and more", 10, 144),
         ]
     )
-    heads = items(thread, r"^(?P<who>\D.*?)\s+(?P<time>\d{1,2}:\d{2})$")
-    assert [(i.fields["who"], i.fields["time"]) for i in heads] == [
-        ("Ana Silva", "7:05"),
-        ("You", "7:12"),
-    ]
-    assert heads[1].text == "You  7:12\nsecond\nand more"
+    regions = {"thread": (0, 0, 640, 200)}
+    info = {"thread": RegionInfo("list", "messages")}
+    hit = locate(locator({"region": "thread", "nth": -1}), thread, regions, {}, SCREEN, info)
+    assert isinstance(hit, Hit) and hit.text == "You\nsecond\nand more"
+    hit = locate(locator({"region": "thread", "nth": 2}), thread, regions, {}, SCREEN, info)
+    assert isinstance(hit, Hit) and hit.text == "Ana Silva\nfirst"
 
 
 # The runner, on a scripted executor
@@ -228,12 +243,27 @@ def test_a_step_riskier_than_the_action_allows_is_refused_before_any_input():
     )
     ex = Scripted({"chat": [("Type a message", 10, 300)]}, "chat")
     r = Runner(ex).run(a, {})
-    assert not r.ok and ex.inputs == []
-    assert r.safety == [{"kind": "refused", "step": "2:press", "detail": r.failed["reason"]}]  # type: ignore[index]
-    # The session guard's cap works the same way, below the action's own.
+    assert not r.ok and ex.inputs == [] and r.failed["code"] == "irreversible"  # type: ignore[index]
+    assert r.safety == [{"kind": "irreversible", "step": "2:press", "detail": r.failed["reason"]}]  # type: ignore[index]
+    # A call's allow caps it the same way, below the action's own.
     draft = actions.builtin()["teams.draft"]
     r = Runner(ex, allow="read").run(draft, {"chat": "Ana", "text": "x"})
-    assert not r.ok and r.safety[0]["kind"] == "refused" and ex.inputs == []
+    assert not r.ok and r.safety[0]["kind"] == "irreversible" and ex.inputs == []
+    assert "allow='reversible'" in r.failed["reason"]  # type: ignore[index]
+
+
+def test_a_key_the_apps_policy_calls_irreversible_makes_its_step_irreversible():
+    a = one(
+        'max_risk = "irreversible"\n'
+        '[[action.chat.a.step]]\ndo = "press"\nkeys = "Return"\nrisk = "reversible"'
+    )
+    ex = Scripted({"chat": []}, "chat")
+    policies = {"chat": Policy(irreversible_keys=frozenset({"enter"}))}
+    r = Runner(ex, allow="reversible", policies=policies).run(a, {})
+    assert not r.ok and r.failed["code"] == "irreversible" and ex.inputs == []  # type: ignore[index]
+    assert "Return is irreversible in chat" in r.failed["reason"]  # type: ignore[index]
+    assert Runner(ex, allow="irreversible", policies=policies).run(a, {}).ok
+    assert ex.inputs == ["press Return"]
 
 
 def test_a_newline_that_is_enter_makes_typing_irreversible():
@@ -244,7 +274,7 @@ def test_a_newline_that_is_enter_makes_typing_irreversible():
     ex = Scripted({"chat": []}, "chat")
     assert Runner(ex).run(a, {"text": "one line"}).ok
     r = Runner(ex).run(a, {"text": "line one\nline two"})
-    assert not r.ok and r.safety[0]["kind"] == "refused"
+    assert not r.ok and r.safety[0]["kind"] == "irreversible"
     assert ex.inputs == ["type one line"]
     b = one(
         'args.text = { type = "text" }\n'
@@ -270,8 +300,10 @@ def test_terminal_run_with_another_app_in_front_is_refused():
     ex = Scripted({"browser": [("https://requests.example.net/queue", 140, 61)]}, "browser")
     r = Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-ChildItem"})
     assert not r.ok and ex.inputs == []
-    assert r.failed["step"] == "1:focus"  # type: ignore[index]
-    assert "terminal is not in front (browser main is in front)" in r.safety[0]["detail"]
+    assert r.failed["step"] == "1:focus" and r.failed["code"] == "wrong_app"  # type: ignore[index]
+    detail = r.safety[0]["detail"]
+    assert detail.startswith("expected terminal in front, but the screen shows browser main")
+    assert r.safety[0]["kind"] == "wrong_app" and "nothing was sent" in detail
 
 
 def test_steps_check_their_outcome_and_report_where_they_failed():
@@ -313,15 +345,18 @@ sim = pytest.mark.skipif(sys.platform != "win32", reason="GDI and Windows OCR")
 
 
 def session(front: str):  # noqa: ANN201
-    from evals.executor import SourceExecutor
     from evals.sim import Desktop, SimSource
+    from jharokha.core.executor import SessionExecutor
+    from jharokha.core.screen import Screen
+    from jharokha.core.session import Session
 
     source = SimSource(Desktop(100, front=front))
-    return source.desk, SourceExecutor(source, source.catalog())
+    return source.desk, SessionExecutor(Session(Screen(source), source.catalog()))
 
 
-def do(ex, name: str, **args: object) -> actions.Result:  # noqa: ANN001
-    return Runner(ex).run(actions.builtin()[name], args)
+def do(ex, name: str, allow: str = "irreversible", **args: object) -> actions.Result:  # noqa: ANN001
+    policies = ex.session.catalog.policies()
+    return Runner(ex, allow, policies).run(actions.builtin()[name], args)  # type: ignore[arg-type]
 
 
 @sim
@@ -354,7 +389,8 @@ def test_terminal_put_file_writes_the_bytes_and_checks_their_hash():
 def test_teams_draft_leaves_the_text_in_compose_and_sends_nothing():
     desk, ex = session("terminal")
     chat = desk.teams.chats[2]
-    r = do(ex, "teams.draft", chat=chat.name, text="draft line one\ndraft line two")
+    text = "draft line one\ndraft line two"
+    r = do(ex, "teams.draft", allow="reversible", chat=chat.name, text=text)
     assert r.ok, r.failed
     assert desk.front == "teams" and desk.teams.chat is chat
     assert chat.draft == ["draft line one", "draft line two"]
@@ -368,14 +404,14 @@ def test_teams_new_messages_after_a_time_across_scrolling():
     desk, ex = session("outlook")
     chat = desk.teams.chats[1]
     since = chat.msgs[-17].time  # older than the screen shows
-    r = do(ex, "teams.new_messages", chat=chat.name, since=since)
+    r = do(ex, "teams.new_messages", allow="reversible", chat=chat.name, since=since)
     assert r.ok, r.failed
-    want = chat.msgs[-16:]
+    want = chat.msgs[-17:]  # at or after: one in the same minute is not missed
     got = r.items["messages"]
     assert [m["time"].replace(" ", "") for m in got] == [m.time for m in want]
     assert all(seen(g["text"], m.lines[0]) for g, m in zip(got, want, strict=True))
-    assert all(seen(g["who"], m.who) for g, m in zip(got, want, strict=True))
-    assert r.fields["count"] == 16 and desk.teams.offset > 0 and desk.safety() == []
+    assert all(seen(g["sender"], m.who) for g, m in zip(got, want, strict=True))
+    assert r.fields["count"] == 17 and desk.teams.offset > 0 and desk.safety() == []
 
 
 @sim
@@ -394,7 +430,7 @@ def test_browser_goto_navigates_and_refuses_what_is_not_a_url():
 @pytest.mark.windows
 def test_outlook_unread_open_and_a_click_sequence():
     desk, ex = session("browser")
-    r = do(ex, "outlook.unread", folder="Inbox")
+    r = do(ex, "outlook.unread", allow="reversible", folder="Inbox")
     assert r.ok, r.failed
     assert r.fields["unread"] == str(sum(m.unread for m in desk.outlook.folders["Inbox"]))
     shown = desk.outlook.mails[: desk.outlook.visible()]
@@ -419,9 +455,12 @@ def test_outlook_unread_open_and_a_click_sequence():
 def test_incident_terminal_run_with_edge_in_front_is_refused():
     desk, ex = session("browser")
     r = do(ex, "terminal.run", command="Get-ChildItem")
-    assert not r.ok and r.safety and r.safety[0]["kind"] == "refused"
+    assert not r.ok and r.safety and r.safety[0]["kind"] == "wrong_app"
     assert ex.inputs == [] and desk.browser.searches == [] and desk.shell.log == []
     assert desk.safety() == []
+    # Under the default allow of a do call, the command is refused before anything else.
+    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem")
+    assert r.failed["code"] == "irreversible" and ex.inputs == []  # type: ignore[index]
 
 
 @sim
@@ -429,16 +468,28 @@ def test_incident_terminal_run_with_edge_in_front_is_refused():
 def test_incident_a_newline_typed_through_teams_draft_never_sends():
     desk, ex = session("teams")
     chat = desk.teams.chat
-    r = do(ex, "teams.draft", chat=chat.name, text="draft line one\ndraft line two")
+    r = do(
+        ex, "teams.draft", allow="reversible", chat=chat.name, text="draft line one\ndraft line two"
+    )
     assert r.ok, r.failed
     assert desk.teams.sent == [] and desk.safety() == []
     assert chat.draft == ["draft line one", "draft line two"]
-    # A variant that would press Enter is refused before it types anything.
+    # A local variant that would press Enter is refused before it types anything: Teams'
+    # policy calls Enter irreversible, whatever the step declares.
     draft = actions.builtin()["teams.draft"]
     sends = replace(
         draft,
         newline="enter",
         steps=tuple(replace(s, params={**s.params, "newline": "enter"}) for s in draft.steps),
     )
-    r = Runner(ex).run(sends, {"chat": chat.name, "text": "a\nb"})
-    assert not r.ok and r.safety[0]["kind"] == "refused" and desk.teams.sent == []
+    before = list(ex.inputs)
+    r = Runner(ex, "reversible", ex.session.catalog.policies()).run(
+        sends, {"chat": chat.name, "text": "a\nb"}
+    )
+    assert not r.ok and r.safety[0]["kind"] == "irreversible" and desk.teams.sent == []
+    assert ex.inputs == before
+    press = replace(draft.steps[0], kind="press", params={"keys": "enter"}, risk="reversible")
+    r = Runner(ex, "reversible", ex.session.catalog.policies()).run(
+        replace(draft, steps=(press,)), {"chat": chat.name, "text": "a"}
+    )
+    assert r.failed["code"] == "irreversible" and ex.inputs == before  # type: ignore[index]

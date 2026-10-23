@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from jharokha import version
-from jharokha.core import apps, guard
+from jharokha.core import actions, apps, guard
 from jharokha.core.apps import Catalog
 from jharokha.core.guard import Policy
 from jharokha.core.identify import identify
@@ -141,7 +141,8 @@ def main() -> None:
         from jharokha.server import build_server
 
         catalog = _catalog(args.apps, args.layouts)
-        build_server(source, args.allow_input, catalog, trace).run("stdio")
+        acts = _actions(args.apps)
+        build_server(source, args.allow_input, catalog, trace, acts).run("stdio")
         return
     if hasattr(source, "wait_idle_s"):
         source.wait_idle_s = WAIT_IDLE_S
@@ -316,6 +317,21 @@ def _catalog(apps_flag: str | None, layouts_flag: str | None) -> Catalog:
         return apps.load(apath if apps_given or apath.exists() else None, layouts)
     except (OSError, LayoutError, apps.AppError) as e:
         sys.exit(f"apps: {e}")
+
+
+def _actions(apps_flag: str | None) -> dict[str, actions.Action]:
+    """Built-in actions, then those in apps.toml, then those in $JHAROKHA_ACTIONS."""
+    apath, apps_given = _apps_path(apps_flag)
+    paths = [apath] if apps_given or apath.exists() else []
+    if extra := os.environ.get("JHAROKHA_ACTIONS"):
+        paths.append(Path(extra))
+    out = dict(actions.builtin())
+    try:
+        for p in paths:
+            out.update(actions.parse(p.read_text(encoding="utf-8"), str(p)))
+        return out
+    except (OSError, actions.ActionError) as e:
+        sys.exit(f"actions: {e}")
 
 
 def bench(screen: Screen, window_title: str | None) -> None:

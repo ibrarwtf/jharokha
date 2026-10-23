@@ -215,8 +215,18 @@ async def test_terminal_typed_command_and_its_output():
         r = await a.call("jharokha_type", text=cmd, until="KX7R4C", show="full")
         assert seen(r, source.desk.shell.files["notes.txt"][0]) and seen(r, "KX7R4C:True:")
         r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
-        assert r.startswith("run_ms=") and seen(r, "October 23, 2026")
-        assert source.desk.shell.log == [cmd.strip(), "Get-Date"]
+        assert r.startswith("run_ms=") and " exit_code= ok=true " in r.split("\n")[0]
+        assert seen(r, "October 23, 2026") and not seen(r, "$LASTEXITCODE")
+        log = source.desk.shell.log
+        assert log[0] == cmd.strip() and log[1].startswith("Get-Date; $jkq=$?; ")
+        r = await a.call("jharokha_run", command="Get-Content nope.txt", timeout_s=10)
+        assert " ok=false " in r.split("\n")[0] and seen(r, "Cannot find path")
+        r = await a.call("jharokha_run", command="Get-Date", timeout_s=10, shell="other")
+        assert (
+            r.startswith("run_ms=")
+            and "exit_code" not in r
+            and source.desk.shell.log[-1] == "Get-Date"
+        )
 
 
 @pytest.mark.windows
@@ -292,7 +302,7 @@ async def test_a_second_agent_holding_the_session_is_refused(tmp_path):
         assert (await a.status())["input"]["lease"] is None
         r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
         assert r.startswith("run_ms=")
-    assert source.desk.shell.log == ["Get-Date"]
+    assert [c.split(";")[0] for c in source.desk.shell.log] == ["Get-Date"]
 
 
 @pytest.mark.windows

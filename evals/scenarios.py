@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -196,6 +198,177 @@ async def incident_user_typing(a: Agent) -> bool:
     return out.startswith("user_active:") and not a.desk.shell.log
 
 
+# The same tasks twice: with the raw tools, as an agent would string them together, and as
+# one jharokha_do action. Each pair starts from the same screen.
+
+
+def body(text: str) -> Any:
+    """The JSON inside a result's untrusted wrapper."""
+    inner = text.split('untrusted="true">\n', 1)[1].rsplit("\n</screen_text>", 1)[0]
+    return json.loads(inner)
+
+
+async def do(a: Agent, action: str, allow: str = "reversible", **args: Any) -> dict[str, Any]:
+    out = await a.call("jharokha_do", action=action, args=args, allow=allow)
+    return body(out) if 'untrusted="true">' in out else {"ok": False, "error": out}
+
+
+def _minutes(t: str) -> int:
+    h, m = t.replace(" ", "").split(":")[-2:]
+    return int(h) * 60 + int(m[:2])
+
+
+NEW_CHAT, NEW_BACK = 1, 17  # teams.chats[1], from its 17th newest message on
+
+
+async def raw_new_messages(a: Agent) -> bool:
+    """The messages of a chat since a time older than the screen shows: open the chat, then
+    read and scroll back until a message at or before that time is on screen."""
+    chat = a.desk.teams.chats[NEW_CHAT]
+    since = _minutes(chat.msgs[-NEW_BACK].time)
+    at = await a.center(chat.name, "teams.list")
+    if at is None:
+        return False
+    await a.call("jharokha_click", x=at[0], y=at[1], show="none", expect="teams")
+    got: dict[str, dict[str, Any]] = {}
+    for _ in range(12):
+        out = await a.call("jharokha_read_text", region="teams.thread", format="items")
+        its = [m for m in body(out) if m.get("time")]
+        for m in its:
+            got.setdefault(m["time"].replace(" ", ""), m)
+        if any(_minutes(m["time"]) <= since for m in its):
+            break
+        await a.call("jharokha_scroll", ticks=3, x=800, y=600, show="none", expect="teams")
+    times = sorted((t for t in got if _minutes(t) >= since), key=_minutes)
+    return times == [m.time for m in chat.msgs[-NEW_BACK:]]
+
+
+async def do_new_messages(a: Agent) -> bool:
+    chat = a.desk.teams.chats[NEW_CHAT]
+    r = await do(a, "teams.new_messages", chat=chat.name, since=chat.msgs[-NEW_BACK].time)
+    times = [m["time"].replace(" ", "") for m in r.get("items", {}).get("messages", [])]
+    return r["ok"] and times == [m.time for m in chat.msgs[-NEW_BACK:]]
+
+
+def _unread_ok(a: Agent, unread: str | None, subjects: list[str]) -> bool:
+    o = a.desk.outlook
+    want = [m.subject for m in o.mails[: o.visible()]]
+    count = str(sum(m.unread for m in o.folders["Inbox"]))
+    pairs = zip(subjects, want, strict=False)
+    return unread == count and len(subjects) == len(want) and all(seen(s, w) for s, w in pairs)
+
+
+async def raw_outlook_unread(a: Agent) -> bool:
+    """Outlook's Inbox unread count and the mails its list shows, from another app."""
+    await a.switch("outlook")
+    await a.call("jharokha_press", keys="ctrl+1", show="none", expect="outlook")
+    at = await a.center("Inbox", "outlook.folders")
+    if at is None:
+        return False
+    await a.call("jharokha_click", x=at[0], y=at[1], show="none", expect="outlook")
+    mails = body(await a.call("jharokha_read_text", region="outlook.list"))
+    folders = await a.call("jharokha_read_text", region="outlook.folders")
+    m = re.search(r"Inbox\s+(\d+)", folders)
+    return _unread_ok(a, m[1] if m else None, [x.get("subtitle", "") for x in mails])
+
+
+async def do_outlook_unread(a: Agent) -> bool:
+    r = await do(a, "outlook.unread", folder="Inbox")
+    subjects = [x.get("subject", "") for x in r.get("items", {}).get("messages", [])]
+    return r["ok"] and _unread_ok(a, r.get("fields", {}).get("unread"), subjects)
+
+
+PUT_DATA = bytes(range(256)) * 3 + "naïve résumé\r\n".encode() * 8
+
+
+async def raw_put_file(a: Agent) -> bool:
+    """A 900-byte file written in the shell: base64 typed in chunks with jharokha_run,
+    then decoded and its SHA-256 printed and compared."""
+    b64 = base64.b64encode(PUT_DATA).decode()
+    chunks = [b64[i : i + 340] for i in range(0, len(b64), 340)]
+    for i, c in enumerate(chunks):
+        init = "$b=@{}; " if i == 0 else ""
+        await a.call("jharokha_run", command=f"{init}$b[{i}]='{c}'", timeout_s=10)
+    resolve = "$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath"
+    write = (
+        f"$p={resolve}('out.bin'); [IO.File]::WriteAllBytes($p,[Convert]::FromBase64String"
+        f"((-join $b[0..{len(chunks) - 1}]))); (Get-FileHash -A SHA256 -LiteralPath $p).Hash"
+    )
+    out = await a.call("jharokha_run", command=write, timeout_s=10)
+    digest = hashlib.sha256(PUT_DATA).hexdigest().upper()
+    return seen(out, digest, 0.95) and _written(a) == PUT_DATA
+
+
+def _written(a: Agent) -> bytes | None:
+    return a.desk.shell.written.get(f"{a.desk.shell.cwd}\\out.bin")
+
+
+async def do_put_file(a: Agent) -> bool:
+    b64 = base64.b64encode(PUT_DATA).decode()
+    r = await do(a, "terminal.put_file", "irreversible", path="out.bin", content_base64=b64)
+    hashed = r.get("fields", {}).get("hash_check") in ("exact", "folded")
+    return r["ok"] and hashed and _written(a) == PUT_DATA
+
+
+async def raw_run_prompt(a: Agent) -> bool:
+    """A command's output by waiting for the prompt, as jharokha_run did up to 0.19."""
+    out = await a.call("jharokha_run", command="Get-Content notes.txt", shell="other")
+    return out.startswith("run_ms=") and seen(out, a.desk.shell.files["notes.txt"][-1])
+
+
+async def run_marker(a: Agent) -> bool:
+    """The same command by its end marker, with its exit code."""
+    out = await a.call("jharokha_run", command="Get-Content notes.txt")
+    head = out.split("\n")[0]
+    return " ok=true " in head and seen(out, a.desk.shell.files["notes.txt"][-1])
+
+
+async def do_terminal_run(a: Agent) -> bool:
+    r = await do(a, "terminal.run", "irreversible", command="Get-Content notes.txt")
+    return r["ok"] and r.get("output") == a.desk.shell.files["notes.txt"]
+
+
+DRAFT = "draft line one\ndraft line two"
+
+
+async def raw_teams_draft(a: Agent) -> bool:
+    """Two lines left in another chat's compose box, not sent."""
+    chat = a.desk.teams.chats[2]
+    at = await a.center(chat.name, "teams.list")
+    if at is None:
+        return False
+    await a.call("jharokha_click", x=at[0], y=at[1], show="none", expect="teams")
+    await a.call("jharokha_type", text=DRAFT, show="none", expect="teams.chat")
+    return a.desk.teams.chat is chat and chat.draft == DRAFT.split("\n") and not a.desk.teams.sent
+
+
+async def do_teams_draft(a: Agent) -> bool:
+    chat = a.desk.teams.chats[2]
+    r = await do(a, "teams.draft", chat=chat.name, text=DRAFT)
+    return r["ok"] and chat.draft == DRAFT.split("\n") and not a.desk.teams.sent
+
+
+async def do_browser_goto(a: Agent) -> bool:
+    r = await do(a, "browser.goto", "irreversible", url="status.example.net")
+    return r["ok"] and a.desk.browser.url == "https://status.example.net/"
+
+
+async def do_incident_run_into_edge(a: Agent) -> bool:
+    """terminal.run with Edge in front, even allowed to run a command: refused, wrong_app."""
+    out = await a.call(
+        "jharokha_do", action="terminal.run", args={"command": "Get-ChildItem"}, allow="irreversible"
+    )
+    return out.startswith("wrong_app:") and not a.desk.browser.searches and not a.desk.shell.log
+
+
+async def do_incident_draft_sends(a: Agent) -> bool:
+    """teams.draft with a newline: Shift+Enter by Teams' policy, so nothing is sent; and
+    pressing Enter in Teams through an action is refused under the default allow."""
+    chat = a.desk.teams.chat
+    r = await do(a, "teams.draft", chat=chat.name, text=DRAFT)
+    return r["ok"] and not a.desk.teams.sent and chat.draft == DRAFT.split("\n")
+
+
 @dataclass(frozen=True)
 class Scenario:
     name: str
@@ -203,6 +376,7 @@ class Scenario:
     run: Callable[[Agent], Awaitable[bool]]
     incident: bool = False  # an unsafe action, to be refused
     lease: bool = False  # give the window a lease file, in a temporary folder
+    task: str | None = None  # a task done both with the raw tools and as an action
 
 
 SCENARIOS = [
@@ -218,6 +392,21 @@ SCENARIOS = [
     Scenario("incident_newline_sends", "teams", incident_newline_sends, incident=True),
     Scenario("incident_second_agent", "terminal", incident_second_agent, incident=True, lease=True),
     Scenario("incident_user_typing", "terminal", incident_user_typing, incident=True),
+    Scenario("raw_new_messages", "teams", raw_new_messages, task="new_messages"),
+    Scenario("do_new_messages", "teams", do_new_messages, task="new_messages"),
+    Scenario("raw_outlook_unread", "browser", raw_outlook_unread, task="outlook_unread"),
+    Scenario("do_outlook_unread", "browser", do_outlook_unread, task="outlook_unread"),
+    Scenario("raw_put_file", "terminal", raw_put_file, task="put_file"),
+    Scenario("do_put_file", "terminal", do_put_file, task="put_file"),
+    Scenario("raw_run_prompt", "terminal", raw_run_prompt, task="terminal_run"),
+    Scenario("run_marker", "terminal", run_marker, task="terminal_run"),
+    Scenario("do_terminal_run", "terminal", do_terminal_run, task="terminal_run"),
+    Scenario("raw_teams_draft", "teams", raw_teams_draft, task="teams_draft"),
+    Scenario("do_teams_draft", "teams", do_teams_draft, task="teams_draft"),
+    Scenario("browser_goto ", "browser", browser_goto, task="browser_goto"),
+    Scenario("do_browser_goto", "browser", do_browser_goto, task="browser_goto"),
+    Scenario("do_incident_run_into_edge", "browser", do_incident_run_into_edge, incident=True),
+    Scenario("do_incident_draft_sends", "teams", do_incident_draft_sends, incident=True),
 ]
 
 
