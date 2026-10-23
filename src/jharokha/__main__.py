@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from jharokha import version
 from jharokha.core.layout import Layout, LayoutError, load
 from jharokha.core.models import Point
 from jharokha.core.screen import Screen, ScreenError, check_region, png
@@ -26,6 +27,7 @@ def _source():  # noqa: ANN202
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="jharokha", description=__doc__)
+    p.add_argument("--version", action="version", version=f"jharokha {version()}")
     p.add_argument("--window-title", help="substring of the window title to pick")
     p.add_argument(
         "--allow-input",

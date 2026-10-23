@@ -9,13 +9,13 @@ import json
 import re
 import time
 from collections.abc import Callable
-from importlib.metadata import version
 from typing import Any, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from jharokha import version
 from jharokha.core.layout import Layout, choose, to_box
 from jharokha.core.models import Box, Frame, Line, Point
 from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
@@ -128,7 +128,8 @@ def build_server(
 ) -> MCPServer:
     screen = Screen(source)
     layouts = layouts or {}
-    mcp = MCPServer("jharokha", instructions=INSTRUCTIONS, version=version("jharokha"))
+    v = version()
+    mcp = MCPServer("jharokha", instructions=f"jharokha {v}. {INSTRUCTIONS}", version=v)
 
     def tool(fn: Callable[..., Any], annotations: ToolAnnotations = READ_ONLY) -> None:
         doc = " ".join((fn.__doc__ or "").split())
@@ -232,13 +233,14 @@ def build_server(
         """Is there a remote-desktop window and can it be read? Call this first. Returns the
         window title, process, state (normal, minimized, locked, no_frames, window_not_found),
         client size in pixels, DPI scale, whether it is the foreground window, and the app on
-        screen when the layouts file knows it. Pass window_title (a substring) when more than
-        one session is open."""
-        info: dict[str, Any] = {"found": False, "state": "window_not_found"}
+        screen when the layouts file knows it, and this server's version. Pass window_title
+        (a substring) when more than one session is open."""
+        info: dict[str, Any] = {"found": False, "state": "window_not_found", "version": v}
         try:
             w = screen.source.window(window_title)
             if w is not None:
                 info = {
+                    "version": v,
                     "found": True,
                     "title": w.title,
                     "process": w.process,

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.13.1
+
+- Agents can tell which jharokha they are talking to: `jharokha_status` returns `version`, and the server's instructions start with `jharokha <version>.`; `jharokha --version` in a shell.
+- Run from a source checkout, the version is the checkout's `pyproject.toml`. It came from the installed package metadata, which `uv run --no-sync` leaves at the last sync, so a checkout at 0.13.0 reported 0.7.1.
+
 ## v0.13.0
 
 - `jharokha_run(command)`, opt-in with the other input tools: runs a command in the shell that has focus (PowerShell, cmd, bash) and returns only what it printed. It types the command (`paste=true` pastes it) and Enter, waits until the shell's prompt is back below the command and the screen holds still, and returns the lines in between, read on the terminal's grid when the layouts file has one. `clear=true` clears the screen first. When the output was taller than the screen, the result says its start is missing. This replaces the type, wait_for_text and screenshot calls a command took, and the `cls` and marker tricks around them.
