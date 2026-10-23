@@ -195,6 +195,21 @@ async def test_run_returns_only_the_commands_output():
         assert r.is_error and text(r).startswith("bad_prompt")
 
 
+async def test_version_of_the_running_code_in_status_and_instructions(source):
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    want = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+    server = build_server(source)
+    assert (server.instructions or "").startswith(f"jharokha {want}. ")
+    async with Client(server) as c:
+        assert json.loads(text(await c.call_tool("jharokha_status", {})))["version"] == want
+    source.present = False
+    async with Client(build_server(source)) as c:
+        assert json.loads(text(await c.call_tool("jharokha_status", {})))["version"] == want
+
+
 async def test_unchanged_screen_is_not_ocrd_twice(source):
     async with Client(build_server(source)) as c:
         await c.call_tool("jharokha_read_text", {})

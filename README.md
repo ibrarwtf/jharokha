@@ -51,7 +51,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 
 | Tool | Purpose |
 |---|---|
-| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? |
+| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also the app on screen and this server's `version`. |
 | `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). Paged. |
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
 | `jharokha_layout` | How the screen is divided: detected panels (`P0`, `P1`, ...) with their boxes and first line, and your named regions with whether their app is on screen. |
