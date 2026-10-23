@@ -11,6 +11,7 @@ from typing import Any
 
 from jharokha.core.actions import RegionInfo, Snapshot
 from jharokha.core.elements import elements
+from jharokha.core.locate import spot_px
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError
 from jharokha.core.session import Session
@@ -59,8 +60,9 @@ class SessionExecutor:
         cat = s.catalog
         lines = s.screen.lines(frame, None)
         size = (frame.width, frame.height)
-        spots = {k: (round(x * size[0]), round(y * size[1])) for k, (x, y) in cat.spots.items()}
         at = s.where(frame, lines)
+        front = None if looks_locked(lines) else at.ident.app
+        spots = {k: spot_px(p, *size) for k, p in cat.spots_for(front).items()}
         regions: dict[str, Box] = {}
         for name in dict.fromkeys([*cat.session_cal, *cat.session]):
             if p := cat.session_box(name, at.panes, *size):

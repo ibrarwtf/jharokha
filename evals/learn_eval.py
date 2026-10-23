@@ -17,15 +17,29 @@ without it) and read by the real Windows OCR. Scored on held-out seeds 100 and u
 - anchors: share of chosen anchors that every held-out screen draws where they belong, so
   UI text and not content; the others are listed. seen: share of (anchor, frame) pairs
   where OCR read the anchor there (small text at 12 px is missed by OCR, not by learning)
-- problems: verify's problems on the held-out frames"""
+- problems: verify's problems on the held-out frames
+
+Then onboarding (`--onboard` alone): a ticket queue no built-in knows (evals.sim.tickets) on
+the simulated session, taught through the MCP tools only, as an agent with the user would:
+status, scan, name_icons (tooltips), propose with names, a scroll and verify, zoom, save
+(the change shown) and save with confirm, then status identifies it, its list reads as
+items, and a hand-written action (below) opens a ticket by clicking a named icon and an
+item. Reported: each goal, calls, tokens returned, wall time, and the session's events
+(nothing sent, no click before the save)."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
+import re
+import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from statistics import mean
+from typing import Any
 
 from evals.render import Screen, render
 from evals.screens import TASKBAR, browser, calendar, ids, outlook, teams, terminal
@@ -212,13 +226,162 @@ def score(
     }
 
 
+# Onboarding a new app through the tools
+
+# Written by hand once the app is learned, as a user would add it to apps.toml: refresh the
+# queue by its icon (a spot learned from its tooltip), open a ticket by its title in the
+# list region, and read the detail region.
+TICKETS_ACTION = """format = 1
+[action.tickets.open]
+summary = "Refresh the queue, open the ticket with this title and return its details."
+max_risk = "reversible"
+args.title = { type = "text", max_len = 100 }
+
+[[action.tickets.open.step]]
+do = "focus"
+switch = true
+
+[[action.tickets.open.step]]
+do = "click"
+target = { spot = "refresh" }
+risk = "reversible"
+
+[[action.tickets.open.step]]
+do = "click"
+target = { text = "{title}", region = "queue" }
+risk = "reversible"
+expect = { text = "{title}", region = "detail" }
+
+[[action.tickets.open.step]]
+do = "read"
+region = "detail"
+into = "ticket"
+"""
+
+
+def names_from(scan: str, tips: str) -> dict[str, str]:
+    """What an agent would name, from the scan and name_icons as the tools return them: the
+    list pane `queue`, the focus pane `detail`, each icon by its tooltip."""
+    names: dict[str, str] = {}
+    for m in re.finditer(r"^P(\d+) (\w+) reader=\w+( focus)?", scan, re.M):
+        if m[3]:
+            names[f"P{m[1]}"] = "detail"
+        elif m[2] == "list":
+            names[f"P{m[1]}"] = "queue"
+    if m := re.search(r"^names: (\{.*\})$", tips, re.M):
+        names |= json.loads(m[1])
+    return names
+
+
+@dataclass
+class Onboarding:
+    goals: dict[str, bool] = field(default_factory=dict)
+    steps: list[tuple[str, int, int]] = field(default_factory=list)  # step, calls, tokens
+    calls: int = 0
+    tokens: int = 0
+    wall_s: float = 0.0
+    before_save: list[str] = field(default_factory=list)  # the session's events till then
+    sent: int = 0
+    lines: int = 0  # of the apps.toml written
+
+
+async def onboard(codec: bool, seed: int = 100) -> Onboarding:
+    from mcp import Client
+
+    from evals.scenarios import Agent, body, seen
+    from evals.sim import SimSource
+    from jharokha.core import actions
+    from jharokha.server import build_server
+
+    src = SimSource(Desktop(seed, front="tickets", tickets=True), codec=codec)
+    path = Path(tempfile.mkdtemp()) / "apps.toml"
+    acts = {**actions.builtin(), **actions.parse(TICKETS_ACTION, "hand-written")}
+    server = build_server(src, True, src.catalog(), None, acts, path)
+    o = Onboarding()
+    goals = o.goals
+    t0 = time.perf_counter()
+    async with Client(server) as c:
+        a = Agent(c, src)
+
+        async def step(name: str, tool: str, **kw: Any) -> str:
+            calls, tokens = a.calls, a.tokens
+            out = await a.call(tool, **kw)
+            o.steps.append((name, a.calls - calls, a.tokens - tokens))
+            return out
+
+        s = json.loads(await step("status", "jharokha_status"))
+        goals["unknown at first"] = s["app"] == "generic"
+        scan = await step("scan", "jharokha_learn", step="scan", app="tickets", view="queue")
+        tips = await step("name_icons", "jharokha_learn", step="name_icons")
+        names = names_from(scan, tips)
+        goals["icons named by tooltip"] = sum(k.startswith("I") for k in names) == 5
+        r = await step("propose", "jharokha_learn", step="propose", names=names)
+        goals["proposal identifies"] = " ok, confidence 1.0" in r
+        await step("scroll", "jharokha_act", op="scroll", target=[200, 600], ticks=-3, show="none")
+        r = await step("verify", "jharokha_learn", step="verify")
+        goals["verified after a scroll"] = "problems:\n(none)" in r
+        r = await step("zoom", "jharokha_learn", step="zoom", steps="-1..1")
+        goals["zoom variants, zoom put back"] = (
+            "back to step +0" in r and src.desk.tickets.zoom == 0
+        )
+        r = await step("save (shown)", "jharokha_learn", step="save")
+        goals["save shows the change first"] = r.startswith("not saved yet") and not path.exists()
+        o.before_save = sorted({e.kind for e in src.desk.events})
+        r = await step("save (confirm)", "jharokha_learn", step="save", confirm=True)
+        goals["saved"] = r.startswith("saved tickets.queue")
+        s = json.loads(await step("status", "jharokha_status"))
+        goals["status identifies it"] = (s["app"], s["view"]) == ("tickets", "queue")
+        r = await step("read list", "jharokha_read", region="tickets.queue")
+        items = body(r) if "reader=list" in r else []
+        shown = [src.desk.tickets.tickets[i].title for i, _ in src.desk.tickets.shown()]
+        goals["list read as items"] = len(items) == len(shown) and all(
+            seen(json.dumps(items), t) for t in shown
+        )
+        want = shown[2]
+        r = await step("do", "jharokha_do", action="tickets.open", args={"title": want})
+        out = body(r) if 'untrusted="true">' in r else {}
+        detail = "\n".join(out.get("lines", {}).get("ticket", []))
+        t = src.desk.tickets
+        goals["action opened it by a learned spot"] = (
+            out.get("ok") is True
+            and t.tickets[t.open].title == want
+            and seen(detail, "Status: Open")
+            and any(e.kind == "refresh" for e in src.desk.events)
+        )
+    o.calls, o.tokens = a.calls, a.tokens
+    o.wall_s = round(time.perf_counter() - t0, 1)
+    o.sent = sum(e.kind == "sent" for e in src.desk.events)
+    o.lines = path.read_text(encoding="utf-8").count("\n") if path.exists() else 0
+    return o
+
+
+def print_onboarding(codec: bool) -> None:
+    o = asyncio.run(onboard(codec))
+    print(f"onboarding a new app (ticket queue, GDI{' + codec' if codec else ''}):")
+    for name, calls, tokens in o.steps:
+        print(f"  {name:16} {calls} call{'s' if calls != 1 else ''} {tokens:6} tokens")
+    print(
+        f"  total {o.calls} calls, {o.tokens} tokens, {o.wall_s} s; goals "
+        f"{sum(o.goals.values())} of {len(o.goals)}; apps.toml {o.lines} lines; the "
+        f"session's events before the save: {', '.join(o.before_save) or 'none'}; "
+        f"messages sent {o.sent}"
+    )
+    for name, ok in o.goals.items():
+        if not ok:
+            print(f"  missed: {name}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="python -m evals.learn_eval")
     ap.add_argument("--held", type=int, default=5, help="held-out seeds from 100")
     ap.add_argument("--clean", action="store_true", help="no codec pass")
     ap.add_argument("--show", action="store_true", help="print each scan and proposal")
     ap.add_argument("--one-size", action="store_true", help="held out at the learned size only")
+    ap.add_argument("--onboard", action="store_true", help="only the onboarding scenario")
     args = ap.parse_args()
+    if args.onboard:
+        print_onboarding(not args.clean)
+        return
     frames = Frames(codec=not args.clean)
     held = list(range(100, 100 + args.held))
     every = not args.one_size
@@ -274,6 +437,7 @@ def main() -> None:
             for p in problems:
                 print(f"  {p}")
     print(f"scan: median {sorted(frames.scan_ms)[len(frames.scan_ms) // 2]:.0f} ms a frame")
+    print_onboarding(not args.clean)
 
 
 if __name__ == "__main__":

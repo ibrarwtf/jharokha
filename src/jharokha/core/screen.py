@@ -43,6 +43,11 @@ class Source(Protocol):
         self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
     ) -> None: ...
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None: ...
+    def hover(self, w: WindowInfo, x: int, y: int) -> None:
+        """The session's pointer to (x, y), no button, and left there: what a tooltip
+        needs. Guarded as the other input is."""
+        ...
+
     def guard_state(self, w: WindowInfo) -> dict[str, Any]:
         """{"warnings": [...], "input": {...}}: parts of the client hidden from view
         (core.guard.warnings), and for input another process's lease on the window

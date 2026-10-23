@@ -34,6 +34,12 @@ An app's `policy` table shapes and limits input to it (core.guard.Policy):
     newline = "shift+enter"               # a typed newline adds a line, never sends
     irreversible_keys = ["enter"]         # refused unless the call passes allow="irreversible"
 
+An app's `spots` name its text-less targets (jharokha_learn names them from its icons):
+
+    [app.tickets]
+    spots = { reply = [0.127, 0.06, 0.021, 0.02] }   # the icon's centre and size; a target
+                                                     # as {spot = "tickets.reply"}
+
 Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions; an app's
 own `action` table is accepted and kept, unused."""
 
@@ -60,6 +66,7 @@ SESSION = "session"
 PANE_FIT = 0.6
 
 Point2 = tuple[float, float]
+Spot = tuple[float, ...]  # x, y; or the centre and the size: x, y, width, height
 RGB = tuple[int, int, int]
 
 
@@ -132,6 +139,10 @@ class App:
     policy: dict[str, Any] = field(default_factory=dict)  # as written; checked when parsed
     action: dict[str, Any] = field(default_factory=dict)  # reserved: actions (0.20)
     source: str = "built-in"
+    # Text-less targets (a send button, an attach icon) by name: the icon's centre and, when
+    # learned, its size, as fractions of the client area. The locator {spot = "<app>.<name>"}
+    # takes one only while the app is in front and an icon of that size is still there.
+    spots: dict[str, Spot] = field(default_factory=dict)
 
     @property
     def input_policy(self) -> Policy:
@@ -218,6 +229,16 @@ def _point(v: Any, where: str) -> Point2:
     if not all(0 <= f <= 1 for f in v):
         raise AppError(f"{where} must be [x, y] as fractions 0..1")
     return (float(v[0]), float(v[1]))
+
+
+def _spot(v: Any, where: str) -> Spot:
+    ok = isinstance(v, list) and len(v) in (2, 4)
+    if not ok or not all(isinstance(f, int | float) and 0 <= f <= 1 for f in v):
+        raise AppError(
+            f"{where} must be [x, y], or [x, y, width, height] with x, y the centre, as "
+            "fractions 0..1 of the client area"
+        )
+    return tuple(float(f) for f in v)
 
 
 def _num(v: Any, where: str) -> float:
@@ -330,7 +351,7 @@ def _view(vid: str, t: dict[str, Any], where: str) -> View:
 
 
 def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
-    _only(t, ("name", "cue", "view", "policy", "action"), where)
+    _only(t, ("name", "cue", "view", "policy", "action", "spots"), where)
     if aid == SESSION:
         raise AppError(f"{where}: '{SESSION}' is reserved for the session's own regions")
     views = {
@@ -346,6 +367,12 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
         Policy.parse(t.get("policy", {}), f"{where}.policy")
     except ValueError as e:
         raise AppError(str(e)) from None
+    if not isinstance(t.get("spots", {}), dict):
+        raise AppError(f"{where}.spots must be a table of [x, y]")
+    spots = {
+        _id(k, f"{where}.spots"): _spot(p, f"{where}.spots.{k}")
+        for k, p in t.get("spots", {}).items()
+    }
     return App(
         id=_id(aid, where),
         name=_text(t.get("name", aid), f"{where}.name"),
@@ -354,6 +381,7 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
         policy=dict(t.get("policy", {})),
         action=dict(t.get("action", {})),
         source=source,
+        spots=spots,
     )
 
 
@@ -521,6 +549,15 @@ class Catalog:
 
     def views(self) -> list[str]:
         return [f"{a.id}.{v}" for a in self.apps.values() for v in a.views]
+
+    def spots_for(self, app: str | None) -> dict[str, Spot]:
+        """The session's spots, and those of app (the one in front) by `app.name`: an app's
+        icon is a target only while its app is on screen."""
+        out: dict[str, Spot] = dict(self.spots)
+        a = self.apps.get(app or "")
+        if a is not None:
+            out.update({f"{a.id}.{k}": p for k, p in a.spots.items()})
+        return out
 
     def policies(self) -> dict[str, Policy]:
         """Each app's input policy, by app id."""
@@ -704,7 +741,7 @@ def load(path: Path | None = None, layouts: Mapping[str, Layout] | None = None) 
     return catalog(*docs)
 
 
-# Writing calibration (jharokha measure)
+# Writing calibration (jharokha_learn)
 
 
 def _nums(v: Iterable[float]) -> str:

@@ -77,27 +77,26 @@ def test_do_shows_a_plan_without_input(monkeypatch, source, capsys):
         run(monkeypatch, source, "do", "teams.draft", "--args", '{"chat": "Ana", "text": "hi"}')
 
 
-def test_measure_writes_calibration_to_apps_toml(monkeypatch, source, tmp_path, capsys):
+def test_learn_shows_the_change_saves_with_save_and_measure_is_its_alias(
+    monkeypatch, source, tmp_path, capsys
+):
     from jharokha.core import apps
 
-    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
     path = tmp_path / "apps.toml"
+    run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine")
+    assert "not saved yet" in capsys.readouterr().out and not path.exists()
     run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build")
-    cat = apps.load(path)
-    assert cat.apps["mine"].views["main"].cues[0].text == ("Build",)
-    regions = cat.calibration[("mine", "main")].variants[0].regions
-    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build",
-        "--focus", next(iter(regions)))  # fmt: skip
-    # Remeasuring replaces the view's calibration and keeps the focus set before.
-    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build")
-    text = path.read_text(encoding="utf-8")
-    assert text.startswith("format = 1") and text.count("[calibration.mine.main]") == 1
-    assert text.count("written by") == 1
-    assert apps.load(path).calibration[("mine", "main")].focus == next(iter(regions))
-    # A built-in app is calibrated in its first view.
-    run(monkeypatch, source, "--apps", str(path), "measure", "terminal", "--anchor", "Build")
-    assert ("terminal", "shell") in apps.load(path).calibration
-    assert "wrote" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert "deprecated" in out.err and "learn --app mine" in out.err
+    assert out.out.rstrip().endswith("its regions read as mine.<region>")
+    assert "mine" in apps.load(path).apps
+    # Zoom and tooltips send input; a known view is calibrated, and must be on screen.
+    for flag in ("--zoom=-1..1", "--name-icons"):
+        with pytest.raises(SystemExit, match="input_disabled"):
+            run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine", flag)
+    with pytest.raises(SystemExit, match="layout_mismatch"):
+        run(monkeypatch, source, "--apps", str(path), "learn", "--app", "terminal", "--save")
+    assert not any(t.startswith(("pressed", "hovered")) for t, _, _ in source.items)
 
 
 def test_screenshot_writes_a_png(monkeypatch, source, tmp_path, capsys):

@@ -74,3 +74,6 @@ class EvalSource(WindowsSource):
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         pass
+
+    def hover(self, w: WindowInfo, x: int, y: int) -> None:
+        pass

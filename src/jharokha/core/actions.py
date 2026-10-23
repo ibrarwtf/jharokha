@@ -69,9 +69,20 @@ from jharokha.core import guard, listread, readers
 from jharokha.core import shell as sh
 from jharokha.core.apps import GENERIC
 from jharokha.core.guard import Policy
-from jharokha.core.locate import Hit, Locator, Miss, RegionInfo, inside, locate, locator, row_texts
+from jharokha.core.locate import (
+    Hit,
+    Locator,
+    Miss,
+    RegionInfo,
+    Spot,
+    app_spot,
+    inside,
+    locate,
+    locator,
+    row_texts,
+)
 from jharokha.core.locate import rows as screen_rows
-from jharokha.core.models import Box, Line, Point, Word
+from jharokha.core.models import Box, Line, Word
 from jharokha.core.screen import ScreenError
 from jharokha.core.text import find, fold
 
@@ -380,7 +391,7 @@ class Snapshot:
     view: str | None
     ready: bool | None = None
     regions: dict[str, Box] = field(default_factory=dict)
-    spots: dict[str, Point] = field(default_factory=dict)
+    spots: dict[str, Spot] = field(default_factory=dict)
     locked: bool = False
     confidence: float = 1.0
     info: dict[str, RegionInfo] = field(default_factory=dict)
@@ -672,10 +683,12 @@ class Runner:
         loc = locator(t)
         screen = (0, 0, *snap.size)
         regions, info = self._regions(snap), self._info(snap)
-        # Text-less elements are found from the pixels only when a step asks for an icon.
+        spots = self._short(snap.spots)
+        # Text-less elements are found from the pixels only when a step asks for an icon, or
+        # for an app's spot, which holds only while its icon is there.
         icons = getattr(self.ex, "icons", None)
-        found = icons() if loc.icon and icons else []
-        hit = locate(loc, snap.lines, regions, snap.spots, screen, info, found)
+        found = icons() if (loc.icon or app_spot(loc, spots)) and icons else []
+        hit = locate(loc, snap.lines, regions, spots, screen, info, found)
         if isinstance(hit, Miss):
             raise _Fail(f"{loc.describe()}: {hit.reason}", hit.candidates)
         return hit

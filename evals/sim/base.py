@@ -70,6 +70,9 @@ class SimApp:
     def scroll(self, x: int, y: int, ticks: int) -> None:
         pass
 
+    def hover(self, x: int, y: int) -> None:
+        """The pointer came to rest at (x, y), with no button."""
+
     def key(self, key: str, mods: Mods) -> None:
         pass
 

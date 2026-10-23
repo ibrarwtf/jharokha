@@ -9,6 +9,7 @@ its centre, or a clear miss with the closest texts on screen.
     { below = "Inbox" }                       the nearest text under it (left_of, above too)
     { region = "compose" }                    a region's centre
     { spot = "taskbar.teams" }                a session spot (a taskbar icon)
+    { spot = "tickets.reply" }                an app's spot: its icon, while one is there
     { region = "list", nth = 2 }              the second item of a region (-1: the last), as
                                               its reader makes items (core.readers)
     { text = "Open", nth = 2 }                the second match
@@ -32,6 +33,9 @@ from jharokha.core.text import clean, find, fold
 KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth", "icon")
 _SIDES = ("right_of", "left_of", "below", "above")
 _SPOT = 16  # px; the box a spot stands for, about an icon's middle
+_PAD = 6  # px; how far outside an icon's box its spot may fall and still be on it
+_SIZE = 0.15  # how much an icon's width or height may differ from the one learned
+Spot = tuple[int, ...]  # a spot in pixels: x, y, and the icon's width and height if known
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,39 @@ def locator(t: Mapping[str, object]) -> Locator:
     return loc
 
 
+def app_spot(loc: Locator, spots: Mapping[str, Spot]) -> bool:
+    """Whether loc names an app's spot (an icon it was taught), which holds only where the
+    screen still shows an icon: the caller passes the elements found to locate."""
+    return bool(loc.spot) and loc.spot in spots and not str(loc.spot).startswith("session.")
+
+
+def spot_px(spot: Sequence[float], width: int, height: int) -> Spot:
+    """A spot in fractions of the client area (x, y and maybe width, height) in pixels."""
+    return tuple(round(v * (width if i % 2 == 0 else height)) for i, v in enumerate(spot))
+
+
+def spot_icon(spot: Spot, icons: Sequence[Box]) -> Box | None:
+    """The icon at an app's spot in pixels: under its centre and, when the spot has a size,
+    about that size (an icon zoomed, or another icon that moved there, is not it)."""
+    icon = icon_at((spot[0], spot[1]), icons)
+    if icon is None or len(spot) < 4:
+        return icon
+    same = all(abs(icon[k] - spot[k]) <= max(3, _SIZE * spot[k]) for k in (2, 3))
+    return icon if same else None
+
+
+def icon_at(p: Point, icons: Sequence[Box], pad: int = _PAD) -> Box | None:
+    """The icon under p, give or take pad px; the nearest when two are."""
+    near = [
+        b
+        for b in icons
+        if b[0] - pad <= p[0] < b[0] + b[2] + pad and b[1] - pad <= p[1] < b[1] + b[3] + pad
+    ]
+    return min(
+        near, key=lambda b: abs(_center(b)[0] - p[0]) + abs(_center(b)[1] - p[1]), default=None
+    )
+
+
 def inside(lines: list[Line], box: Box) -> list[Line]:
     """Lines whose centre is in box."""
     x, y, w, h = box
@@ -171,7 +208,7 @@ def locate(
     loc: Locator,
     lines: list[Line],
     regions: Mapping[str, Box],
-    spots: Mapping[str, Point],
+    spots: Mapping[str, Spot],
     screen: Box,
     info: Mapping[str, RegionInfo] | None = None,
     icons: Sequence[Box] = (),
@@ -179,8 +216,8 @@ def locate(
     """loc on this screen. lines are the whole screen's; regions are the placed named
     regions of the view on screen and the session (full names, `teams.list`, or the short
     ones the caller resolved), info how each reads as items (text blocks when not given);
-    spots the session spots in pixels; icons the text-less elements found (core.elements),
-    for an icon locator."""
+    spots the session's spots and the front app's, in pixels; icons the text-less elements
+    found (core.elements), for an icon locator or an app's spot."""
     if loc.icon:
         found = icon_hits(loc, lines, regions, screen, icons)
         if isinstance(found, Miss):
@@ -195,10 +232,23 @@ def locate(
         if p is None:
             known = ", ".join(spots) or "none"
             return Miss(
-                f"no session spot '{loc.spot}' (spots: {known}); `jharokha measure` records them"
+                f"no spot '{loc.spot}' here (spots: {known}); an app's spots count only while "
+                "it is in front"
             )
-        b = (p[0] - _SPOT // 2, p[1] - _SPOT // 2, _SPOT, _SPOT)
-        return Hit(b, p, f"spot {loc.spot}")
+        at = (p[0], p[1])
+        if not app_spot(loc, spots):
+            b = (at[0] - _SPOT // 2, at[1] - _SPOT // 2, _SPOT, _SPOT)
+            return Hit(b, at, f"spot {loc.spot}")
+        # An app's icon moves with its zoom and the window's size; a click where it was
+        # would land on whatever is there now, another icon too.
+        icon = spot_icon(p, icons)
+        if icon is None:
+            return Miss(
+                f"no icon of the size learned at spot '{loc.spot}' {list(at)} now: the app "
+                "was zoomed, resized or redrawn since it was learned; learn it again "
+                "(jharokha_learn)"
+            )
+        return Hit(icon, _center(icon), f"app spot {loc.spot}")
     bounds = screen
     if loc.region:
         if loc.region not in regions:

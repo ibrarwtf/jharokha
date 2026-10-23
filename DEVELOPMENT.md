@@ -26,8 +26,8 @@ uv run jharokha --window-title "Fake Remote" bench
 
 - Input routing (`desktop.py`): a click on a taskbar icon brings that app forward; any other click, the wheel and keys go to the app in front, which handles them by point and by its own keyboard focus (Teams' compose or search box, Edge's address bar or page). Typed `\n` is Enter, as `jharokha_act(op="type")` sends it; a paste is the text by Ctrl+V and a final Enter, as `op="paste"` sends it. A lock screen (`desk.lock(variant)`) swallows all input and logs it.
 - Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
-- Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
-- Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
+- Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message or a ticket's reply), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `hover`, a ticket toolbar's `new`, `refresh`, `assign`, `reply`, `close`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
+- Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator. `tickets.py` is a ticket queue no built-in definition knows, for learning: `Desktop(seed, front="tickets", tickets=True)` adds it with a taskbar icon of its own (left out by default, so the other apps' taskbar spots stay put). Its toolbar's five icons show tooltips while the pointer rests on them (`Source.hover`, `desk.hover`), and Ctrl+= / Ctrl+- / Ctrl+0 zoom the whole app (0.8 to 1.2).
 - Input guards, as `WindowsSource` applies them and with the same `core/guard.py` decisions: `SimSource(lease_root=DIR)` gives the window a real lease file in DIR (a second agent is another `Lease(HWND, root=DIR, pid=<a live pid not ours>)` that took it), `user_idle=` stands in for the last-input clock (seconds, or None for no input but ours; asked before every input), `user_keys_at` for the hooks while text is sent (the user presses a key once that many characters have gone: typing stops there, a paste before its Enter), `covered=` for what covers the window. The server's checks (`expect`, the app's policy) run unchanged on it.
 
 ```
@@ -232,6 +232,38 @@ The misses are OCR's: the calendar's hour labels (10 to 14 px grey) and some day
 | incident_second_agent | refused, input_leased | 1 | 0.66 | 75 | |
 | incident_user_typing | refused, user_active | 1 | 0.65 | 70 | |
 
+### Learning apps (v0.22.0)
+
+Onboarding is `jharokha_learn` end to end: scan, name, propose, verify, calibrate, save, with nothing a person has to type into a file. Choices:
+
+- Zoom and size are calibration variants, as `jharokha measure --zoom` wrote them, now from the tool: `step="variant"` keeps the screen now (the user changed the zoom), `step="zoom"` presses Ctrl+0 / Ctrl+= / Ctrl+- itself (only with `--allow-input`; each key traced, guarded and checked against the app's policy; the screen must be the app being learned, else `wrong_app` with nothing sent), then puts the zoom back at the step whose anchor sits where it sat before. On another zoom a region is the pane under its point when that pane overlaps its box by IoU 0.3 or more (`learn._zoomed`), not 0.6 as for identification: zoomed, a header bar shifts by more than that. Variants of the screen the proposal was made on start with it (`base`); a screen laid out as an existing variant (anchor within 0.003) is refused. A known view (a built-in app at the user's zoom) is calibrated the same way and saves only calibration (`Proposal.calibration_only`). `jharokha measure` is now a deprecated alias of `jharokha learn --app APP [--zoom Z] --save`; `measure.py` and `layout.measure` (regions as columns and bands of text, which only it used) are gone. Its old `--names`, `--focus` and `--grid` flags went with it: learning names regions, picks the focus and measures grids itself.
+- Icons: a scan lists the text-less elements in each pane (`I<n>`, its centre, the text beside it); `names={"I2": "send"}` makes them spots of the app, stored as the icon's centre and size. A spot is taken only while its app is in front (`Catalog.spots_for`) and an icon of about that size (15%) is under it (`locate.spot_icon`): zoomed out, the simulated queue's "reply" spot falls on its "close" icon, which a check for any icon there let through. Hits on an app spot are `app spot <name>`, so an action's click on one is guarded for its app (a session spot, the taskbar, is not: it switches apps). `verify` drops a spot with no such icon on a frame.
+- Tooltips: `name_icons` rests the pointer on each icon of the first scan (at most 16), waits up to 1.5 s for the screen to change, settles, reads a region around the icon close up, and takes the text that appeared nearest it, less lines that start where a line was (a line the tooltip covers reads shorter). It parks the pointer at the right edge after each icon and waits for the screen to be as before. `Source.hover` (`win/input.hover`: `_active` without parking) moves the pointer and leaves it: the session keeps the last position it saw, which is why every other input parks it. Hovers are traced (`hover`). Never a click.
+- Save: `step="save"` without `confirm=true` returns the unified diff of apps.toml and writes nothing; the description tells the agent to show it first. Either way a definition is refused when an anchor, the ready text or a calibration anchor looks like content (`learn.content_like`: an email address, a phone number, 4 digits or more, more than 6 words or 48 characters), listing them; no built-in view trips it. Saving still needs no `--allow-input`: it writes a local file and sends nothing.
+- A missing `--apps` file is no longer an error at start: it is the file learning will write.
+
+The `tools/list` entry of `jharokha_learn` grew from 411 to 559 tokens (characters / 4 of its JSON): new steps and three parameters, still one tool. The whole list is 148 tokens longer: about 3,420 a session with input, 2,770 without.
+
+`python -m evals.learn_eval --onboard` onboards the simulated ticket queue through the MCP server and the real OCR, as an agent would (GDI + codec):
+
+| step | calls | tokens |
+|---|---|---|
+| status | 1 | 99 |
+| scan | 1 | 284 |
+| name_icons (5 tooltips) | 1 | 148 |
+| propose (2 regions, 5 spots) | 1 | 439 |
+| scroll (act) | 1 | 9 |
+| verify | 1 | 439 |
+| zoom -1..1, restored | 1 | 91 |
+| save, the change shown | 1 | 600 |
+| save, confirmed | 1 | 44 |
+| status: `tickets queue` | 1 | 102 |
+| read `tickets.queue` as items | 1 | 352 |
+| do `tickets.open` (a spot, a list item, the detail) | 1 | 90 |
+| all | 12 | 2,697 |
+
+7.9 s wall, 10 of 10 goals, 68 lines of apps.toml, and nothing in the session but hovers before the save (no click, no key, nothing sent).
+
 ### Tools (v0.21.0)
 
 0.20 had grown 17 tools, one per need as it came. 0.21 has nine that new apps and actions never add to: `status`, `apps`, `read`, `find`, `wait`, `do`, `learn`, `screenshot`, and with `--allow-input` `act`. Choices:
@@ -378,7 +410,8 @@ Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`
 
 - Edge's tab strip, which runs into the toolbar through the selected tab.
 - Identification on the live session, and calibration of Outlook and the browser there; the readers on live Teams and Outlook (dividers, bubbles and quotes were measured live, calendar and tables only on generated screens).
-- Small grey text in a large region (a calendar's hours, a bold two-letter header) is missed by Windows OCR at 1.0x and costs those table cells; `jharokha measure --grid` still measures with Windows OCR words, not `rows.calibrate`; row grids are tuned on Cascadia Mono, light themes and box drawing untested.
+- Small grey text in a large region (a calendar's hours, a bold two-letter header) is missed by Windows OCR at 1.0x and costs those table cells; a learned grid's calibration is still measured from Windows OCR words, not `rows.calibrate`; row grids are tuned on Cascadia Mono, light themes and box drawing untested.
+- Learning on a live app: tooltips' delay and placement, icons a hover card answers instead, zoom keys an app does not take. Spots do not follow a zoom (they are refused there); per-variant spots would. A learned app gets no input policy, so nothing in it is held back as irreversible until one is written by hand.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 
 ## Release

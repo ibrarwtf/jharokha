@@ -62,6 +62,7 @@ ICON_COLOURS = {
     "teams": (98, 100, 167),
     "outlook": (0, 114, 198),
     "browser": (0, 140, 170),
+    "tickets": (37, 56, 88),
 }
 CLOCK, DATE = "9:41", "10/23/2026"
 
@@ -96,11 +97,15 @@ class Desktop:
         front: str = "teams",
         term_px: int = 20,
         clock: Callable[[], float] = time.monotonic,
+        tickets: bool = False,
     ) -> None:
+        """tickets adds the ticket queue no built-in definition knows (evals.sim.tickets),
+        with a taskbar icon of its own, for learning an app."""
         from evals.sim.browser import Browser
         from evals.sim.outlook import Outlook
         from evals.sim.shell import Shell
         from evals.sim.teams import Teams
+        from evals.sim.tickets import Tickets
 
         self.seed, self.clock, self.t0 = seed, clock, clock()
         self.version = 0
@@ -115,6 +120,9 @@ class Desktop:
         self.apps: dict[str, SimApp] = {
             a.id: a for a in (self.shell, self.teams, self.outlook, self.browser)
         }
+        self.tickets = Tickets(self, seed)
+        if tickets:
+            self.apps["tickets"] = self.tickets
         self.front = front
 
     # State and time
@@ -224,6 +232,16 @@ class Desktop:
         if self._ignored("scroll") or y >= TASKBAR_Y:
             return
         self.app.scroll(x, y, ticks)
+        self.changed()
+
+    def hover(self, x: int, y: int) -> None:
+        """The pointer rests at (x, y): the app in front may show a tooltip there; anywhere
+        else (the taskbar, the right edge where input parks it) takes it away."""
+        self.tick()
+        if self._ignored("hover"):
+            return
+        self.app.hover(x, y)
+        self.event(self.front, "hover", f"{x},{y}")
         self.changed()
 
     def type_text(self, text: str, focus_at: tuple[int, int] | None = None) -> None:

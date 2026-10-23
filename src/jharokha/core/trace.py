@@ -15,8 +15,9 @@ from typing import Any
 
 from jharokha.core.models import Box, Point
 
-# "do": an action refused before any of its input (its inputs are traced one by one).
-ACTIONS = frozenset({"click", "type", "press", "scroll", "do"})
+# "do": an action refused before any of its input (its inputs are traced one by one);
+# "hover": the pointer moved onto an icon to read its tooltip (jharokha_learn).
+ACTIONS = frozenset({"click", "type", "press", "scroll", "hover", "do"})
 
 
 def _now() -> datetime:

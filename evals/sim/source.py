@@ -91,7 +91,7 @@ class SimSource:
 
     def catalog(self) -> Catalog:
         """The built-in definitions plus the taskbar icons as session spots
-        (session.taskbar.<app>), as `jharokha measure` would record them."""
+        (session.taskbar.<app>), as a local apps.toml records them."""
         spots = ", ".join(
             f'"taskbar.{a}" = [{x / W:.4f}, {y / H:.4f}]' for a, (x, y) in self.desk.spots().items()
         )
@@ -182,3 +182,8 @@ class SimSource:
                 self.desk.press(combo, focus_at)
             except ValueError as e:
                 raise ScreenError("bad_key", str(e)) from e
+
+    def hover(self, w: WindowInfo, x: int, y: int) -> None:
+        with self._lock:
+            self._guard()
+            self.desk.hover(x, y)
