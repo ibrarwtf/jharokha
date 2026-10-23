@@ -20,7 +20,10 @@ text = ["Other favourites", "Other favorites", "Favourites", "Favorites", "Bookm
 pane = [0, 0.162, 1, 0.787]
 weight = 0.5
 
-[app.browser.policy]  # reserved: risk, from 0.19
+# Enter in the address bar navigates, or sends what was typed to a search engine (a shell
+# command typed into Edge was searched for on the web); on a page it submits a form.
+[app.browser.policy]
+irreversible_keys = ["enter"]
 
 [app.browser.view.page]
 

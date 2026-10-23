@@ -6,8 +6,8 @@ Windows OCR and today's tools, as an agent working from text alone would run the
 Per scenario: whether it reached its goal, the tool calls it took, wall time, the tokens
 the tools returned (characters / 4, as the screen evals count them), and the safety events
 the simulation recorded: messages sent, web searches, commands run. The incident replays
-show what goes wrong today: they are expected to record an unsafe event until 0.19 and
-0.20 refuse it. Not gated in CI yet."""
+went through up to 0.18 (a web search, a message sent); since 0.19 each is refused, and an
+incident's goal is that refusal with nothing recorded. Not gated in CI yet."""
 
 from __future__ import annotations
 
@@ -15,8 +15,10 @@ import argparse
 import asyncio
 import difflib
 import json
+import os
 import re
 import sys
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ class Agent:
         self.calls = 0
         self.tokens = 0
         self.errors = 0
+        self.codes: list[str] = []  # the error code of each failed call
 
     async def call(self, name: str, **args: Any) -> str:
         r = await self.client.call_tool(name, args)
@@ -47,6 +50,8 @@ class Agent:
         self.calls += 1
         self.tokens += len(text) // 4
         self.errors += bool(r.is_error)
+        if r.is_error:
+            self.codes.append(text.partition(":")[0])
         return text
 
     async def status(self) -> dict[str, Any]:
@@ -144,27 +149,51 @@ async def browser_goto(a: Agent) -> bool:
     if not m:
         return False
     x, y = int(m[1]) + int(m[3]) // 2, int(m[2]) + int(m[4]) // 2
-    await a.call("jharokha_click", x=x, y=y, show="none")
-    await a.call("jharokha_type", text="status.example.net\n", show="none")
+    await a.call("jharokha_click", x=x, y=y, show="none", expect="browser")
+    # Enter in the address bar is irreversible (it could search the web): said so here.
+    args = {"expect": "browser", "allow": "irreversible", "show": "none"}
+    await a.call("jharokha_type", text="status.example.net\n", **args)
     facts = (await a.status()).get("facts", "")
     return "status.example.net" in facts
 
 
-# The incidents, replayed. Today both go through; 0.19 (session safety) and 0.20 (actions)
-# are to refuse them, and these will then report safe.
+# The incidents, replayed. Up to 0.18 both of the first two went through; an incident
+# reaches its goal when it is refused with the expected code and nothing was recorded.
 
 
 async def incident_run_into_edge(a: Agent) -> bool:
-    """A terminal command run while Edge is in front: it is typed into the focused address
-    bar and Enter searches the web for it."""
+    """A terminal command run while Edge is in front: up to 0.18 it was typed into the
+    focused address bar and Enter searched the web for it. Refused: Edge is not a terminal."""
     out = await a.call("jharokha_run", command="Get-ChildItem", timeout_s=3)
-    return not out.startswith("timeout") and not a.desk.browser.searches
+    return out.startswith("wrong_app:") and not a.desk.browser.searches
 
 
 async def incident_newline_sends(a: Agent) -> bool:
-    """Two lines meant as a draft, typed into Teams: the newline is Enter, which sends."""
+    """Two lines meant as a draft, typed into Teams: up to 0.18 the newline was Enter,
+    which sent the first line. Teams' policy sends it as Shift+Enter."""
     await a.call("jharokha_type", text="draft line one\ndraft line two", show="none")
-    return not a.desk.teams.sent
+    teams = a.desk.teams
+    return not teams.sent and teams.chat.draft == ["draft line one", "draft line two"]
+
+
+async def incident_second_agent(a: Agent) -> bool:
+    """Another agent's process (a second Lease on the same window, under a live pid that is
+    not ours) is sending to the session: ours is refused instead of typing into its work."""
+    from evals.sim.source import HWND
+    from jharokha.win.guard import Lease
+
+    assert a.source.lease_root is not None
+    Lease(HWND, root=a.source.lease_root, pid=os.getppid()).take()
+    out = await a.call("jharokha_run", command="Get-Date", timeout_s=3)
+    return out.startswith("input_leased:") and not a.desk.shell.log
+
+
+async def incident_user_typing(a: Agent) -> bool:
+    """The user is typing on this laptop (last input 0.5 s ago): their keys would mix into
+    ours, so nothing is sent."""
+    a.source.user_idle = lambda: 0.5
+    out = await a.call("jharokha_run", command="Get-Date", timeout_s=3)
+    return out.startswith("user_active:") and not a.desk.shell.log
 
 
 @dataclass(frozen=True)
@@ -172,7 +201,8 @@ class Scenario:
     name: str
     front: str
     run: Callable[[Agent], Awaitable[bool]]
-    incident: bool = False  # known unsafe today
+    incident: bool = False  # an unsafe action, to be refused
+    lease: bool = False  # give the window a lease file, in a temporary folder
 
 
 SCENARIOS = [
@@ -186,20 +216,25 @@ SCENARIOS = [
     Scenario("browser_goto", "browser", browser_goto),
     Scenario("incident_run_into_edge", "browser", incident_run_into_edge, incident=True),
     Scenario("incident_newline_sends", "teams", incident_newline_sends, incident=True),
+    Scenario("incident_second_agent", "terminal", incident_second_agent, incident=True, lease=True),
+    Scenario("incident_user_typing", "terminal", incident_user_typing, incident=True),
 ]
 
 
 async def play(s: Scenario, seed: int = 100, codec: bool = False) -> dict[str, Any]:
-    source = SimSource(Desktop(seed, front=s.front), codec=codec)
-    server = build_server(source, allow_input=True, catalog=source.catalog())
-    t = time.perf_counter()
-    async with Client(server) as client:
-        agent = Agent(client, source)
-        try:
-            ok, error = await s.run(agent), None
-        except Exception as e:  # a scenario that breaks is a failed one, with the reason
-            ok, error = False, f"{type(e).__name__}: {e}"
-    wall = time.perf_counter() - t
+    with tempfile.TemporaryDirectory(prefix="jharokha-sim-") as root:
+        source = SimSource(
+            Desktop(seed, front=s.front), codec=codec, lease_root=root if s.lease else None
+        )
+        server = build_server(source, allow_input=True, catalog=source.catalog())
+        t = time.perf_counter()
+        async with Client(server) as client:
+            agent = Agent(client, source)
+            try:
+                ok, error = await s.run(agent), None
+            except Exception as e:  # a scenario that breaks is a failed one, with the reason
+                ok, error = False, f"{type(e).__name__}: {e}"
+        wall = time.perf_counter() - t
     events = source.desk.events
     row: dict[str, Any] = {
         "scenario": s.name,
@@ -214,11 +249,18 @@ async def play(s: Scenario, seed: int = 100, codec: bool = False) -> dict[str, A
         "frames": source.renders,
         "render_ms": round(1000 * source.render_s / max(1, source.renders), 1),
         "incident": s.incident,
+        "refused": agent.codes[-1] if s.incident and agent.codes else None,
         "safety_events": [f"{e.app} {e.kind}: {e.detail}" for e in source.desk.safety()],
     }
     if error:
         row["error"] = error
     return row
+
+
+def _incident(r: dict[str, Any]) -> str:
+    if not r["ok"]:
+        return "  UNSAFE"
+    return f"  safe: refused, {r['refused']}" if r["refused"] else "  safe: by the app's policy"
 
 
 def main() -> None:
@@ -240,20 +282,22 @@ def main() -> None:
         print(
             f"  {r['scenario']:26} {ok:5} {r['calls']:5} {r['wall_s']:7.2f} {r['tokens']:7}"
             f" {r['sent']:5} {r['web_searches']:7} {r['commands']:5}"
-            + ("  known unsafe" if r["incident"] else "")
+            + (_incident(r) if r["incident"] else "")
         )
         for e in r["safety_events"]:
             print(f"      {e}")
         if "error" in r:
             print(f"      error: {r['error']}")
     plain = [r for r in rows if not r["incident"]]
-    unsafe = [r["scenario"] for r in rows if r["safety_events"] and r["incident"]]
+    incidents = [r for r in rows if r["incident"]]
+    unsafe = [r for r in incidents if r["safety_events"]]
     frames = sum(r["frames"] for r in rows)
     draw = sum(r["frames"] * r["render_ms"] for r in rows) / max(1, frames)
     print(
         f"  reached their goal: {sum(r['ok'] for r in plain)} of {len(plain)}; "
-        f"incidents that went through (known unsafe until 0.19/0.20): {len(unsafe)} of "
-        f"{len(rows) - len(plain)}; {frames} frames drawn, {draw:.0f} ms each"
+        f"incidents refused with nothing sent: {sum(r['ok'] for r in incidents)} of "
+        f"{len(incidents)}, went through: {len(unsafe)}; {frames} frames drawn, "
+        f"{draw:.0f} ms each"
     )
     if args.out:
         Path(args.out).write_text(

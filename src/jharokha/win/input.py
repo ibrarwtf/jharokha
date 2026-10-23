@@ -9,9 +9,18 @@ from __future__ import annotations
 import ctypes
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from ctypes import wintypes
+
+from jharokha.core.guard import (
+    TYPE_CHUNK,
+    TYPE_PAUSE_S,
+    USER_IDLE_S,
+    TypingInterrupted,
+    UserActive,
+)
+from jharokha.win.guard import record_own_input
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -183,6 +192,7 @@ def _park(hwnd: int) -> None:
 def _send(*inputs: _INPUT) -> None:
     arr = (_INPUT * len(inputs))(*inputs)
     user32.SendInput(len(inputs), arr, ctypes.sizeof(_INPUT))
+    record_own_input()  # it moves the last-input clock as the user's keys do
 
 
 def _mouse(flags: int, data: int = 0) -> _INPUT:
@@ -239,14 +249,23 @@ def _ensure_foreground(hwnd: int, click_focus: bool) -> None:
         raise NotForeground("the session did not take the foreground, so nothing was sent")
 
 
-def type_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> None:
+def type_text(
+    hwnd: int,
+    text: str,
+    focus_at: tuple[int, int] | None = None,
+    between: Callable[[], None] | None = None,
+) -> None:
     """Characters on the current keyboard layout go as scan codes (with shift when needed),
     anything else as a unicode event. focus_at is a client point to click when the session
-    does not come to the front by itself."""
+    does not come to the front by itself. between, called after each TYPE_CHUNK characters
+    and a short pause, raises UserActive when someone used this laptop meanwhile: their
+    keys would land in the middle of ours, so the rest is not sent."""
     x, y = focus_at or (None, None)
     with _active(hwnd, x, y):
         _ensure_foreground(hwnd, focus_at is not None)
         for i, ch in enumerate(text):
+            if between and i and i % TYPE_CHUNK == 0:
+                _pause_and_check(between, i, text)
             if user32.GetForegroundWindow() != hwnd:
                 raise NotForeground(
                     f"focus left the session after {i} of {len(text)} characters, "
@@ -267,7 +286,20 @@ def type_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> 
             time.sleep(0.01)
 
 
-def paste_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> None:
+def _pause_and_check(between: Callable[[], None], sent: int, text: str) -> None:
+    time.sleep(TYPE_PAUSE_S)
+    try:
+        between()
+    except UserActive as e:
+        raise TypingInterrupted(e.idle_s, USER_IDLE_S, sent, text) from e
+
+
+def paste_text(
+    hwnd: int,
+    text: str,
+    focus_at: tuple[int, int] | None = None,
+    between: Callable[[], None] | None = None,
+) -> None:
     """Text through the clipboard and Ctrl+V: exact and as fast for 10 KB as for 10 bytes,
     where typing goes key by key. Needs clipboard redirection from this machine to the
     session. A final newline is sent as Enter after the paste. The local clipboard's text is
@@ -283,6 +315,8 @@ def paste_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) ->
             _chord(_vks("ctrl+v"))
             if enter:
                 time.sleep(0.2)
+                if between:
+                    _pause_and_check(between, len(body), body + "\n")
                 _ensure_foreground(hwnd, False)
                 _chord([KEYS["enter"]])
         # The session fetches the text only when it pastes, after the keys arrive.

@@ -45,10 +45,15 @@ grids.body = { pitch = 23, char_width = 11, origin = [8, 4] }
 # several spellings), a regex, the screen's background colour, or a pane about here; `at`
 # is where the text's top-left belongs. A view adds its own cues, a `ready` text that shows
 # it has finished loading, and regions: the pane under `at` (widened to the one under
-# `to`), else `box`. reader is text or grid; list, table and form are reserved and read as
-# text for now. policy and action tables are reserved for later versions.
+# `to`), else `box`. reader is text, grid, list (kind messages, entries or mails), table or
+# form. policy limits input to the app: newline (the chord a typed newline is sent as) and
+# irreversible_keys (refused unless the call passes allow="irreversible"). action tables are
+# reserved for a later version.
 [app.tickets]
 name = "Ticket queue"
+
+[app.tickets.policy]
+irreversible_keys = ["ctrl+enter"]  # submits the ticket form
 
 [[app.tickets.cue]]
 text = "New ticket"

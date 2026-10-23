@@ -7,6 +7,7 @@ from mcp.types import TextContent
 
 from jharokha.core import apps
 from jharokha.core.layout import parse
+from jharokha.core.screen import ScreenError
 from jharokha.server import build_server
 
 from .conftest import FakeSource
@@ -190,13 +191,126 @@ async def test_run_returns_only_the_commands_output():
     async with Client(build_server(shell, allow_input=True)) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
         assert tools["jharokha_run"].annotations.destructive_hint is not False  # type: ignore[union-attr]
-        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date"}))
+        # A bare prompt on white is no terminal the definitions know: refused by default.
+        r = await c.call_tool("jharokha_run", {"command": "Get-Date"})
+        assert r.is_error and text(r).startswith("wrong_app: expected terminal in front")
+        assert "nothing was sent" in text(r) and shell.items[-1][0] == "PS C:\\a>"
+        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date", "expect": "any"}))
         assert r.startswith("run_ms=") and " lines=1" in r
         assert "Friday 23 October" in r and "old.txt" not in r and "PS C:" not in r
-        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date", "clear": True}))
+        args = {"command": "Get-Date", "clear": True, "expect": "any"}
+        r = text(await c.call_tool("jharokha_run", args))
         assert "lines=1" in r and "Friday" in r
-        r = await c.call_tool("jharokha_run", {"command": "x", "prompt": "(", "timeout_s": 1})
+        args = {"command": "x", "prompt": "(", "timeout_s": 1, "expect": "any"}
+        r = await c.call_tool("jharokha_run", args)
         assert r.is_error and text(r).startswith("bad_prompt")
+
+
+async def test_expect_refuses_input_unless_that_app_is_in_front(source):
+    async with Client(build_server(source, allow_input=True)) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+        for name in ("jharokha_scroll", "jharokha_click", "jharokha_type", "jharokha_press"):
+            assert "expect" in tools[name].input_schema["properties"]
+            assert "wrong_app" in (tools[name].description or "")
+        assert "allow='irreversible'" in (tools["jharokha_type"].description or "")
+        for name, args in (
+            ("jharokha_click", {"x": 20, "y": 30}),
+            ("jharokha_scroll", {"ticks": -1}),
+            ("jharokha_type", {"text": "hello"}),
+            ("jharokha_press", {"keys": "enter"}),
+        ):
+            r = await c.call_tool(name, {**args, "expect": "teams"})
+            assert r.is_error and text(r).startswith("wrong_app: expected teams in front")
+        assert not any(t.startswith(("clicked", "typed", "pressed")) for t, _, _ in source.items)
+        assert source.items[0][1:] == (10, 10)  # not scrolled either
+        r = await c.call_tool("jharokha_type", {"text": "x", "expect": "slack"})
+        assert r.is_error and text(r).startswith("bad_argument: expect: no app or view 'slack'")
+        assert "teams.chat" in text(r)
+        r = await c.call_tool("jharokha_type", {"text": "hello", "expect": "generic.screen"})
+        assert "typed hello" in text(r)
+
+
+POLICY_APP = """format = 1
+[app.chat]
+[[app.chat.cue]]
+text = "Build succeeded"
+weight = 2
+[app.chat.policy]
+newline = "shift+enter"
+irreversible_keys = ["enter"]
+[app.chat.view.main]
+"""
+BUSY = "someone used this computer 0.1 s ago; nothing was sent."
+
+
+class Busy(FakeSource):
+    """Refuses input as the user's activity would, from the nth call on."""
+
+    calls = 0
+    busy_from = 99
+
+    def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
+        self.calls += 1
+        if self.calls >= self.busy_from:
+            raise ScreenError("user_active", BUSY)
+        super().press(w, combo, focus_at)
+
+    def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
+        self.calls += 1
+        if self.calls >= self.busy_from:
+            raise ScreenError("user_active", BUSY)
+        super().type_text(w, text, focus_at, paste)
+
+
+async def test_the_front_apps_policy_shapes_and_holds_back_keys():
+    source = Busy([("Build succeeded", 10, 10)])
+    catalog = apps.catalog(apps.parse(POLICY_APP))
+    refused = "irreversible: enter is irreversible in chat.main"
+    async with Client(build_server(source, allow_input=True, catalog=catalog)) as c:
+        r = await c.call_tool("jharokha_type", {"text": "one\ntwo", "show": "none"})
+        assert not r.is_error
+        sent = [t for t, _, _ in source.items[1:]]
+        assert sent == ["typed one", "pressed shift+enter", "typed two"]
+        r = await c.call_tool("jharokha_press", {"keys": "Return"})
+        assert r.is_error and text(r).startswith(refused)
+        # A newline is never Enter here, so typed or pasted text cannot send.
+        r = await c.call_tool("jharokha_type", {"text": "x\n", "paste": True, "show": "none"})
+        assert not r.is_error and source.items[-1][0] == "pressed shift+enter"
+        r = await c.call_tool("jharokha_press", {"keys": "enter", "allow": "irreversible"})
+        assert not r.is_error and "pressed enter" in text(r)
+        # Refused part-way: the error says what went before.
+        source.calls, source.busy_from = 0, 2
+        r = await c.call_tool("jharokha_type", {"text": "three\nfour", "show": "none"})
+        assert r.is_error and text(r).startswith("user_active: the first 1 of 3 parts")
+
+
+async def test_input_is_traced_when_asked(source, tmp_path):
+    from jharokha.core.trace import Trace
+
+    path = tmp_path / "trace.jsonl"
+    server = build_server(source, allow_input=True, trace=Trace(path))
+    async with Client(server) as c:
+        await c.call_tool("jharokha_type", {"text": "secret", "show": "none"})
+        await c.call_tool("jharokha_press", {"keys": "enter", "expect": "terminal"})
+        await c.call_tool("jharokha_click", {"x": 5, "y": 6, "show": "none"})
+    recs = [json.loads(line) for line in path.read_text("utf-8").splitlines()]
+    assert [(r["action"], r["result"]) for r in recs] == [
+        ("type", "sent"),
+        ("press", "wrong_app"),
+        ("click", "sent"),
+    ]
+    assert recs[0]["front_app"] == "generic.screen" and recs[0]["text_len"] == 6
+    assert "secret" not in path.read_text("utf-8")
+    assert recs[2]["point"] == [5, 6] and recs[2]["window"] == source.title
+
+
+async def test_status_warns_what_covers_the_window_and_reports_input(source):
+    source.warnings = [{"kind": "taskbar", "rows": [360, 400], "detail": "covered"}]
+    s = json.loads(text(await call(source, "jharokha_status")))
+    assert s["warnings"][0]["rows"] == [360, 400] and "input" not in s
+    async with Client(build_server(source, allow_input=True)) as c:
+        s = json.loads(text(await c.call_tool("jharokha_status", {})))
+    assert s["input"] == {"lease": None, "user_idle_s": 42.0}
 
 
 async def test_version_of_the_running_code_in_status_and_instructions(source):

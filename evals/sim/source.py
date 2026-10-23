@@ -4,28 +4,48 @@ Windows OCR and the second engine run against apps that react to input, without 
 A frame is the app in front drawn with GDI and ClearType (evals.render), optionally through
 the codec pass, at the session's 1166x1181; it is drawn again only when something changed,
 so polling an idle screen costs nothing. Reading is real: Windows OCR, the second engine
-for rereads. Input changes the simulation's state; nothing reaches a real window."""
+for rereads. Input changes the simulation's state; nothing reaches a real window.
+
+Input is guarded as WindowsSource guards it, with the same decisions: lease_root gives the
+window a real lease file there (another Lease on the same root and HWND, under another live
+pid, is a second agent), user_idle stands in for this laptop's last-input clock (seconds,
+or None for no input but ours; asked before each input and between chunks of typed text),
+and covered for what covers the window (core.guard.covered_parts)."""
 
 from __future__ import annotations
 
+import os
 import threading
 import time
+from collections.abc import Callable
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from evals.render import render
 from evals.screens import H, W
 from evals.sim.desktop import Desktop
 from jharokha.core import apps
 from jharokha.core.apps import Catalog
+from jharokha.core.guard import (
+    TYPE_CHUNK,
+    USER_IDLE_S,
+    InputLeased,
+    TypingInterrupted,
+    UserActive,
+    check_user_idle,
+    refusal,
+    warnings,
+)
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.screen import ScreenError
 
 if TYPE_CHECKING:
+    from jharokha.win.guard import Lease
     from jharokha.win.ocr import Ocr
     from jharokha.win.recognize import Recognizer
 
 TITLE = "Sim Remote Desktop - jharokha"
+HWND = 0x51
 _engines_lock = threading.Lock()
 
 
@@ -49,11 +69,19 @@ def _recognizer() -> Recognizer:
 
 class SimSource:
     def __init__(
-        self, desktop: Desktop | None = None, codec: bool = False, title: str = TITLE
+        self,
+        desktop: Desktop | None = None,
+        codec: bool = False,
+        title: str = TITLE,
+        lease_root: str | os.PathLike[str] | None = None,
+        user_idle: Callable[[], float | None] | None = None,
     ) -> None:
         self.desk = desktop or Desktop()
         self.codec, self.title = codec, title
         self.present, self.minimized = True, False
+        self.lease_root = lease_root
+        self.user_idle = user_idle or (lambda: None)
+        self.covered: list[dict] = []
         self.renders = 0  # frames drawn
         self.render_s = 0.0  # time spent drawing them
         self._frame: Frame | None = None
@@ -71,7 +99,7 @@ class SimSource:
     def window(self, window_title: str | None) -> WindowInfo | None:
         if not self.present or (window_title and window_title.lower() not in self.title.lower()):
             return None
-        return WindowInfo(0x51, self.title, "sim.exe", self.minimized, True, (W, H), 1.25)
+        return WindowInfo(HWND, self.title, "sim.exe", self.minimized, True, (W, H), 1.25)
 
     def candidates(self) -> list[str]:
         return [self.title] if self.present else []
@@ -96,25 +124,58 @@ class SimSource:
     def reread(self, frame: Frame, boxes: list[Box], margin: float = 0.5) -> list[str]:
         return _recognizer().read(frame, boxes, margin)
 
+    # Input, guarded
+
+    def _lease(self) -> Lease | None:
+        from jharokha.win.guard import Lease
+
+        return Lease(HWND, root=self.lease_root) if self.lease_root is not None else None
+
+    def _guard(self) -> None:
+        try:
+            if (lease := self._lease()) is not None:
+                lease.take()
+            check_user_idle(self.user_idle())
+        except (InputLeased, UserActive) as e:
+            raise ScreenError(*refusal(e)) from e
+
+    def guard_state(self, w: WindowInfo) -> dict[str, Any]:
+        other = None
+        if (lease := self._lease()) is not None and (e := lease.other()) is not None:
+            other = {"pid": e.owner_pid, "idle_s": round(e.idle_s, 1)}
+        return {
+            "warnings": warnings(self.covered),
+            "input": {"lease": other, "user_idle_s": self.user_idle()},
+        }
+
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
         with self._lock:
+            self._guard()
             self.desk.scroll(x, y, ticks)
 
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
         with self._lock:
+            self._guard()
             self.desk.click(x, y, button, double)
 
     def type_text(
         self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
     ) -> None:
         with self._lock:
+            self._guard()
             if paste:
                 self.desk.paste(text, focus_at)
-            else:
-                self.desk.type_text(text, focus_at)
+                return
+            # In chunks with the user's activity checked between them, as win/input types.
+            for i in range(0, len(text), TYPE_CHUNK):
+                if i and (idle := self.user_idle()) is not None and idle < USER_IDLE_S:
+                    e = TypingInterrupted(idle, USER_IDLE_S, i, text)
+                    raise ScreenError(*refusal(e))
+                self.desk.type_text(text[i : i + TYPE_CHUNK], focus_at if i == 0 else None)
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         with self._lock:
+            self._guard()
             try:
                 self.desk.press(combo, focus_at)
             except ValueError as e:

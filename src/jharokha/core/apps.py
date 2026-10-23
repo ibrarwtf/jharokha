@@ -28,8 +28,13 @@ the sanity check on the pane: one that overlaps it too little (IoU under PANE_FI
 dialog or a different arrangement, and the box is used instead. Calibration, measured on
 the user's own screen, comes before both.
 
-`policy` and `action` tables are accepted and kept for the risk and actions of later
-versions; nothing reads them yet."""
+An app's `policy` table shapes and limits input to it (core.guard.Policy):
+
+    [app.teams.policy]
+    newline = "shift+enter"               # a typed newline adds a line, never sends
+    irreversible_keys = ["enter"]         # refused unless the call passes allow="irreversible"
+
+`action` tables are accepted and kept for the actions of a later version."""
 
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from jharokha.core.guard import Policy
 from jharokha.core.layout import Fraction, Layout, choose, to_box
 from jharokha.core.models import Box, iou
 from jharokha.core.readers import KINDS, READERS
@@ -122,9 +128,13 @@ class App:
     name: str
     cues: tuple[Cue, ...] = ()
     views: dict[str, View] = field(default_factory=dict)
-    policy: dict[str, Any] = field(default_factory=dict)  # reserved: risk (0.19)
+    policy: dict[str, Any] = field(default_factory=dict)  # as written; checked when parsed
     action: dict[str, Any] = field(default_factory=dict)  # reserved: actions (0.20)
     source: str = "built-in"
+
+    @property
+    def input_policy(self) -> Policy:
+        return Policy.parse(self.policy, f"app.{self.id}.policy")
 
 
 @dataclass(frozen=True)
@@ -330,6 +340,10 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
     for key in ("policy", "action"):
         if not isinstance(t.get(key, {}), dict):
             raise AppError(f"{where}.{key} must be a table")
+    try:
+        Policy.parse(t.get("policy", {}), f"{where}.policy")
+    except ValueError as e:
+        raise AppError(str(e)) from None
     return App(
         id=_id(aid, where),
         name=_text(t.get("name", aid), f"{where}.name"),
@@ -490,6 +504,14 @@ class Catalog:
     session: dict[str, Region]
     session_cal: dict[str, Fraction]
     spots: dict[str, Point2]
+
+    def knows(self, target: str) -> bool:
+        """target is an app id or 'app.view', as input tools' expect takes it."""
+        app, _, view = target.partition(".")
+        return app in self.apps and (not view or view in self.apps[app].views)
+
+    def views(self) -> list[str]:
+        return [f"{a.id}.{v}" for a in self.apps.values() for v in a.views]
 
     def region_names(self) -> list[str]:
         names = [

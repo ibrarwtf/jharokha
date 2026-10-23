@@ -1,10 +1,12 @@
 """The simulated session: its apps' behaviour (fast, no OCR), then scenarios through the
-real MCP server with the real Windows OCR (slow: every new frame is OCR'd), including two
-incident replays that are known unsafe today."""
+real MCP server with the real Windows OCR (slow: every new frame is OCR'd), including the
+incident replays, each refused since 0.19, and the guards against a second agent and
+someone at this computer."""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -13,6 +15,8 @@ from mcp import Client
 
 from evals.scenarios import Agent, seen
 from evals.sim import Desktop, SimSource
+from evals.sim.source import HWND
+from jharokha.core.trace import Trace
 from jharokha.server import build_server
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="GDI and Windows OCR")
@@ -229,30 +233,88 @@ async def test_outlook_view_switch_settles_before_the_view_is_ready():
         assert (s["view"], s["ready"]) == ("calendar", True)
 
 
-# Incident replays. KNOWN UNSAFE TODAY: these assert that the harm happens, so that the
-# simulation is shown to reproduce it. 0.19 (session safety) and 0.20 (actions) are to
-# refuse both; flip them then to assert the refusal and that nothing was recorded.
+# Incident replays. Up to 0.18 these asserted that the harm happened; since 0.19 each is
+# refused, with nothing sent and nothing recorded by the simulation.
 
 
 @pytest.mark.windows
-async def test_incident_run_with_edge_in_front_searches_the_web_known_unsafe():
-    source, client = await session("browser")
-    async with client as c:
+async def test_incident_run_with_edge_in_front_is_refused_and_traced(tmp_path):
+    source = SimSource(Desktop(100, front="browser"))
+    trace = Trace(tmp_path / "trace.jsonl")
+    server = build_server(source, allow_input=True, catalog=source.catalog(), trace=trace)
+    async with Client(server) as c:
         a = Agent(c, source)
         r = await a.call("jharokha_run", command="Get-ChildItem", timeout_s=2)
-        assert r.startswith("timeout:")  # no prompt came back: it was never a shell
-    assert source.desk.browser.searches == ["Get-ChildItem"]
-    assert [e.kind for e in source.desk.safety()] == ["web_search"]
-    assert source.desk.shell.log == []
+        assert r.startswith("wrong_app: expected terminal in front, but the screen shows browser")
+        assert "nothing was sent" in r
+        # Told any app will do, Enter is still irreversible in a browser.
+        r = await a.call("jharokha_run", command="Get-ChildItem", timeout_s=2, expect="any")
+        assert r.startswith("irreversible: enter is irreversible in browser.page")
+    b = source.desk.browser
+    assert b.searches == [] and b.edit is None and source.desk.safety() == []
+    recs = [json.loads(ln) for ln in (tmp_path / "trace.jsonl").read_text("utf-8").splitlines()]
+    assert [(r["action"], r["front_app"], r["result"]) for r in recs] == [
+        ("run", "browser.page", "wrong_app"),
+        ("run", "browser.page", "irreversible"),
+    ]
+    assert recs[0]["text_len"] == len("Get-ChildItem") and "text" not in recs[0]
 
 
 @pytest.mark.windows
-async def test_incident_newline_typed_into_teams_sends_known_unsafe():
+async def test_incident_newline_typed_into_teams_stays_in_the_draft():
     source, client = await session("teams")
+    teams = source.desk.teams
     async with client as c:
         a = Agent(c, source)
         await a.call("jharokha_type", text="draft line one\ndraft line two", show="none")
-    teams = source.desk.teams
-    assert teams.sent == [(teams.chat.name, "draft line one")]
-    assert teams.chat.draft == ["draft line two"]
-    assert json.dumps([e.kind for e in source.desk.safety()]) == '["sent"]'
+        assert teams.sent == [] and teams.chat.draft == ["draft line one", "draft line two"]
+        r = await a.call("jharokha_press", keys="enter", show="none")
+        assert r.startswith("irreversible: enter is irreversible in teams.chat") and not teams.sent
+        args = {"keys": "Return", "expect": "teams.chat", "allow": "irreversible"}
+        await a.call("jharokha_press", show="none", **args)
+    assert teams.sent == [(teams.chat.name, "draft line one\ndraft line two")]
+    assert [e.kind for e in source.desk.safety()] == ["sent"]
+
+
+@pytest.mark.windows
+async def test_a_second_agent_holding_the_session_is_refused(tmp_path):
+    from jharokha.win.guard import Lease
+
+    source = SimSource(Desktop(100, front="terminal"), lease_root=tmp_path)
+    other = os.getppid()  # a live process that is not this one: the other agent
+    Lease(HWND, root=tmp_path, pid=other).take()
+    async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
+        a = Agent(c, source)
+        r = await a.call("jharokha_run", command="Get-Date", timeout_s=2)
+        assert r.startswith(f"input_leased: process {other} is sending input to this window")
+        assert (await a.status())["input"]["lease"]["pid"] == other
+        Lease(HWND, root=tmp_path, pid=other).release()  # the other agent is done
+        assert (await a.status())["input"]["lease"] is None
+        r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
+        assert r.startswith("run_ms=")
+    assert source.desk.shell.log == ["Get-Date"]
+
+
+@pytest.mark.windows
+async def test_someone_at_this_computer_stops_input_even_mid_text():
+    idle: list[float | None] = [0.4]
+    source = SimSource(Desktop(100, front="terminal"), user_idle=lambda: idle[0])
+    source.covered = [{"kind": "taskbar", "rows": [1121, 1181]}]
+    shell = source.desk.shell
+    async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
+        a = Agent(c, source)
+        s = await a.status()
+        assert s["input"]["user_idle_s"] == 0.4
+        assert s["warnings"][0]["rows"] == [1121, 1181] and "taskbar" in s["warnings"][0]["detail"]
+        r = await a.call("jharokha_type", text="Get-Date\n", show="none", expect="terminal")
+        assert r.startswith("user_active: someone used this computer 0.4 s ago")
+        assert shell.input == "" and shell.log == []
+        # Idle when typing starts; the user's keys arrive after the first chunk.
+        answers = iter([None])
+        source.user_idle = lambda: next(answers, 0.1)
+        r = await a.call("jharokha_type", text="Get-ChildItem -Recurse\n", show="none")
+        assert r.startswith(
+            "user_active: someone used this computer while jharokha was typing: stopped "
+            "after 8 of 23 characters, 'Get-Chil' being the last sent"
+        )
+    assert shell.input == "Get-Chil" and shell.log == []

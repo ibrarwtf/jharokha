@@ -18,7 +18,7 @@ weight = 2
 background = [12, 12, 12]
 weight = 2
 
-[app.terminal.policy]  # reserved: risk, from 0.19
+[app.terminal.policy]  # Enter runs a command: jharokha_run's job, so not refused here
 
 [app.terminal.view.shell]
 

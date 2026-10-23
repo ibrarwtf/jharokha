@@ -42,6 +42,18 @@ def test_builtins_load_and_name_generic_anchors_only():
     assert "session.taskbar" in cat.session
 
 
+def test_builtin_input_policies_keep_sends_behind_allow():
+    cat = apps.catalog()
+    teams = cat.apps["teams"].input_policy
+    assert teams.newline == "shift+enter" and teams.irreversible("enter")
+    assert cat.apps["browser"].input_policy.irreversible("Return")
+    assert cat.apps["terminal"].input_policy == apps.Policy()
+    assert cat.knows("teams") and cat.knows("outlook.calendar") and not cat.knows("teams.mail")
+    bad = "format = 1\n[app.x]\n[app.x.policy]\nirreversible = ['enter']\n[app.x.view.v]\n"
+    with pytest.raises(apps.AppError, match="app.x.policy: unknown key irreversible"):
+        apps.parse(bad)
+
+
 def test_definitions_are_validated():
     ok = "format = 1\n[app.x]\n[app.x.view.v]\n[app.x.view.v.region.r]\nbox = [0, 0, 1, 1]\n"
     assert apps.parse(ok).apps["x"].views["v"].regions["r"].box == (0, 0, 1, 1)

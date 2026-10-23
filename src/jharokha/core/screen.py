@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import io
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from PIL import Image
 
@@ -19,7 +19,8 @@ from jharokha.core.watch import changed_bbox
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
     ocr_unavailable, region_out_of_bounds, timeout, covered, not_foreground, bad_key,
-    verify_unavailable, clipboard_busy, bad_prompt, bad_argument."""
+    verify_unavailable, clipboard_busy, bad_prompt, bad_argument; refusals of input, where
+    nothing was sent: wrong_app, irreversible, input_leased, user_active."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -42,6 +43,12 @@ class Source(Protocol):
         self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
     ) -> None: ...
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None: ...
+    def guard_state(self, w: WindowInfo) -> dict[str, Any]:
+        """{"warnings": [...], "input": {...}}: parts of the client hidden from view
+        (core.guard.warnings), and for input another process's lease on the window
+        ({"pid", "idle_s"} or None) and the seconds since the user's last input (None
+        when the last input was this process's own)."""
+        ...
 
 
 class Screen:

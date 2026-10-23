@@ -28,13 +28,16 @@ uv run jharokha --window-title "Fake Remote" bench
 - Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
 - Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
 - Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
+- Input guards, as `WindowsSource` applies them and with the same `core/guard.py` decisions: `SimSource(lease_root=DIR)` gives the window a real lease file in DIR (a second agent is another `Lease(HWND, root=DIR, pid=<a live pid not ours>)` that took it), `user_idle=` stands in for the last-input clock (seconds, or None for no input but ours; asked before every input and between chunks of typed text), `covered=` for what covers the window. The server's checks (`expect`, the app's policy) run unchanged on it.
 
 ```
 uv run python -m evals.scenarios            # scripted scenarios: success, calls, wall time, tokens, safety events
 uv run python -m evals.scenarios --codec --only incident --out scenarios.json
 ```
 
-The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` in `tests/test_sim.py`) show the harm happening today and are marked known unsafe; session safety (0.19) and the actions engine (0.20) are to turn them into refusals.
+The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` and the lease and user-activity tests in `tests/test_sim.py`) went through up to 0.18 (a web search, a message sent); since 0.19 each is refused with nothing sent and nothing recorded, and an incident scenario reaches its goal by that refusal.
+
+The guards' real Windows side (`win/guard.py`: lease file, `GetLastInputInfo`, `WindowFromPoint` sampling) is tested with fakes for the Win32 calls (`tests/test_win_guard.py`); nothing in the test suite sends real input.
 
 ## Evals
 
@@ -197,6 +200,32 @@ The misses are OCR's: the calendar's hour labels (10 to 14 px grey) and some day
 ### Terminal rows (v0.18.0)
 
 `core/rows.py` (built on its own branch, wired here): a grid region is calibrated once from the pixels (or from apps.toml's pitch, character width and origin when all three are set) and kept per app, view, region, window size and box, once measured on three rows of text or more; each inked row is read as a strip with the second engine (`Source.reread(..., margin=0)`), and the last read is kept so only changed rows are read again. Lines inside the grid replace Windows OCR's; a region read gets those inside it. A source whose `reread` refuses strips (the tests' `FakeSource`) falls back to `text.grid`. Full eval: terminal CER .32 to .35 → .0015 to .0017, lines exact .27 to .33 → .98 to .99, find → 1.0. Costs: calibration 140 to 150 ms, 105 to 147 ms a row, about 2 s for a full screen the first time.
+
+### Input safety (v0.19.0)
+
+`core/guard.py` decides, the sources gather the facts: the server identifies the app in front (`expect`, the app's `policy`), `WindowsSource._input` takes the lease and checks the last-input clock (`win/guard.py`), `SimSource` does the same against a lease folder and a stand-in clock. Choices:
+
+- `expect` needs confidence 0.6. The generated screens' lowest right identifications are .55 to .57 (Teams at 12 px in PIL, the terminal at 24 px through the codec), so on such a screen a call is refused rather than trusted; on the simulated session every app is 1.0. `jharokha_run` expects `terminal` by default, so a shell with only a prompt on screen (no tab title, no dark background) needs `expect="any"`.
+- Policies are per app, not per focused field: OCR cannot tell which field has the keyboard, so Enter is held back wherever Teams or a browser is in front (a Teams search, a web form), and `allow="irreversible"` says the agent means it.
+- Our own `SendInput` moves `GetLastInputInfo` as the user's keys do, so the tick after each send is noted and input within 250 ms of it counts as ours. While typing, our keys every ~10 ms overwrite the clock, so a user's keystroke shows only in a pause: after every 8 characters, 0.15 s, then a check with a 50 ms margin; a keystroke between 50 and 150 ms into a pause is seen, about 40% of each cycle, so a user typing a few keys is all but certain to be caught. `SetCursorPos` (cursor parking) is not recorded: it is not input and is not known to move the clock; this was not measured on the live machine, to avoid moving the user's cursor.
+- A lease file per window rather than a named mutex: it holds nothing but a pid and a time, frees the window at once when its holder dies (the pid no longer runs), and lets `jharokha_status` name the holder.
+
+`python -m evals.scenarios` (GDI; through the codec the same, but `terminal_run_date`, which times out on its prompt there as at 0.18):
+
+| scenario | goal | calls | wall s | tokens | safety events |
+|---|---|---|---|---|---|
+| teams_read_thread | yes | 1 | 0.38 | 298 | |
+| teams_scroll_back | yes | 2 | 1.25 | 550 | |
+| switch_open_mail | yes | 5 | 1.21 | 401 | |
+| outlook_calendar | yes | 4 | 1.40 | 228 | |
+| terminal_run_date | yes | 1 | 2.61 | 28 | 1 command |
+| terminal_run_marker | yes | 1 | 2.52 | 56 | 1 command |
+| terminal_type_until | yes | 1 | 1.54 | 116 | 1 command |
+| browser_goto | yes | 4 | 1.06 | 351 | |
+| incident_run_into_edge | refused, wrong_app | 1 | 0.15 | 73 | |
+| incident_newline_sends | kept as a draft (policy) | 1 | 0.52 | 3 | |
+| incident_second_agent | refused, input_leased | 1 | 0.66 | 75 | |
+| incident_user_typing | refused, user_active | 1 | 0.65 | 70 | |
 
 ### Simulated session (v0.17.0)
 
