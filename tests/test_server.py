@@ -322,8 +322,8 @@ async def test_terminal_run_through_do_reads_its_end_marker_and_exit_code():
             args = {"action": "terminal.run", "args": {"command": command}, "allow": allow}
             return await c.call_tool("jharokha_do", args)
 
-        r = await run("Get-Date", "reversible")
-        assert r.is_error and text(r).startswith("irreversible:")  # a command needs allow
+        r = await run("Remove-Item old.txt", "reversible")
+        assert r.is_error and text(r).startswith("irreversible:")  # one that writes needs allow
         r = text(await run("Get-Date"))
         body = json.loads(r.split('untrusted="true">\n', 1)[1].rsplit("\n</screen_text>", 1)[0])
         assert body["ok"] and body["output"] == ["Friday 23 October"] and "exit_code" not in body
