@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import time
 from typing import Protocol
 
 from PIL import Image
@@ -11,6 +12,7 @@ from PIL import Image
 from jharokha.core.cache import FrameCache
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.text import clean, reading_order
+from jharokha.core.watch import changed_bbox
 
 
 class ScreenError(Exception):
@@ -68,6 +70,24 @@ class Screen:
             )
         return w, frame
 
+    def settle(self, window_title: str | None, max_s: float = 3.0) -> int:
+        """Wait until the window stops changing after input: at least MIN_SETTLE_S, since the
+        RDP client takes a moment to paint anything, then QUIET_S without a change, or
+        max_s for screens that never stop (a spinner). Returns the milliseconds waited."""
+        start = time.monotonic()
+        _, prev = self.frame(window_title)
+        quiet_since = start
+        while True:
+            time.sleep(POLL_S)
+            _, cur = self.frame(window_title)
+            now = time.monotonic()
+            if changed_bbox(prev, cur) is not None:
+                quiet_since = now
+            prev = cur
+            settled = now - start >= MIN_SETTLE_S and now - quiet_since >= QUIET_S
+            if settled or now - start >= max_s:
+                return int((now - start) * 1000)
+
     def read(self, window_title: str | None, region: Box | None) -> tuple[Frame, list[Line]]:
         w, frame = self.frame(window_title)
         if region:
@@ -85,6 +105,7 @@ class Screen:
         return {i: clean(t) for i, t in zip(which, texts, strict=True)}
 
 
+MIN_SETTLE_S, QUIET_S, POLL_S = 0.4, 0.3, 0.1
 MAX_VERIFY = 40  # 30 to 60 ms each: a couple of seconds at most
 
 

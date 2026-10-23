@@ -48,8 +48,9 @@ def main() -> None:
     s.add_argument("--max-long-edge", type=int, default=1568)
     after = argparse.ArgumentParser(add_help=False)
     after.add_argument(
-        "--wait", type=float, default=0.4, help="seconds before reading the screen afterwards"
+        "--until", help="afterwards, wait until this text is on screen (up to --timeout)"
     )
+    after.add_argument("--timeout", type=float, default=10, help="seconds for --until")
     after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
     c = sub.add_parser("click", parents=[after], help="click at a client point")
     c.add_argument("x", type=int)
@@ -157,8 +158,16 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
         screen.source.type_text(w, text + ("\n" if args.enter else ""), point)
     else:
         screen.source.press(w, args.keys, point)
+    screen.settle(args.window_title)
+    start = time.monotonic()
+    while args.until:
+        _, lines = screen.read(args.window_title, None)
+        if find(lines, args.until):
+            break
+        if time.monotonic() - start >= args.timeout:
+            sys.exit(f"timeout: the input was sent, but '{args.until}' did not appear")
+        time.sleep(0.5)
     if not args.quiet:
-        time.sleep(args.wait)
         _, lines = screen.read(args.window_title, None)
         print(format_concise(lines))
 

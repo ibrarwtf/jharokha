@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.0
+
+- Input tools (`scroll`, `click`, `type`, `press`) wait until the screen stops changing instead of a fixed 0.4 s: at least 0.4 s, then 0.3 s without a change, at most 3 s. A click in a chat list no longer returns the chat before it.
+- `until` on the input tools: after the input, wait (up to `timeout_s`, max 30) for a text, such as the prompt a command ends with. One `type` call now does what took type, `wait_for_text` and a read.
+- `show` on the input tools: `changed` (default) returns only the lines added (`+ L4 [x,y] text`) and removed since just before the input, or the whole screen when most of it changed; `full` the whole screen; `none` nothing. `region` (pixels, panel or named region) limits that read.
+- Shell input commands settle the same way and take `--until TEXT` and `--timeout S`; `--wait` is gone.
+
 ## v0.8.0
 
 - `jharokha measure APP --anchor TEXT [--names a,b,...] [--zoom=-5..2]` writes an app's named regions into the layouts file from what is on screen: full-height columns, and the widest column split into a top bar, body and bottom bars. With `--zoom` it steps the app's zoom (Ctrl+0, Ctrl+=, Ctrl+-), writes one `app@variant` per step and restores the zoom.
