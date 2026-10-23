@@ -58,3 +58,6 @@ jobs:
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v3
+        env:
+          # Authenticated, its account lookup is not rate-limited into a licence error.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
