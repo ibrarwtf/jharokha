@@ -37,7 +37,11 @@ def test_click_out_of_bounds_and_quiet(monkeypatch, source, capsys):
         run(monkeypatch, source, "--allow-input", "click", "20", "9999")
     run(monkeypatch, source, "--allow-input", "click", "20", "30", "--quiet")
     assert source.items[-1][0] == "clicked left at 20,30"
+    run(monkeypatch, source, "--allow-input", "click", "21,31", "--quiet")
+    assert source.items[-1][0] == "clicked left at 21,31"
     assert capsys.readouterr().out == ""
+    with pytest.raises(SystemExit, match="give X Y or X,Y"):
+        run(monkeypatch, source, "--allow-input", "click", "20")
 
 
 def test_read_region_and_bad_region(monkeypatch, source, capsys):

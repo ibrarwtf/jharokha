@@ -7,6 +7,7 @@ Keys go as scan codes: that is what the client translates for the session."""
 from __future__ import annotations
 
 import ctypes
+import re
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -50,6 +51,9 @@ KEYS = {
     "alt": 0x12,
     "shift": 0x10,
     "menu": 0x5D,
+    "plus": 0xBB,  # the =/+ key: Ctrl+plus zooms in
+    "equals": 0xBB,
+    "minus": 0xBD,
     **{f"f{i}": 0x6F + i for i in range(1, 13)},
 }
 EXTENDED = {0x2E, 0x2D, 0x24, 0x23, 0x21, 0x22, 0x26, 0x28, 0x25, 0x27, 0x5B, 0x5D}
@@ -142,9 +146,11 @@ def _bring_to_front(hwnd: int) -> None:
 def _active(hwnd: int, x: int | None = None, y: int | None = None) -> Iterator[None]:
     prev = user32.GetForegroundWindow()
     _bring_to_front(hwnd)
-    time.sleep(0.1)
+    # A client that was just activated can swallow the first click; give it time.
+    time.sleep(0.1 if prev == hwnd else 0.3)
     old = _POINT()
     user32.GetCursorPos(ctypes.byref(old))
+    moved = False
     try:
         if x is not None and y is not None:
             pt = _POINT(x, y)
@@ -152,11 +158,26 @@ def _active(hwnd: int, x: int | None = None, y: int | None = None) -> Iterator[N
             if user32.GetAncestor(user32.WindowFromPoint(pt), GA_ROOT) != hwnd:
                 raise Covered("another window covers that point")
             user32.SetCursorPos(pt.x, pt.y)
+            moved = True
         yield
     finally:
+        if moved:
+            _park(hwnd)
         user32.SetCursorPos(old.x, old.y)
         if prev and prev != hwnd:
             _bring_to_front(prev)
+
+
+def _park(hwnd: int) -> None:
+    """The session keeps the last cursor position it saw, so a cursor left on a link or a
+    name keeps its tooltip or hover card on screen, in every later read. The middle of the
+    right edge is a scrollbar in most apps: nothing pops up there."""
+    rc = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(rc))
+    pt = _POINT(rc.right - 2, rc.bottom // 2)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    user32.SetCursorPos(pt.x, pt.y)
+    time.sleep(0.05)  # for the client to send the move before the cursor leaves
 
 
 def _send(*inputs: _INPUT) -> None:
@@ -225,9 +246,12 @@ def type_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> 
     x, y = focus_at or (None, None)
     with _active(hwnd, x, y):
         _ensure_foreground(hwnd, focus_at is not None)
-        for ch in text:
+        for i, ch in enumerate(text):
             if user32.GetForegroundWindow() != hwnd:
-                raise NotForeground("focus left the session while typing; the rest was not sent")
+                raise NotForeground(
+                    f"focus left the session after {i} of {len(text)} characters, "
+                    f"{text[:i][-20:]!r} being the last sent; the rest was not sent"
+                )
             if ch == "\n":
                 _send(_key(KEYS["enter"], False), _key(KEYS["enter"], True))
                 continue
@@ -316,7 +340,8 @@ def press(hwnd: int, combo: str, focus_at: tuple[int, int] | None = None) -> Non
 
 def _vks(combo: str) -> list[int]:
     vks = []
-    for part in combo.lower().split("+"):
+    # Split on the + between keys, so a + key itself survives: 'ctrl++' is ctrl and +.
+    for part in re.split(r"\+(?=.)", combo.lower()):
         if part in KEYS:
             vks.append(KEYS[part])
         elif len(part) == 1 and (vk := user32.VkKeyScanW(part)) != -1:

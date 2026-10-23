@@ -57,9 +57,17 @@ def test_focus_at_clicks_first_then_types(inp, monkeypatch):
 
 def test_typing_stops_when_focus_leaves_mid_text(inp, monkeypatch):
     monkeypatch.setattr(inp, "user32", FakeUser32([SESSION, SESSION, OTHER]))
-    with pytest.raises(inp.NotForeground):
+    with pytest.raises(inp.NotForeground, match="after 1 of 3 characters, 'a' being"):
         inp.type_text(SESSION, "abc")
     assert len(inp.sent) == 2  # only "a" went, as one down and one up
+
+
+def test_key_names_and_a_plus_key_in_a_chord(inp, monkeypatch):
+    monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
+    assert inp._vks("ctrl+minus") == [inp.KEYS["ctrl"], 0xBD]
+    assert inp._vks("ctrl+plus") == inp._vks("ctrl+equals") == [inp.KEYS["ctrl"], 0xBB]
+    assert inp._vks("ctrl++") == [inp.KEYS["ctrl"], ord("+")]
+    assert inp._vks("ctrl+-") == [inp.KEYS["ctrl"], ord("-")]
 
 
 @pytest.fixture
