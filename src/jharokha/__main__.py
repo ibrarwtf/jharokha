@@ -54,8 +54,7 @@ def main() -> None:
     after.add_argument("--timeout", type=float, default=10, help="seconds for --until")
     after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
     c = sub.add_parser("click", parents=[after], help="click at a client point")
-    c.add_argument("x", type=int)
-    c.add_argument("y", type=int)
+    c.add_argument("point", nargs="+", help="X Y, or X,Y as --focus-at takes it")
     c.add_argument("--button", choices=["left", "right", "middle"], default="left")
     c.add_argument("--double", action="store_true")
     sc = sub.add_parser("scroll", parents=[after], help="turn the wheel; ticks < 0 scrolls down")
@@ -148,8 +147,12 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
     if point:
         check_region((*point, 1, 1), frame)
     if args.cmd == "click":
-        check_region((args.x, args.y, 1, 1), frame)
-        screen.source.click(w, args.x, args.y, args.button, args.double)
+        try:
+            x, y = _ints(2)(",".join(args.point))
+        except (argparse.ArgumentTypeError, ValueError):
+            sys.exit(f"click: give X Y or X,Y, got {' '.join(args.point)!r}")
+        check_region((x, y, 1, 1), frame)
+        screen.source.click(w, x, y, args.button, args.double)
     elif args.cmd == "scroll":
         x, y = args.at or (frame.width // 2, frame.height // 2)
         check_region((x, y, 1, 1), frame)

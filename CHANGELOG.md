@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.2
+
+- After a click, scroll or `focus_at`, the cursor is moved to the middle of the session's right edge before it is given back. The session kept the last position it saw, so a cursor left on a link or a name kept a tooltip or hover card in every later read.
+- A session that was not in front gets 0.3 s instead of 0.1 s to activate before the click, which it sometimes swallowed.
+- `press` knows `plus`, `minus` and `equals`, and `ctrl++` is Ctrl with the + key; `bad_key 'minus'` cost a call.
+- `not_foreground` while typing says how many characters went and the last ones sent, so the rest can be sent without retyping.
+- Shell `click` takes `X,Y` as well as `X Y`, like `--focus-at`.
+
 ## v0.10.1
 
 - Waits and finds no longer miss text OCR mangled the punctuation of, which timed out waits in a live terminal: dashes of any kind and runs of them match `-` and `--` (`----` finds `——`), spaces OCR puts around `.`, `/`, `\` and `:` are ignored (`links.txt` finds `links .txt`, a URL finds `https : //aka . ms/x`), and a caret read as a letter after a prompt (`PS C:\repo>I`) is dropped. A regex that fails on the raw line is tried on the normalized one.

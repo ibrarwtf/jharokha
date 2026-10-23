@@ -467,9 +467,10 @@ def build_server(
     ) -> str:
         """Press a key or chord inside the remote session, like 'enter', 'esc', 'ctrl+c',
         'alt+tab', 'win', 'f5'. Names: enter, tab, esc, space, backspace, delete, home, end,
-        pageup, pagedown, up, down, left, right, win, ctrl, alt, shift, f1-f12, single
-        characters. The Windows key, Alt+Tab and Ctrl+Alt+Del usually go to the local machine,
-        not the session. focus_at works as in jharokha_type."""
+        pageup, pagedown, up, down, left, right, win, ctrl, alt, shift, f1-f12, plus, minus,
+        equals, single characters ('ctrl++' and 'ctrl+-' work too). The Windows key, Alt+Tab
+        and Ctrl+Alt+Del usually go to the local machine, not the session. focus_at works as
+        in jharokha_type."""
         w, frame = screen.frame(window_title)
         point = _point(focus_at, frame)
         box, old = before_input(window_title, region, show)
