@@ -47,7 +47,8 @@ REGION = (
 )
 AFTER_INPUT = (
     "Afterwards it waits until the screen stops changing (or, with until, until that text "
-    "appears, up to timeout_s, max 30) and returns, per show: changed = only the lines that "
+    "appears, matched as in jharokha_wait_for_text, a regex with until_regex=true, up to "
+    "timeout_s, max 30) and returns, per show: changed = only the lines that "
     "changed since just before the input (default; the whole screen when most of it changed), "
     "full = the whole screen, none = nothing. region limits that read."
 )
@@ -283,21 +284,30 @@ def build_server(
         region: Region = None,
         gone: bool = False,
         timeout_s: float = 10,
+        regex: bool = False,
     ) -> str:
         """Wait until text appears on the remote-desktop window (or disappears with gone=true).
-        Polls twice a second, up to timeout_s (max 30). Returns {found, elapsed_ms, match}; on
-        timeout the error carries the last text seen so you can decide what to do next."""
-        elapsed, m = poll(window_title, region_box(window_title, region), query, gone, timeout_s)
+        Matching is as in jharokha_find_text, including regex=true (for 'saved|Error' or a
+        prompt like '^PS .*>$'). Polls twice a second, up to timeout_s (max 30). Returns
+        {found, elapsed_ms, match}; on timeout the error carries the last text seen so you
+        can decide what to do next."""
+        box = region_box(window_title, region)
+        elapsed, m = poll(window_title, box, query, regex, gone, timeout_s)
         return json.dumps({"found": not gone, "elapsed_ms": elapsed, "match": m})
 
     def poll(
-        window_title: str | None, box: Box | None, query: str, gone: bool, timeout_s: float
+        window_title: str | None,
+        box: Box | None,
+        query: str,
+        regex: bool,
+        gone: bool,
+        timeout_s: float,
     ) -> tuple[int, dict[str, Any] | None]:
         timeout_s = min(max(timeout_s, 0), 30)
         start = time.monotonic()
         while True:
             _, lines = read(window_title, box)
-            matches = find(lines, query)
+            matches = find(lines, query, regex=regex)
             elapsed = int((time.monotonic() - start) * 1000)
             if bool(matches) != gone:
                 return elapsed, matches[0].__dict__ if matches else None
@@ -346,6 +356,7 @@ def build_server(
         region: Region = None,
         show: Show = "changed",
         until: str | None = None,
+        until_regex: bool = False,
         timeout_s: float = 10,
     ) -> str:
         """Turn the mouse wheel over the remote-desktop window: ticks < 0 scrolls down,
@@ -358,7 +369,7 @@ def build_server(
         check_region((cx, cy, 1, 1), frame)
         box, old = before_input(window_title, region, show)
         screen.source.scroll(w, cx, cy, ticks)
-        return after_input(window_title, box, old, show, until, timeout_s)
+        return after_input(window_title, box, old, show, until, until_regex, timeout_s)
 
     def before_input(
         window_title: str | None, region: Region, show: Show
@@ -372,12 +383,13 @@ def build_server(
         old: list[Line] | None,
         show: Show,
         until: str | None,
+        until_regex: bool,
         timeout_s: float,
     ) -> str:
         head = f"settled_ms={screen.settle(window_title)}"
         if until:
             try:
-                elapsed, _ = poll(window_title, box, until, False, timeout_s)
+                elapsed, _ = poll(window_title, box, until, until_regex, False, timeout_s)
             except ScreenError as e:
                 detail = str(e).removeprefix(f"{e.code}: ")
                 raise ScreenError(e.code, f"the input was sent, but {detail}") from None
@@ -402,6 +414,7 @@ def build_server(
         region: Region = None,
         show: Show = "changed",
         until: str | None = None,
+        until_regex: bool = False,
         timeout_s: float = 10,
     ) -> str:
         """Click at a client point of the remote-desktop window, normally the center of a
@@ -412,7 +425,7 @@ def build_server(
         check_region((x, y, 1, 1), frame)
         box, old = before_input(window_title, region, show)
         screen.source.click(w, x, y, button, double)
-        return after_input(window_title, box, old, show, until, timeout_s)
+        return after_input(window_title, box, old, show, until, until_regex, timeout_s)
 
     def jharokha_type(
         text: str,
@@ -421,6 +434,7 @@ def build_server(
         region: Region = None,
         show: Show = "changed",
         until: str | None = None,
+        until_regex: bool = False,
         timeout_s: float = 10,
         paste: bool = False,
     ) -> str:
@@ -439,7 +453,7 @@ def build_server(
         point = _point(focus_at, frame)
         box, old = before_input(window_title, region, show)
         screen.source.type_text(w, text, point, paste)
-        return after_input(window_title, box, old, show, until, timeout_s)
+        return after_input(window_title, box, old, show, until, until_regex, timeout_s)
 
     def jharokha_press(
         keys: str,
@@ -448,6 +462,7 @@ def build_server(
         region: Region = None,
         show: Show = "changed",
         until: str | None = None,
+        until_regex: bool = False,
         timeout_s: float = 10,
     ) -> str:
         """Press a key or chord inside the remote session, like 'enter', 'esc', 'ctrl+c',
@@ -459,7 +474,7 @@ def build_server(
         point = _point(focus_at, frame)
         box, old = before_input(window_title, region, show)
         screen.source.press(w, keys, point)
-        return after_input(window_title, box, old, show, until, timeout_s)
+        return after_input(window_title, box, old, show, until, until_regex, timeout_s)
 
     def jharokha_watch(
         action: Literal["start", "stop", "status"] = "status",

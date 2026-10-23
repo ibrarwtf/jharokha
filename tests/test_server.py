@@ -94,6 +94,8 @@ async def test_screenshot_region_and_scale(source):
 async def test_wait_for_text_and_timeout(source):
     r = await call(source, "jharokha_wait_for_text", query="succeeded", timeout_s=1)
     assert json.loads(text(r))["found"] is True
+    r = await call(source, "jharokha_wait_for_text", query="shipped|failed", regex=True)
+    assert json.loads(text(r))["match"]["text"] == "shipped"
     r = await call(source, "jharokha_wait_for_text", query="succeeded", gone=True, timeout_s=0.6)
     assert r.is_error and text(r).startswith("timeout:") and "Build succeeded" in text(r)
 
@@ -128,6 +130,10 @@ async def test_input_returns_what_changed_after_the_screen_settles(source):
 async def test_until_waits_for_text_after_input(source):
     async with Client(build_server(source, allow_input=True)) as c:
         r = await c.call_tool("jharokha_type", {"text": "dir", "until": "typed dir"})
+        assert "until_ms=" in text(r)
+        r = await c.call_tool(
+            "jharokha_type", {"text": "x", "until": r"typed \w$", "until_regex": True}
+        )
         assert "until_ms=" in text(r)
         r = await c.call_tool("jharokha_type", {"text": "long script", "paste": True})
         assert "pasted long script" in text(r)

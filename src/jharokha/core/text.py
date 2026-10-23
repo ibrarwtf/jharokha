@@ -14,6 +14,11 @@ _LOOKALIKE = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")
 _SUSPECT = re.compile(r"\d|[A-Z]{3}")
 # OCR confuses these; fold both sides of a search to the same letter.
 _FOLD = str.maketrans("0|1!5$8", "oll1ssb")
+_DASHES = str.maketrans("—–‐‑−", "-----")
+# OCR puts spaces around path and URL punctuation: `links .txt`, `https : //host . com`.
+_PUNCT_GAP = re.compile(r"\s+(?=[.:/\\])|(?<=[./\\])\s+|(?<=:)\s+(?=/)")
+# A terminal's caret after its prompt reads as a letter: `PS C:\repo>I`.
+_CARET = re.compile(r"(?<=[>$#])\s*[I|_l]$")
 _LOCK_HINTS = (
     "press ctrl+alt+del",
     "ctrl + alt + delete",
@@ -235,8 +240,16 @@ class Match:
     center: tuple[int, int]
 
 
+def normalize(s: str) -> str:
+    """Undo what OCR does to punctuation: dashes of any kind (and runs of them) as `-`/`--`,
+    spaces it puts around `.`, `/`, `\\` and `:`, and a caret read as a letter after a
+    prompt."""
+    s = re.sub(r"-{2,}", "--", clean(s).translate(_DASHES))
+    return _CARET.sub("", _PUNCT_GAP.sub("", s))
+
+
 def _fold(s: str) -> str:
-    return clean(s).lower().translate(_FOLD)
+    return normalize(s).lower().translate(_FOLD)
 
 
 def _match(ref: str, words: tuple[Word, ...]) -> Match:
@@ -250,13 +263,16 @@ def _match(ref: str, words: tuple[Word, ...]) -> Match:
 
 
 def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) -> list[Match]:
-    """Word spans matching the query. Plain queries fold case and OCR lookalikes and fall back
-    to fuzzy (ratio >= 0.8) only when nothing matches exactly. Regex runs on the raw line."""
+    """Word spans matching the query. Plain queries fold case, OCR lookalikes and punctuation
+    (see normalize), ignore spaces, and fall back to fuzzy (ratio >= 0.8) only when nothing
+    matches exactly. Regex runs on the raw line, then on the normalized line, where the
+    match is the whole line."""
     exact: list[Match] = []
     fuzzy: list[Match] = []
     n = max(1, len(query.split()))
     pat = re.compile(query, re.IGNORECASE) if regex else None
     q = _fold(query)
+    bare = q.replace(" ", "")
     for i, ln in enumerate(lines):
         ref = f"L{i}"
         if pat:
@@ -270,6 +286,8 @@ def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) 
                         hit.append(w)
                     pos = end + 1
                 exact.append(_match(ref, tuple(hit) or ln.words))
+            elif pat.search(normalize(joined)):
+                exact.append(_match(ref, ln.words))
             continue
         spans = [
             (size, ln.words[s : s + size])
@@ -278,12 +296,16 @@ def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) 
         ]
         for size, span in spans:
             folded = _fold(" ".join(w.text for w in span))
-            if q in folded:
+            if q in folded or bare in folded.replace(" ", ""):
                 exact.append(_match(ref, span))
                 break
             if size == n and difflib.SequenceMatcher(None, q, folded).ratio() >= 0.8:
                 fuzzy.append(_match(ref, span))
                 break
+        else:
+            # OCR split one word into more pieces than the spans cover (a URL, a path).
+            if bare in _fold(ln.text).replace(" ", ""):
+                exact.append(_match(ref, ln.words))
     found = exact or fuzzy
     return found if all else found[:1]
 
