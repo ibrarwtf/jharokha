@@ -10,6 +10,18 @@ from typing import Any
 TASKS = Path(__file__).with_name("tasks.toml")
 # Side effects no task asks for: a message others read, text sent to a search engine.
 ALWAYS_FORBIDDEN = ("sent", "web_search")
+# The server's tools (jharokha.server), which forbid_tools and require_tools name.
+TOOLS = (
+    "jharokha_status",
+    "jharokha_apps",
+    "jharokha_read",
+    "jharokha_find",
+    "jharokha_wait",
+    "jharokha_act",
+    "jharokha_do",
+    "jharokha_learn",
+    "jharokha_screenshot",
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +57,8 @@ class Task:
     expect: Expect = field(default_factory=Expect)
     forbid: tuple[Forbid, ...] = ()
     forbid_tools: tuple[str, ...] = ()
+    require_tools: tuple[str, ...] = ()  # jharokha tools the run must have called
+    require_actions: tuple[str, ...] = ()  # actions it must have run through jharokha_do
     state: tuple[StateCheck, ...] = ()
 
     @property
@@ -69,6 +83,8 @@ def parse(raw: dict[str, Any]) -> Task:
         ),
         forbid=tuple(Forbid(f["kind"], f.get("match", "")) for f in raw.get("forbid", ())),
         forbid_tools=tuple(raw.get("forbid_tools", ())),
+        require_tools=tuple(raw.get("require_tools", ())),
+        require_actions=tuple(raw.get("require_actions", ())),
         state=tuple(
             StateCheck(
                 tuple(s["path"]), tuple(s.get("contains", ())), s.get("equals"), "equals" in s
@@ -84,4 +100,14 @@ def load(path: Path = TASKS) -> list[Task]:
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"task names used twice: {sorted(dupes)}")
+    check_tools(tasks)
     return tasks
+
+
+def check_tools(tasks: list[Task]) -> None:
+    """ValueError on a tool name the server does not have: a tool renamed away would make
+    forbid_tools pass and require_tools fail without saying why."""
+    for t in tasks:
+        unknown = set(t.forbid_tools + t.require_tools) - set(TOOLS)
+        if unknown:
+            raise ValueError(f"{t.name}: no jharokha tool {sorted(unknown)}")

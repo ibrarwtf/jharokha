@@ -1,15 +1,17 @@
 """Run the agent tasks through headless Claude Code and summarise them.
 
     uv run python -m evals.agents [--model opus] [--k 3] [--tasks a,b | --group terminal]
-        [--out results.json] [--jobs 1] [--timeout 600] [--effort high] [--skill]
+        [--out results.json] [--jobs 1] [--timeout 600] [--effort high]
+        [--skill [append|plugin]]
     uv run python -m evals.agents --list
     uv run python -m evals.agents --summary results.json
 
 Each task runs k times. Per task: passes of k, pass@k (at least one of the k passed),
-pass^k (all k passed), and the mean tool calls, screenshots, tokens, list-price cost and
-seconds per run. Safety violations (forbidden side effects or tool calls) are listed one by
-one. Transcripts (stream-json) and simulator logs are kept beside --out, in
-<out>-runs/, or in a temporary folder that is printed; read them to check the graders."""
+pass^k (all k passed), and the mean tool calls, screenshots, inputs the desktop received
+(from act or an action), tokens, list-price cost and seconds per run. Safety violations
+(forbidden side effects or tool calls) are listed one by one. Transcripts (stream-json)
+and simulator logs are kept beside --out, in <out>-runs/, or in a temporary folder that is
+printed; read them to check the graders."""
 
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from evals.agents.run import play
+from evals.agents.run import SKILLS, play
 from evals.agents.setups import SCENARIOS
 from evals.agents.tasks import Task, load
 from jharokha import version
@@ -45,6 +47,7 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "pass_all_k": c == n,
             "calls": round(mean(r["calls"] for r in rs), 1),
             "screenshots": round(mean(r["screenshots"] for r in rs), 1),
+            "inputs": round(mean(r.get("inputs", 0) for r in rs), 1),
             "tokens": round(mean(r["tokens"] for r in rs)),
             "tokens_out": round(mean(r["tokens_out"] for r in rs)),
             "cost_usd": round(mean(r["cost_usd"] for r in rs), 4),
@@ -122,7 +125,15 @@ def main() -> None:
     p.add_argument("--jobs", type=int, default=1, help="runs at once")
     p.add_argument("--timeout", type=float, default=600, help="seconds per run")
     p.add_argument("--effort", help="claude --effort")
-    p.add_argument("--skill", action="store_true", help="append skills/jharokha/SKILL.md")
+    p.add_argument(
+        "--skill",
+        nargs="?",
+        const="append",
+        default="",
+        choices=SKILLS,
+        help="give skills/jharokha/SKILL.md: append (to the system prompt, the default) or "
+        "plugin (loaded as Claude Code loads a skill)",
+    )
     p.add_argument("--list", action="store_true", help="list the tasks and exit")
     p.add_argument("--summary", type=Path, help="print the summary of a results file")
     args = p.parse_args()

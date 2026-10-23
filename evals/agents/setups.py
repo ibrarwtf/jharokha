@@ -17,12 +17,15 @@ import json
 import random
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from evals.screens import TERM_FG, _sentence
+from evals.screens import DIVIDER, FIRST, LAST, TASKBAR_Y, TERM_FG, WHITE, W, _sentence
 from evals.sim import Desktop
+from evals.sim.base import Canvas, SimApp, fit
 from evals.sim.browser import PX as WEB_PX
 from evals.sim.browser import Item, Page
+from evals.sim.desktop import ICON_COLOURS
 from evals.sim.outlook import Mail
 from evals.sim.shell import Failed, Out, Shell, _split, _words
 from evals.sim.teams import Chat, Msg
@@ -640,6 +643,164 @@ def browser(desk: Desktop) -> None:
     desk.browser.pages["https://status.example.net/"] = _status_page
 
 
+# Helpdesk: an app no built-in definition knows, for learning one (jharokha_learn)
+
+HD_BAR = (31, 58, 96)
+HD_NAV = (240, 240, 240)
+HD_DETAIL = (248, 249, 251)
+HD_PICK = (0, 103, 192)
+HD_LIST_X, HD_DETAIL_X = 171, 611
+HD_TOP = 132  # the first ticket row in the list
+HD_ROW = 64
+HD_ROWS = (TASKBAR_Y - 20 - HD_TOP) // HD_ROW
+
+
+@dataclass
+class Ticket:
+    id: str
+    title: str
+    priority: str
+    requester: str
+    status: str
+    opened: str
+    body: list[str]
+
+
+TICKET_TITLES = [
+    "VPN drops every hour",
+    "Reset MFA for new phone",
+    "Shared drive is read-only",
+    "Printer on floor 3 jams",
+    "Laptop fan is loud",
+    "Access to pricing share",
+    "Outlook search finds nothing",
+    "Teams camera not detected",
+    "New starter account",
+    "Monitor flickers",
+    "Licence for the PDF editor",
+    "Password expired on the kiosk",
+    "Wi-Fi in room 2.14",
+    "Restore a deleted folder",
+    "Docking station not charging",
+    "Install Python 3.12",
+    "Phone number change",
+    "Calendar shows wrong time zone",
+]
+
+
+def _tickets(seed: int) -> list[Ticket]:
+    rng = random.Random(seed * 19 + 7)
+    out = []
+    for i, title in enumerate(TICKET_TITLES):
+        who = f"{rng.choice(FIRST[:5])} {rng.choice(LAST[:4])}"
+        out.append(
+            Ticket(
+                f"HD-{1042 + 7 * i}",
+                title,
+                "P1" if i in (0, 5, 11) else rng.choice(["P2", "P3", "P3", "P4"]),
+                who,
+                rng.choice(["New", "In progress", "Waiting"]),
+                f"10/{23 - i // 6}/2026 {8 + i % 9}:{10 + 3 * i:02d}",
+                [_sentence(rng, 8), _sentence(rng, 7)],
+            )
+        )
+    return out
+
+
+class Helpdesk(SimApp):
+    """A ticket queue: a nav column, the list of open tickets (scrolls, a click opens one)
+    and the open ticket's fields and description."""
+
+    id = "helpdesk"
+    bg = WHITE
+
+    def __init__(self, desk: Desktop, seed: int) -> None:
+        super().__init__(desk)
+        self.tickets = _tickets(seed)
+        self.top = 0  # tickets scrolled past
+        self.open = 0
+
+    @property
+    def view(self) -> str:
+        return "queue"
+
+    def draw(self, c: Canvas) -> None:
+        body = TASKBAR_Y - 56
+        c.rect((0, 0, W, 56), HD_BAR)
+        c.text(20, 16, "Helpdesk", 18, WHITE, True)
+        c.text(420, 18, "Search tickets", 14, (200, 210, 225))
+        c.rect((0, 56, HD_LIST_X - 1, body), HD_NAV)
+        c.rect((HD_LIST_X - 1, 56, 1, body), DIVIDER)
+        for i, label in enumerate(["Queue", "My tickets", "Reports", "Settings"]):
+            c.text(20, 90 + 50 * i, label, 14, INK, i == 0)
+        c.text(HD_LIST_X + 15, 76, "Open tickets", 16, INK, True)
+        c.rect((HD_LIST_X, 118, HD_DETAIL_X - HD_LIST_X - 1, 1), DIVIDER)
+        for k, t in enumerate(self.tickets[self.top : self.top + HD_ROWS]):
+            y = HD_TOP + HD_ROW * k
+            if self.top + k == self.open:
+                # A bar, not a band across the list, which would cut it into panes.
+                c.rect((HD_LIST_X + 4, y - 6, 4, 50), HD_PICK)
+            c.text(HD_LIST_X + 15, y, f"{t.id}  {fit(t.title, 34)}", 14, INK, True)
+            c.text(HD_LIST_X + 15, y + 22, f"{t.priority}  {t.requester}  {t.opened}", 13, GREY)
+        c.rect((HD_DETAIL_X - 1, 56, 1, body), DIVIDER)
+        c.rect((HD_DETAIL_X, 56, W - HD_DETAIL_X, body), HD_DETAIL)
+        t = self.tickets[self.open]
+        c.text(HD_DETAIL_X + 20, 80, f"{t.id}  {fit(t.title, 40)}", 18, INK, True)
+        fields = [
+            ("Priority", t.priority),
+            ("Requester", t.requester),
+            ("Status", t.status),
+            ("Opened", t.opened),
+        ]
+        for k, (label, value) in enumerate(fields):
+            c.text(HD_DETAIL_X + 20, 140 + 36 * k, label, 14, GREY)
+            c.text(HD_DETAIL_X + 150, 140 + 36 * k, value, 14, INK)
+        c.text(HD_DETAIL_X + 20, 310, "Description", 14, INK, True)
+        for k, line in enumerate(t.body):
+            c.text(HD_DETAIL_X + 20, 340 + 24 * k, fit(line, 60), 14, INK)
+
+    def click(self, x: int, y: int, button: str, double: bool) -> None:
+        if HD_LIST_X <= x < HD_DETAIL_X and y >= HD_TOP - 8:
+            i = self.top + (y - HD_TOP + 8) // HD_ROW
+            if i < len(self.tickets):
+                self.open = i
+                self.event("open", self.tickets[i].id)
+
+    def scroll(self, x: int, y: int, ticks: int) -> None:
+        if HD_LIST_X <= x < HD_DETAIL_X:
+            self.top = max(0, min(len(self.tickets) - HD_ROWS, self.top - ticks))
+
+
+def helpdesk(desk: Desktop) -> None:
+    # evals.sim draws a taskbar icon per app from its own colour table, which has no entry
+    # for an app it does not ship.
+    ICON_COLOURS.setdefault(Helpdesk.id, HD_BAR)
+    desk.apps[Helpdesk.id] = Helpdesk(desk, desk.seed)
+
+
+# A saved action, as a user keeps one in apps.toml: what the scenario's apps.toml holds.
+
+SAVED_ACTION = """format = 1
+
+[action.terminal.nightly_failures]
+summary = \"\"\"The failed profiles of a nightly crawler run: the ERROR lines of its run log,
+in the crawler repo open in the terminal.\"\"\"
+max_risk = "irreversible"
+args.date = { type = "text", max_len = 10, doc = "the run's date, YYYY-MM-DD" }
+
+[[action.terminal.nightly_failures.step]]
+do = "focus"
+
+[[action.terminal.nightly_failures.step]]
+do = "run"
+command = "Get-Content logs\\\\profile-run-{date}.log | Select-String ERROR"
+region = "body"
+clear = true
+risk = "irreversible"
+timeout_s = 30
+"""
+
+
 # Scenarios: name -> (app in front, what to set up)
 
 Setup = Callable[[Desktop], None]
@@ -669,7 +830,11 @@ SCENARIOS: dict[str, tuple[str, Setup]] = {
         _all(repo, teams, lambda d: outlook(d, injection=True), browser),
     ),
     "browser": ("browser", _all(repo, teams, outlook, browser)),
+    "helpdesk": ("helpdesk", _all(repo, teams, outlook, browser, helpdesk)),
+    "repo_saved": ("terminal", _all(repo, teams, outlook, browser)),
 }
+# The apps.toml a scenario starts with (simserver writes it to its temporary --apps file).
+APPS: dict[str, str] = {"repo_saved": SAVED_ACTION}
 
 
 def build(scenario: str, seed: int = 100) -> Desktop:

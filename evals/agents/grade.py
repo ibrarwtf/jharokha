@@ -2,8 +2,10 @@
 
 A run is graded on what it left behind, not on the path it took: the final answer, the
 side effects the simulated desktop logged (evals.simserver --log) and the desktop's final
-state. The transcript adds what it cost (tool calls, screenshots, turns, tokens, time) and
-which tools a read-only task must not have called."""
+state. The transcript adds what it cost (tool calls, screenshots, turns, tokens, time),
+which tools a read-only task must not have called (jharokha_act), and which tools or
+actions a task needs used (jharokha_learn to teach an app, a saved action through
+jharokha_do). Input is counted on the desktop, where act and an action's steps both land."""
 
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ class Transcript:
     final: str = ""
     tools: Counter[str] = field(default_factory=Counter)  # jharokha tool name -> calls
     other_tools: Counter[str] = field(default_factory=Counter)  # anything not jharokha's
+    actions: Counter[str] = field(default_factory=Counter)  # jharokha_do's action -> calls
+    learn_steps: list[str] = field(default_factory=list)  # jharokha_learn's steps, in order
     tool_turns: int = 0  # model turns that called a tool
     turns: int = 0  # as the result reports them
     tokens_in: int = 0  # uncached input
@@ -92,8 +96,15 @@ class Reader:
                     self._blocks.add(block.get("id", ""))
                     self._turns.add(mid)
                     name = block.get("name", "")
+                    args = block.get("input") if isinstance(block.get("input"), dict) else {}
                     if name.startswith(PREFIX):
-                        self.t.tools[name[len(PREFIX) :]] += 1
+                        tool = name[len(PREFIX) :]
+                        self.t.tools[tool] += 1
+                        if tool == "jharokha_do":
+                            dry = " (dry run)" if args.get("dry_run") else ""
+                            self.t.actions[f"{args.get('action', '?')}{dry}"] += 1
+                        elif tool == "jharokha_learn":
+                            self.t.learn_steps.append(str(args.get("step", "scan")))
                     else:
                         self.t.other_tools[name] += 1
             self.t.tool_turns = len(self._turns)
@@ -187,6 +198,17 @@ def tool_violations(task: Task, t: Transcript) -> list[str]:
     return [f"called {n} x{t.tools[n]}" for n in task.forbid_tools if t.tools[n]]
 
 
+def unmet(task: Task, t: Transcript) -> list[str]:
+    """Tools and actions the task needs the run to have used (a dry run does not count)."""
+    out = [f"never called {n}" for n in task.require_tools if not t.tools[n]]
+    return out + [f"never ran {a}" for a in task.require_actions if not t.actions[a]]
+
+
+def inputs(log: dict[str, Any] | None) -> int:
+    """Inputs the desktop received, from act or from an action's steps alike."""
+    return sum(e.get("kind") == "input" for e in (log or {}).get("events", []))
+
+
 def _at(state: Any, path: tuple[str, ...]) -> tuple[bool, Any]:
     for key in path:
         if not isinstance(state, dict) or key not in state:
@@ -231,6 +253,6 @@ def grade(task: Task, t: Transcript, log: dict[str, Any] | None) -> Grade:
     elif log is None:
         infra = "no simulator log"
     answer = check_answer(task.expect, t.final) if t.final else ["no final answer"]
-    misses = answer + state_failures(task, log)
+    misses = answer + state_failures(task, log) + unmet(task, t)
     bad = violations(task, log) + tool_violations(task, t)
     return Grade(not misses and not bad and not infra, not answer, misses, bad, infra)
