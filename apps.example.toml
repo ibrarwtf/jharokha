@@ -49,7 +49,9 @@ grids.body = { pitch = 23, char_width = 11, origin = [8, 4] }
 # it has finished loading, and regions: the pane under `at` (widened to the one under
 # `to`), else `box`. reader is text, grid, list (kind messages, entries or mails), table or
 # form. policy limits input to the app: newline (the chord a typed newline is sent as) and
-# irreversible_keys (refused unless the call passes allow="irreversible"). spots name icons
+# irreversible_keys (refused unless the call passes allow="irreversible"); an app with no
+# policy table holds back enter, ctrl+enter and alt+s and sends newlines as shift+enter, and
+# an empty table (irreversible_keys = []) opts out. spots name icons
 # by their centre and size: {"spot": "tickets.refresh"} clicks one, only while tickets is in
 # front and an icon of that size is there. action tables are reserved for a later version.
 [app.tickets]

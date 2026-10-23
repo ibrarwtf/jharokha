@@ -25,6 +25,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from typing import Any
 
 import numpy as np
 
@@ -645,7 +646,9 @@ def propose(
     (toolbar, nav, header, footer, sidebar, list, table, content). icons maps the first
     scan's icon indexes to names: the app's spots ({spot = "<app>.<name>"}). known: the app
     when this is a new view of it; its app-wide cues the new view does not show move to its
-    views."""
+    views. An app with no input policy gets apps.DEFAULT_POLICY written into its definition,
+    so the user sees in the diff they confirm that Enter and the other send keys are held
+    back until they declare otherwise."""
     ss = [scans] if isinstance(scans, Scan) else list(scans)
     s = ss[0]
     for k, v in (("app", app_id), ("view", view_id)):
@@ -705,6 +708,8 @@ def propose(
     else:
         app = _add_view(known, view, app_cues, s)
         app = replace(app, spots={**known.spots, **spots})
+    if app.policy is None and app.id != apps.GENERIC:
+        app = replace(app, policy=_default_policy())
 
     cal = None
     grids = {}
@@ -717,6 +722,10 @@ def propose(
     if grids:
         cal = Calibration((Variant("", grids=grids),))
     return Proposal(app, view_id, cal, index, tuple(a.text for a in chosen))
+
+
+def _default_policy() -> dict[str, Any]:
+    return {k: list(v) if isinstance(v, list) else v for k, v in apps.DEFAULT_POLICY.items()}
 
 
 def _add_view(known: App, view: View, app_cues: list[Cue], s: Scan) -> App:
@@ -826,9 +835,9 @@ def definition_toml(app: App) -> str:
         out.append(f"spots = {_value(dict(app.spots))}")
     for c in app.cues:
         out += ["", f"[[{a}.cue]]", *_cue_lines(c)]
-    for k in ("policy", "action"):
-        table = getattr(app, k)
-        if table:
+    # A policy declared empty is written as an empty table: it opts out of the default.
+    for k, table in (("policy", app.policy), ("action", app.action or None)):
+        if table is not None:
             out += ["", f"[{a}.{k}]", *(f"{_key(x)} = {_value(v)}" for x, v in table.items())]
     for v in app.views.values():
         vk = f"{a}.view.{_key(v.id)}"

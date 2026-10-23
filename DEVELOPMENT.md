@@ -411,7 +411,7 @@ Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`
 - Edge's tab strip, which runs into the toolbar through the selected tab.
 - Identification on the live session, and calibration of Outlook and the browser there; the readers on live Teams and Outlook (dividers, bubbles and quotes were measured live, calendar and tables only on generated screens).
 - Small grey text in a large region (a calendar's hours, a bold two-letter header) is missed by Windows OCR at 1.0x and costs those table cells; a learned grid's calibration is still measured from Windows OCR words, not `rows.calibrate`; row grids are tuned on Cascadia Mono, light themes and box drawing untested.
-- Learning on a live app: tooltips' delay and placement, icons a hover card answers instead, zoom keys an app does not take. Spots do not follow a zoom (they are refused there); per-variant spots would. A learned app gets no input policy, so nothing in it is held back as irreversible until one is written by hand.
+- Learning on a live app: tooltips' delay and placement, icons a hover card answers instead, zoom keys an app does not take. Spots do not follow a zoom (they are refused there); per-variant spots would. A learned app gets the default input policy (Enter, Ctrl+Enter and Alt+S held back, newlines as Shift+Enter), not one fitted to it: which key sends is not on the screen, so an app where Enter is only a new line asks for `allow="irreversible"` there until the user writes its policy.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 
 ## Release

@@ -6,8 +6,9 @@ description, a reply box at its foot), and zoom on Ctrl+= / Ctrl+- / Ctrl+0 that
 whole app as a browser or Electron app does.
 
 The toolbar's clicks act at once (assign sets "Assigned to: You", close closes the ticket)
-and record an event; Enter in the reply box sends the reply (a `sent` event), so a test can
-assert that onboarding sent nothing."""
+and record an event; Enter or Ctrl+Enter in the reply box sends the reply (a `sent` event)
+and Shift+Enter adds a line, so a test can assert that onboarding sent nothing and that a
+learned app's default policy keeps a typed reply a draft."""
 
 from __future__ import annotations
 
@@ -191,7 +192,9 @@ class Tickets(SimApp):
             y += self.s(24)
         foot = TASKBAR_Y - self.s(60)
         if self.reply:
-            c.text(x, foot, fit(self.reply, 56), self.s(16), INK)
+            lines = self.reply.split("\n")
+            for i, line in enumerate(lines):
+                c.text(x, foot - self.s(24) * (len(lines) - 1 - i), fit(line, 56), self.s(16), INK)
         else:
             c.text(x, foot, "Write a reply", self.s(16), GREY)
 
@@ -283,6 +286,8 @@ class Tickets(SimApp):
         elif self.focus == "reply":
             if key == "backspace":
                 self.reply = self.reply[:-1]
+            elif key == "enter" and "shift" in mods:
+                self.reply += "\n"
             elif key == "enter" and self.reply.strip():
                 self.sent.append(self.reply)
                 self.event("sent", f"{self.tickets[self.open].title}: {self.reply}")

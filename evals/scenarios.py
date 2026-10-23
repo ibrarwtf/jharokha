@@ -34,10 +34,31 @@ from typing import Any
 from mcp import Client
 from mcp.types import TextContent
 
+from evals.screens import TASKBAR_Y
 from evals.sim import Desktop, SimSource
 from jharokha import version
+from jharokha.core import apps
 from jharokha.core.text import fold
 from jharokha.server import build_server
+
+OTHER_AGENT = 4242  # a second agent's pid, running while a scenario says so
+
+# The ticket queue as a user writes it into apps.toml by hand, or as learned before 0.22.2:
+# no [app.tickets.policy], so the default policy applies. Its reply box sends on Enter.
+TICKETS_APP = """format = 1
+[app.tickets]
+name = "Queue Desk"
+[[app.tickets.cue]]
+text = "Queue Desk"
+at = [0.014, 0.01]
+weight = 2
+[[app.tickets.cue]]
+text = "Open tickets"
+[app.tickets.view.queue]
+[app.tickets.view.queue.region.detail]
+at = [0.68, 0.5]
+focus = true
+"""
 
 
 class Agent:
@@ -214,15 +235,25 @@ async def incident_teams_ctrl_enter(a: Agent) -> bool:
 async def incident_second_agent(a: Agent) -> bool:
     """Another agent's process (a second Lease on the same window, under a live pid that is
     not ours) is sending to the session: ours is refused instead of typing into its work."""
-    from evals.sim.source import HWND
-    from jharokha.win.guard import Lease
-
-    assert a.source.lease_root is not None
-    Lease(HWND, root=a.source.lease_root, pid=os.getppid()).take()
+    a.source.lease(OTHER_AGENT).take()
     out = await a.call(
         "jharokha_do", action="terminal.run", args={"command": "Get-Date"}, allow="irreversible"
     )
     return out.startswith("input_leased:") and not a.desk.shell.log
+
+
+REPLY = "Looking into it.\nBack within the hour."
+
+
+async def incident_reply_in_an_app_with_no_policy(a: Agent) -> bool:
+    """A two-line reply typed into the ticket queue, an app defined with no policy, then
+    Enter: up to 0.22.1 the newline was Enter and sent the first line. The default policy
+    types it as Shift+Enter and holds Enter back until allow='irreversible'."""
+    box = [800, TASKBAR_Y - 40]  # the reply box at the foot of the detail pane
+    await a.act("type", target=box, text=REPLY, show="none", expect="tickets")
+    out = await a.act("press", keys="enter", show="none", expect="tickets")
+    t = a.desk.tickets
+    return out.startswith("irreversible:") and not t.sent and t.reply == REPLY
 
 
 async def incident_user_typing(a: Agent) -> bool:
@@ -404,6 +435,7 @@ class Scenario:
     incident: bool = False  # an unsafe action, to be refused
     lease: bool = False  # give the window a lease file, in a temporary folder
     task: str | None = None  # a task done both with the raw tools and as an action
+    apps: str | None = None  # an apps.toml beside the built-in definitions
 
 
 SCENARIOS = [
@@ -420,6 +452,13 @@ SCENARIOS = [
     Scenario("incident_teams_ctrl_enter", "teams", incident_teams_ctrl_enter, incident=True),
     Scenario("incident_outlook_send", "outlook", incident_outlook_send, incident=True),
     Scenario("incident_second_agent", "terminal", incident_second_agent, incident=True, lease=True),
+    Scenario(
+        "incident_reply_no_policy",
+        "tickets",
+        incident_reply_in_an_app_with_no_policy,
+        incident=True,
+        apps=TICKETS_APP,
+    ),
     Scenario("incident_user_typing", "terminal", incident_user_typing, incident=True),
     Scenario("incident_user_mid_text", "terminal", incident_user_types_mid_text, incident=True),
     Scenario("raw_new_messages", "teams", raw_new_messages, task="new_messages"),
@@ -440,10 +479,19 @@ SCENARIOS = [
 
 async def play(s: Scenario, seed: int = 100, codec: bool = False) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="jharokha-sim-") as root:
+        # A lease on a still clock, held by a pid that runs while the scenario says so: the
+        # outcome does not depend on how long OCR takes or which processes are alive.
         source = SimSource(
-            Desktop(seed, front=s.front), codec=codec, lease_root=root if s.lease else None
+            Desktop(seed, front=s.front, tickets=s.front == "tickets"),
+            codec=codec,
+            lease_root=root if s.lease else None,
+            lease_clock=lambda: 1000.0,
+            lease_alive=lambda pid: pid in (OTHER_AGENT, os.getpid()),
         )
-        server = build_server(source, allow_input=True, catalog=source.catalog())
+        cat = source.catalog()
+        if s.apps:
+            cat = cat.replacing(apps.parse(s.apps, "apps.toml"))
+        server = build_server(source, allow_input=True, catalog=cat)
         t = time.perf_counter()
         async with Client(server) as client:
             agent = Agent(client, source)

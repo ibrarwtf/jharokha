@@ -15,7 +15,6 @@ from mcp import Client
 
 from evals.scenarios import PUT_DATA, Agent, body, seen
 from evals.sim import Desktop, SimSource
-from evals.sim.source import HWND
 from jharokha.core import actions
 from jharokha.core.trace import Trace
 from jharokha.server import build_server
@@ -300,20 +299,36 @@ async def test_incident_newline_typed_into_teams_stays_in_the_draft():
     assert [e.kind for e in source.desk.safety()] == ["sent"]
 
 
+OTHER_AGENT = 4242  # the other agent's pid: running while the test says so
+
+
 @pytest.mark.windows
 async def test_a_second_agent_holding_the_session_is_refused(tmp_path):
-    from jharokha.win.guard import Lease
-
-    source = SimSource(Desktop(100, front="terminal"), lease_root=tmp_path)
-    other = os.getppid()  # a live process that is not this one: the other agent
-    Lease(HWND, root=tmp_path, pid=other).take()
+    # The lease lapses by the wall clock and frees the window when its pid no longer runs:
+    # both are the test's, so however slow the OCR under load, the lease holds until the
+    # test moves the clock, and no real process's life decides the outcome.
+    clock = Clock()
+    source = SimSource(
+        Desktop(100, front="terminal"),
+        lease_root=tmp_path,
+        lease_clock=clock,
+        lease_alive=lambda pid: pid in (OTHER_AGENT, os.getpid()),
+    )
+    other = source.lease(OTHER_AGENT)
+    other.take()
     async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
         a = Agent(c, source)
         r = await run(a, "Get-Date")
-        assert r.startswith(f"input_leased: process {other} is sending input to this window")
+        assert r.startswith(f"input_leased: process {OTHER_AGENT} is sending input to this window")
+        clock.t += 59  # a minute without input, all but a second: still held
         s = await a.status()
-        assert s["input"]["lease"]["pid"] == other and s["warnings"][0]["kind"] == "input_leased"
-        Lease(HWND, root=tmp_path, pid=other).release()  # the other agent is done
+        assert s["input"]["lease"] == {"pid": OTHER_AGENT, "idle_s": 59.0}
+        assert s["warnings"][0]["kind"] == "input_leased"
+        clock.t += 2  # lapsed
+        assert (await a.status())["input"]["lease"] is None
+        other.take()  # back at work, then done
+        assert (await a.status())["input"]["lease"]["pid"] == OTHER_AGENT
+        other.release()
         assert (await a.status())["input"]["lease"] is None
         assert body(await run(a, "Get-Date"))["ok"]
     assert [c.split(";")[0] for c in source.desk.shell.log] == ["Get-Date"]
@@ -382,6 +397,28 @@ async def test_teams_ctrl_enter_sends_and_is_held_back():
         assert teams.sent == [] and teams.chat.draft == ["one", "two"]
         await a.act("press", keys="ctrl+enter", allow="irreversible", show="none")
     assert teams.sent == [(teams.chat.name, "one\ntwo")]
+
+
+@pytest.mark.windows
+async def test_an_app_with_no_policy_keeps_a_typed_reply_a_draft():
+    from evals.scenarios import REPLY, TICKETS_APP
+    from evals.screens import TASKBAR_Y
+    from jharokha.core import apps
+
+    source = SimSource(Desktop(100, front="tickets", tickets=True))
+    cat = source.catalog().replacing(apps.parse(TICKETS_APP, "apps.toml"))
+    t = source.desk.tickets
+    async with Client(build_server(source, allow_input=True, catalog=cat)) as c:
+        a = Agent(c, source)
+        kw = {"show": "none", "expect": "tickets"}
+        await a.act("type", target=[800, TASKBAR_Y - 40], text=REPLY, **kw)
+        assert t.reply == REPLY and t.sent == []  # the newline went as Shift+Enter
+        for keys in ("enter", "ctrl+enter", "alt+s"):
+            r = await a.act("press", keys=keys, **kw)
+            assert r.startswith(f"irreversible: {keys} is irreversible in tickets.queue"), r
+        assert t.sent == [] and source.desk.safety() == []
+        await a.act("press", keys="enter", allow="irreversible", **kw)
+    assert t.sent == [REPLY] and [e.kind for e in source.desk.safety()] == ["sent"]
 
 
 # Actions through jharokha_do: the same guard, the same codes.

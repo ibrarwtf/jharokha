@@ -8,8 +8,11 @@ for rereads. Input changes the simulation's state; nothing reaches a real window
 
 Input is guarded as WindowsSource guards it, with the same decisions: lease_root gives the
 window a real lease file there (another Lease on the same root and HWND, under another live
-pid, is a second agent), user_idle stands in for this laptop's last-input clock (seconds,
-or None for no input but ours; asked before each input), user_keys_at for the hooks that
+pid, is a second agent; lease(pid) makes one), lease_clock and lease_alive stand in for the
+wall clock the lease lapses by and for whether a pid still runs, so a test decides both
+instead of the machine's load and its processes, user_idle stands in for this laptop's
+last-input clock (seconds, or None for no input but ours; asked before each input),
+user_keys_at for the hooks that
 watch while text is sent (the user presses a key while that many characters have gone;
 once), and covered for what covers the window (core.guard.covered_parts)."""
 
@@ -75,11 +78,14 @@ class SimSource:
         title: str = TITLE,
         lease_root: str | os.PathLike[str] | None = None,
         user_idle: Callable[[], float | None] | None = None,
+        lease_clock: Callable[[], float] | None = None,
+        lease_alive: Callable[[int], bool] | None = None,
     ) -> None:
         self.desk = desktop or Desktop()
         self.codec, self.title = codec, title
         self.present, self.minimized = True, False
         self.lease_root = lease_root
+        self.lease_clock, self.lease_alive = lease_clock, lease_alive
         self.user_idle = user_idle or (lambda: None)
         self.user_keys_at: int | None = None
         self.covered: list[dict] = []
@@ -127,10 +133,23 @@ class SimSource:
 
     # Input, guarded
 
-    def _lease(self) -> Lease | None:
+    def lease(self, pid: int | None = None) -> Lease:
+        """The window's lease as process pid (default this one) holds it, on lease_root and
+        under lease_clock and lease_alive when given: another pid's take() is a second
+        agent sending to the session."""
         from jharokha.win.guard import Lease
 
-        return Lease(HWND, root=self.lease_root) if self.lease_root is not None else None
+        if self.lease_root is None:
+            raise ValueError("this SimSource has no lease_root")
+        lease = Lease(HWND, root=self.lease_root, pid=pid)
+        if self.lease_clock is not None:
+            lease.clock = self.lease_clock
+        if self.lease_alive is not None:
+            lease.alive = self.lease_alive
+        return lease
+
+    def _lease(self) -> Lease | None:
+        return self.lease() if self.lease_root is not None else None
 
     def _guard(self) -> None:
         try:

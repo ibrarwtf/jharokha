@@ -23,8 +23,9 @@ Then onboarding (`--onboard` alone): a ticket queue no built-in knows (evals.sim
 the simulated session, taught through the MCP tools only, as an agent with the user would:
 status, scan, name_icons (tooltips), propose with names, a scroll and verify, zoom, save
 (the change shown) and save with confirm, then status identifies it, its list reads as
-items, and a hand-written action (below) opens a ticket by clicking a named icon and an
-item. Reported: each goal, calls, tokens returned, wall time, and the session's events
+items, a hand-written action (below) opens a ticket by clicking a named icon and an item,
+and a two-line reply typed into it stays a draft, Enter held back by the default policy the
+save wrote. Reported: each goal, calls, tokens returned, wall time, and the session's events
 (nothing sent, no click before the save)."""
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from statistics import mean
 from typing import Any
 
 from evals.render import Screen, render
-from evals.screens import TASKBAR, browser, calendar, ids, outlook, teams, terminal
+from evals.screens import TASKBAR, TASKBAR_Y, browser, calendar, ids, outlook, teams, terminal
 from evals.sim.desktop import Desktop
 from jharokha.core import apps, learn
 from jharokha.core.apps import App
@@ -326,6 +327,10 @@ async def onboard(codec: bool, seed: int = 100) -> Onboarding:
         )
         r = await step("save (shown)", "jharokha_learn", step="save")
         goals["save shows the change first"] = r.startswith("not saved yet") and not path.exists()
+        goals["the change shows the default policy"] = (
+            "+[app.tickets.policy]" in r
+            and '+irreversible_keys = ["enter", "ctrl+enter", "alt+s"]' in r
+        )
         o.before_save = sorted({e.kind for e in src.desk.events})
         r = await step("save (confirm)", "jharokha_learn", step="save", confirm=True)
         goals["saved"] = r.startswith("saved tickets.queue")
@@ -347,6 +352,15 @@ async def onboard(codec: bool, seed: int = 100) -> Onboarding:
             and t.tickets[t.open].title == want
             and seen(detail, "Status: Open")
             and any(e.kind == "refresh" for e in src.desk.events)
+        )
+        # The reply box sends on Enter; the learned app holds it back by default.
+        reply = "Looking into it.\nBack within the hour."
+        box = [800, TASKBAR_Y - 40]
+        kw = {"show": "none", "expect": "tickets"}
+        await step("type a reply", "jharokha_act", op="type", target=box, text=reply, **kw)
+        r = await step("press enter", "jharokha_act", op="press", keys="enter", **kw)
+        goals["enter held back in the learned app"] = (
+            r.startswith("irreversible:") and t.reply == reply and not t.sent
         )
     o.calls, o.tokens = a.calls, a.tokens
     o.wall_s = round(time.perf_counter() - t0, 1)

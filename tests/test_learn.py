@@ -404,6 +404,21 @@ def test_icons_become_spots_and_verify_drops_one_no_longer_there():
 
 
 @win
+def test_a_learned_app_gets_the_default_policy_written_out():
+    s = _tickets()
+    p = learn.propose(s, "tickets", "queue", {3: "queue", 4: "detail"})
+    assert '[app.tickets.policy]\nnewline = "shift+enter"\n' in p.text
+    assert 'irreversible_keys = ["enter", "ctrl+enter", "alt+s"]' in p.text
+    back = apps.parse(p.text).apps["tickets"]
+    assert back.policy == apps.DEFAULT_POLICY and back.input_policy.irreversible("enter")
+    # A known app's own policy stays, an empty one too: that is the user's opt-out.
+    for own in ({"irreversible_keys": ["ctrl+s"]}, {}):
+        known = dataclasses.replace(p.app, policy=own)
+        q = learn.propose(s, "tickets", "other", known=known)
+        assert q.app.policy == own and apps.parse(q.text).apps["tickets"].policy == own
+
+
+@win
 def test_zoom_variants_of_a_new_app_are_told_apart():
     scans = [_tickets(0), _tickets(-1), _tickets(2)]
     p = learn.propose(scans[0], "tickets", "queue", {3: "queue", 4: "detail"})
@@ -445,7 +460,7 @@ async def test_onboarding_a_new_app_through_the_tools():
     assert all(o.goals.values()), o.goals
     # Before the save only the pointer moved (onto icons and away); nothing was sent.
     assert o.before_save == ["hover"] and o.sent == 0
-    assert o.calls == 12
+    assert o.calls == 14
 
 
 async def _sim(tmp_path, catalog=None):  # noqa: ANN001, ANN202
