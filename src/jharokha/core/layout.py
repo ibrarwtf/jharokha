@@ -29,6 +29,8 @@ class Layout:
     focus: str | None = None
     # A region that is a character grid (a terminal's body), read row by row on it.
     grid: str | None = None
+    # A regex for a shell's prompt at the start of a line, for jharokha_run.
+    prompt: str | None = None
 
     @property
     def app(self) -> str:
@@ -76,7 +78,7 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
             raise LayoutError(f"{source}: {name}.anchor_at must be [x, y] fractions, with anchor")
         regions: dict[str, Fraction] = {}
         for key, v in table.items():
-            if key in ("anchor", "anchor_at", "focus", "grid"):
+            if key in ("anchor", "anchor_at", "focus", "grid", "prompt"):
                 continue
             ok = isinstance(v, list) and len(v) == 4
             ok = ok and all(isinstance(f, int | float) and 0 <= f <= 1 for f in v)
@@ -92,8 +94,14 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
                 raise LayoutError(
                     f"{source}: {name}.{key} must name one of its regions, with anchor"
                 )
+        prompt = table.get("prompt")
+        if prompt is not None:
+            try:
+                re.compile(prompt)
+            except (re.error, TypeError) as e:
+                raise LayoutError(f"{source}: {name}.prompt must be a regex: {e}") from e
         at_xy = (float(at[0]), float(at[1])) if at else None
-        layouts[name] = Layout(name, anchor, regions, at_xy, focus, grid)
+        layouts[name] = Layout(name, anchor, regions, at_xy, focus, grid, prompt)
     return layouts
 
 

@@ -84,12 +84,12 @@ def run(
 
     w, h = size
     old = path.read_text(encoding="utf-8") if path.exists() else ""
-    # Remeasuring keeps the focus and grid set earlier, by hand or with --focus and --grid.
+    # Remeasuring keeps the focus, grid and prompt set earlier, by hand or with the flags.
     before = [la for la in layout.parse(old, str(path)).values() if la.app == app]
     profile = {}
-    for key, given in (("focus", focus), ("grid", grid)):
+    for key, given in (("focus", focus), ("grid", grid), ("prompt", None)):
         value = given or next((getattr(la, key) for la in before if getattr(la, key)), None)
-        if value and value not in {rename.get(k, k) for k in found}:
+        if key != "prompt" and value and value not in {rename.get(k, k) for k in found}:
             raise SystemExit(f"measure: {key} {value} is not one of the regions found")
         if value:
             profile[key] = value

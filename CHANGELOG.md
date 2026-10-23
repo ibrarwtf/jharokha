@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.13.0
+
+- `jharokha_run(command)`, opt-in with the other input tools: runs a command in the shell that has focus (PowerShell, cmd, bash) and returns only what it printed. It types the command (`paste=true` pastes it) and Enter, waits until the shell's prompt is back below the command and the screen holds still, and returns the lines in between, read on the terminal's grid when the layouts file has one. `clear=true` clears the screen first. When the output was taller than the screen, the result says its start is missing. This replaces the type, wait_for_text and screenshot calls a command took, and the `cls` and marker tricks around them.
+- `prompt` in an app's layouts table: a regex for its shell prompt at the start of a line; the default knows PowerShell, cmd and bash. `jharokha measure` keeps it.
+
 ## v0.12.0
 
 - Terminal grid: `grid = "<region>"` in an app's layouts table marks a region as a character grid. Reads of it (full, region, find, wait, input results, changes) snap OCR words to rows by the line pitch and space them by the character width, so `dist/index . html` reads `dist/index.html`, table columns keep their spacing, and a row that runs to the right edge is joined to its continuation. Zeros read as `e`, `@` or `o` inside a number with a decimal point (`e.46`, `142.e7`) become `0`. On the synthetic terminal, CER falls from .060 to .019 at 16 px and from .046 to .010 at 20 px, at no extra OCR time.

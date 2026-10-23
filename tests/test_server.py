@@ -163,6 +163,38 @@ async def test_click_type_press_are_opt_in_and_return_the_new_screen(source):
         assert r.is_error and text(r).startswith("region_out_of_bounds")
 
 
+class Shell(FakeSource):
+    """A PowerShell that answers `Get-Date` after two polls and `cls` by clearing."""
+
+    def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
+        cmd = text.rstrip("\n")
+        y = self.items[-1][2]
+        self.items[-1] = (f"PS C:\\a> {cmd}", 10, y)
+        self.pending = [("Friday 23 October", 10, y + 20), ("PS C:\\a>", 10, y + 40)]
+
+    def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
+        self.items = [("PS C:\\a>", 10, 10)]
+
+    def frame(self, w):  # noqa: ANN001, ANN201
+        if getattr(self, "pending", None):
+            self.items.append(self.pending.pop(0))
+        return super().frame(w)
+
+
+async def test_run_returns_only_the_commands_output():
+    shell = Shell([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
+    async with Client(build_server(shell, allow_input=True)) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+        assert tools["jharokha_run"].annotations.destructive_hint is not False  # type: ignore[union-attr]
+        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date"}))
+        assert r.startswith("run_ms=") and " lines=1" in r
+        assert "Friday 23 October" in r and "old.txt" not in r and "PS C:" not in r
+        r = text(await c.call_tool("jharokha_run", {"command": "Get-Date", "clear": True}))
+        assert "lines=1" in r and "Friday" in r
+        r = await c.call_tool("jharokha_run", {"command": "x", "prompt": "(", "timeout_s": 1})
+        assert r.is_error and text(r).startswith("bad_prompt")
+
+
 async def test_unchanged_screen_is_not_ocrd_twice(source):
     async with Client(build_server(source)) as c:
         await c.call_tool("jharokha_read_text", {})
