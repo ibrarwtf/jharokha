@@ -56,6 +56,14 @@ def lines_exact(truth: list[str], got: list[str]) -> float:
     return hit / max(1, len(truth))
 
 
+def iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """Intersection over union of two x, y, w, h boxes."""
+    ix = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter)
+
+
 def lookalike_misses(truth: list[str], got: list[str]) -> int:
     """Characters from the 0/O, 1/l/I, 5/S, 8/B families that were not read as drawn."""
     import difflib

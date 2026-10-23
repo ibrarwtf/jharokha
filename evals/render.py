@@ -13,6 +13,8 @@ import time
 from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass, field
+from functools import cache
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -56,6 +58,9 @@ class Screen:
     finds: list[Find] = field(default_factory=list)
     locked: bool = False
     grid: Box | None = None  # the region a layouts file would mark as a terminal grid
+    # Filled boxes drawn before the text, in order: pane backgrounds and divider lines.
+    rects: list[tuple[Box, RGB]] = field(default_factory=list)
+    panes: list[Box] = field(default_factory=list)  # the true panes, as drawn
 
 
 class FontMissing(RuntimeError):
@@ -87,17 +92,23 @@ def render(screen: Screen, engine: str = "gdi", codec: bool = False) -> tuple[Fr
     return frame, boxes
 
 
+# Cascadia Mono, Windows Terminal's font, is not installed with Windows; it is vendored here
+# (SIL OFL, licence beside it) and loaded for this process only.
+CASCADIA = Path(__file__).parent / "fonts" / "CascadiaMono-Regular.ttf"
 _PIL_FONTS = {
     ("Segoe UI", False): "segoeui.ttf",
     ("Segoe UI", True): "seguisb.ttf",
     ("Consolas", False): "consola.ttf",
     ("Consolas", True): "consolab.ttf",
+    ("Cascadia Mono", False): str(CASCADIA),
 }
 
 
 def _pil(screen: Screen, locate: Callable[[Measure], None]) -> Image.Image:
     img = Image.new("RGBA", (screen.width, screen.height), screen.bg)
     d = ImageDraw.Draw(img)
+    for (x, y, w, h), color in screen.rects:
+        d.rectangle((x, y, x + w - 1, y + h - 1), fill=color)
     fonts: dict[tuple[str, bool, int], ImageFont.FreeTypeFont] = {}
 
     def font(t: Text) -> ImageFont.FreeTypeFont:
@@ -135,7 +146,19 @@ def _colorref(c: RGB) -> int:
     return c[0] | (c[1] << 8) | (c[2] << 16)
 
 
+_FR_PRIVATE = 0x10
+
+
+@cache
+def _private_fonts() -> None:
+    g = ctypes.windll.gdi32
+    g.AddFontResourceExW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
+    if not g.AddFontResourceExW(str(CASCADIA), _FR_PRIVATE, None):
+        raise FontMissing(f"could not load {CASCADIA}")
+
+
 def _gdi(screen: Screen, locate: Callable[[Measure], None]) -> Image.Image:
+    _private_fonts()
     g, u = ctypes.windll.gdi32, ctypes.windll.user32
     g.CreateCompatibleDC.restype = wintypes.HDC
     g.CreateDIBSection.restype = wintypes.HBITMAP
@@ -210,6 +233,10 @@ def _gdi(screen: Screen, locate: Callable[[Measure], None]) -> Image.Image:
         brush = g.CreateSolidBrush(_colorref(screen.bg))
         u.FillRect(dc, ctypes.byref(wintypes.RECT(0, 0, w, h)), brush)
         g.DeleteObject(brush)
+        for (x, y, rw, rh), color in screen.rects:
+            brush = g.CreateSolidBrush(_colorref(color))
+            u.FillRect(dc, ctypes.byref(wintypes.RECT(x, y, x + rw, y + rh)), brush)
+            g.DeleteObject(brush)
         g.SetBkMode(dc, _TRANSPARENT)
         for t in screen.texts:
             g.SelectObject(dc, font(t))

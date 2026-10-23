@@ -4,7 +4,7 @@
 uv sync
 uv run ruff check && uv run ruff format --check
 uv run pyright
-uv run pytest            # includes one test on the real Windows OCR engine
+uv run pytest            # includes tests on the real Windows OCR engine and the second engine
 ```
 
 ## Try it without a remote session
@@ -12,7 +12,7 @@ uv run pytest            # includes one test on the real Windows OCR engine
 `tests/harness/fake_session.py` opens a local window showing one of the generated eval screens. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
 
 ```
-uv run python tests/harness/fake_session.py terminal     # also: teams, outlook, ids, lock; optional seed
+uv run python tests/harness/fake_session.py terminal     # also: teams, outlook, browser, ids, lock; optional seed
 $env:JHAROKHA_PROCESSES = "python.exe,pythonw.exe"
 uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
@@ -28,9 +28,9 @@ uv run python -m evals --quick --update   # accept the current numbers as the ba
 uv run python -m evals --show terminal    # truth against what was read, line by line
 ```
 
-`evals/screens.py` generates screens shaped like the work jharokha does: a PowerShell terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox, five lock and sign-in screens, lookalike-heavy IDs. Names, IDs and log lines come from fixed lists and a seeded generator; nothing comes from a real session, and none ever should. Seeds under 100 are for tuning, the eval scores seeds from 100. `evals/render.py` draws them with GDI and ClearType as real apps do, then through JPEG with 4:2:0 chroma, standing in for the RDP codec; `--full` adds clean GDI and PIL.
+`evals/screens.py` generates screens shaped like the work jharokha does: a PowerShell terminal in Windows Terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox, an Edge-like browser (address bar, favourites, a request queue page), five lock and sign-in screens, lookalike-heavy IDs. The app screens carry the pane backgrounds, divider lines and session taskbar measured on a live session at 125% (Teams: rail divider x=88, header dividers y=62 and 142, chat list 245 against thread 255; new Outlook: rail divider x=61, list and reading pane split at x=500, ribbon y=103 to 154; Edge: address box y=49 to 94, favourites at y≈142, page from y=191; Windows Terminal: tab bar divider y=38, scrollbar x=1156 to 1160 on (12,12,12); taskbar y=1121 to 1181), and each records its true pane boxes. The terminal is Cascadia Mono, Windows Terminal's font, rows 1.15 font heights apart (23 px at 20 px, as live); the font is vendored in `evals/fonts/` (SIL OFL, licence beside it) and loaded for the eval process only (`AddFontResourceExW` with `FR_PRIVATE`). Names, IDs, URLs and log lines come from fixed lists and a seeded generator; nothing comes from a real session, and none ever should. Seeds under 100 are for tuning, the eval scores seeds from 100. `evals/render.py` draws them with GDI and ClearType as real apps do, then through JPEG with 4:2:0 chroma, standing in for the RDP codec; `--full` adds clean GDI and PIL.
 
-Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, and whether the layouts anchor picks the right app. The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
+Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, whether the layouts anchor picks the right app, and panes: for each true pane the best IoU of a pane found from the pixels (mean, and the share at 0.8 or more). The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
 
 The numbers are deterministic: this laptop (Windows 11) and CI's `windows-latest` runner gave identical summaries for both sets. If they ever drift, run the workflow by hand (`gh workflow run ci.yml`): it regenerates both baselines on the runner and uploads them as an artifact.
 
@@ -103,9 +103,57 @@ Measured on the same laptop, synthetic 16 px screens plus four live frames of th
 | ids | 16 | .101 / .009 | .00 / .75 | 9 / 1 | 4 lines, 169 ms |
 
 - mail at 20 px stays at .546: that is the reading-order problem, not misreads.
-- Live through the MCP server on the fake `ids` window: plain read 248 ms; first verify 3.1 s (RapidOCR loads); later verify adds ~10 ms for 4 lines. Memory with the extra installed: 108 MB idle (onnxruntime preloaded), 185 MB peak after verify. Without the extra nothing changes (80 MB).
-- `jharokha.win` imports onnxruntime when it is installed, because loading it after WinRT segfaults the process (reproduced: Windows OCR, then `import onnxruntime`, then a RapidOCR call).
-- The extra is ~240 MB on disk: OpenCV 113, onnxruntime 43, rapidocr (models) 32, numpy 22. Running the rec model on onnxruntime directly would drop OpenCV and rapidocr, at the cost of shipping the model and the CTC decode ourselves.
+- Up to v0.14 this was the optional `verify` extra (~240 MB: OpenCV 113, onnxruntime 43, rapidocr with its models 32, numpy 22). v0.15.0 replaced it, below.
+
+### Second engine in core (v0.15.0)
+
+`win/recognize.py` runs PP-OCRv6_rec_small (the model RapidOCR 3.10 ships, `win/models/`, Apache-2.0, provenance in `NOTICE.md`) on onnxruntime directly: recognition only, on any box. Its character list is in the model's metadata. Preprocessing is RapidOCR's (scale to 48 px high keeping the aspect, normalize to -1..1, pad to at least 320 wide) with OpenCV's `INTER_LINEAR` resize reimplemented in numpy bit for bit (float32 sample positions, 11-bit weights, its SIMD rounding: 0 differing pixels against `cv2.resize` on ten shapes, up- and downscaling); a float resize differed by 1 on a few percent of pixels and flipped one character in 2 of 17 terminal rows. Greedy CTC decode.
+
+Parity, before rapidocr was removed, on the Windows OCR line boxes of every full-eval screen plus 147 full-width terminal row strips (1035 boxes, GDI + codec):
+
+| against | identical |
+|---|---|
+| rapidocr's `TextRecognizer`, one image a batch | 1035 / 1035 |
+| the same, its default 6 a batch (padding lines of one batch together) | 1030 / 1035 (4 of the 5 right in ours) |
+| the old `Verifier` path (rapidocr's whole-image preprocessing) | 924 / 1035; on the quick set all 9 differences are row strips over 2000 px wide, which rapidocr shrinks to a multiple of 32, and every line box matches |
+
+Fed RGB, as verify always fed it, though PaddleOCR trains on BGR: on 1781 line boxes RGB read 1564 exactly, BGR 1559 (Windows OCR: 1182).
+
+Measured on this laptop (terminal screen, 20 px Cascadia Mono):
+
+| | |
+|---|---|
+| disk added to a plain install | ~109 MB: onnxruntime 43, numpy 45 (with its DLLs), the model 21 |
+| `import jharokha.win` (onnxruntime must load before WinRT; the model does not) | 0.7 s |
+| RSS after a Windows OCR read | 72 MB (44 MB without onnxruntime) |
+| model load, first use | 0.2 to 0.3 s, RSS 104 MB |
+| a Windows OCR line box | 28 to 33 ms (41 ms batched 6 a run) |
+| a full-width row strip, 1150 px, margin 0.5 / 0 | 124 to 131 ms / 180 to 280 ms |
+| peak RSS after 47 lines and 17 strips | 180 MB (444 MB batched 6 a run) |
+| MCP end to end, fake Teams window | read 323 ms, first verify 877 ms (8 lines), then 471 ms; RSS 110 MB, 151 MB after verify |
+
+- onnxruntime after WinRT still segfaults with onnxruntime 1.31 (reproduced again: Windows OCR, then an inference session), so `jharokha.win` imports onnxruntime; only the session waits for first use.
+- One image a run, not RapidOCR's batches of 6: faster on CPU and a third of the peak memory.
+- Row strips: a strip a terminal row pitch tall reads with no margin (`read(..., margin=0)`); the half-line margin a Windows OCR box needs pulls in the rows above and below. With no margin, 12 to 16 of 17 rows read right apart from spacing at 16 to 20 px; the model drops the runs of spaces between monospaced columns, so strips need the grid's character positions to place words.
+
+### Panes from pixels (v0.15.0)
+
+`core/panes.py` finds panes without text: a divider is a column (row) where the green channel changes by 3 or more between pixels two apart over 90% of a pane's height (width), sampled on every 4th row (column); the frame is cut at the dividers running nearly as completely as the best one, columns first when they run at least as completely as the best row, and each piece again. Green only, sampling and per-region counts took it from 65 to 80 ms (all channels, running sums) to 7 to 12 ms a 1166x1181 frame; the eval's median is 12 ms beside 150 ms of OCR.
+
+Found against the measured layouts (full eval, mean best IoU per true pane): Teams .995, Outlook .996, terminal .993, Edge .75: Edge's selected tab has the toolbar's colour, so the tab strip and toolbar run together and read as one pane.
+
+Reading order, CER on the new screens, all three renderers, by panel source:
+
+| app | text gaps | pixel panes, text gaps inside | pixel panes only |
+|---|---|---|---|
+| teams | .087 | .054 | .054 |
+| outlook | .107 | .019 | .019 |
+| browser | .495 | .495 | .081 |
+| terminal, ids, lock | same | same | same |
+
+Text gaps inside a pane only cut the browser's table into columns, so reading goes pane by pane, rows inside; a frame with no panes (ids, lock, the tests' flat screens) is read by text gaps as before. A region reads in the whole frame's panes cut to it. `jharokha_layout` and `P<n>` list the panes that hold text.
+
+The terminal is now the measured one, Cascadia Mono at 20 px, and Windows OCR fails on it as it did live: `PS C:\work\pricing>` reads `PS C:`, timestamps drop, and the grid then misplaces what is left (quick CER .51, from .21 on the old 16 px Consolas screen). Reading its rows with the second engine is the next step.
 
 ### Panels (v0.6.0)
 
@@ -125,6 +173,8 @@ Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`
 
 ## Open
 
+- Terminal rows through the second engine (strips at the grid's pitch, words placed by its character width), where Windows OCR drops text on Cascadia Mono.
+- Edge's tab strip, which runs into the toolbar through the selected tab.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 
 ## Release

@@ -38,10 +38,34 @@ def clean(s: str) -> str:
     return _CONTROL.sub("", s)
 
 
-def reading_order(lines: list[Line]) -> list[Line]:
-    """Panel by panel, rows top to bottom and left to right inside each. That keeps a chat
-    list separate from the thread beside it."""
-    return [ln for _, p in panels(lines) for ln in _rows(p)]
+def reading_order(lines: list[Line], panes: list[Box] | None = None) -> list[Line]:
+    """Cell by cell (see cells), rows top to bottom and left to right inside each. That
+    keeps a chat list separate from the thread beside it."""
+    return [ln for _, p in cells(lines, None, panes) for ln in _rows(p)]
+
+
+def cells(
+    lines: list[Line], bounds: Box | None = None, panes: list[Box] | None = None
+) -> list[tuple[Box, list[Line]]]:
+    """The parts of the screen that hold text, in reading order, each with its lines. With
+    pixel panes (core.panes.reading_panes), the panes: a line belongs to the one its centre
+    is in, and lines in none come after, in text-gap panels. Without, as on a screen with
+    no dividers or colours to go by, the text-gap panels.
+
+    Text gaps are not tried inside a pane: on the eval screens they only ever cut a table
+    into columns (an Edge page: CER .08 by panes alone, .50 with gaps inside), and the
+    lists and threads they used to separate have their own panes."""
+    if not panes:
+        return panels(lines, bounds)
+    inside: list[list[Line]] = [[] for _ in panes]
+    rest = []
+    for ln in lines:
+        cx, cy = ln.box[0] + ln.box[2] / 2, ln.box[1] + ln.box[3] / 2
+        at = (i for i, (x, y, w, h) in enumerate(panes) if x <= cx < x + w and y <= cy < y + h)
+        i = next(at, None)
+        (rest if i is None else inside[i]).append(ln)
+    out = [(pane, ls) for pane, ls in zip(panes, inside, strict=True) if ls]
+    return out + (panels(rest) if rest else [])
 
 
 def panels(lines: list[Line], bounds: Box | None = None) -> list[tuple[Box, list[Line]]]:
@@ -333,7 +357,7 @@ def format_detailed(
                 }
                 for w in ln.words
             ],
-            **({"verify": alt[n]} if n in alt else {}),
+            **({"verify": alt[n], "agree": agree(alt[n], ln.text)} if n in alt else {}),
         }
         for n, ln in enumerate(page, offset)
     ]

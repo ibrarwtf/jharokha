@@ -1,15 +1,23 @@
 """Generated screens shaped like the work jharokha does: a PowerShell terminal, a Teams-like
-chat, an Outlook-like mailbox, lock and sign-in screens. Every name, ID and log line comes
-from the lists below and a seeded random generator: nothing from a real session.
+chat, an Outlook-like mailbox, an Edge-like browser, lock and sign-in screens. Every name,
+ID, URL and log line comes from the lists below and a seeded random generator: nothing from
+a real session.
+
+Pane backgrounds, divider lines and the session's taskbar use the colours and positions
+measured on a live session at 125% scaling; each screen records its true pane boxes.
 
 Seeds below 100 are for tuning; the eval reports on seeds from 100 up, so what is tuned is
 not what is scored."""
 
 from __future__ import annotations
 
+import math
 import random
 
-from evals.render import RGB, Find, Screen, Text
+from PIL import ImageFont
+
+from evals.render import CASCADIA, RGB, Find, Screen, Text
+from jharokha.core.models import Box
 
 W, H = 1166, 1181  # the client size of the session window jharokha is used on
 
@@ -21,6 +29,11 @@ WORDS = (
     "window so I paused the schedule until we know why can you check the logs when "
     "you have a minute thanks the export is ready in the shared folder"
 ).split()
+
+INK: RGB = (36, 36, 36)
+GREY: RGB = (97, 97, 97)
+WHITE: RGB = (255, 255, 255)
+Rects = list[tuple[Box, RGB]]
 
 
 def _name(rng: random.Random) -> str:
@@ -42,18 +55,33 @@ def _sentence(rng: random.Random, n: int) -> str:
     return s[0].upper() + s[1:]
 
 
-# Windows Terminal's default colours, and Consolas: its character advance is 0.55 of the
-# font height, which sets how many columns fit before a line wraps.
+# The session's own taskbar, light grey across the bottom under every app, with its clock.
+TASKBAR_Y = 1121
+TASKBAR: Box = (0, TASKBAR_Y, W, H - TASKBAR_Y)
+
+
+def _taskbar(rng: random.Random) -> tuple[Rects, list[Text]]:
+    clock = f"{rng.randint(8, 17)}:{rng.randint(10, 59)}"
+    date = f"10/{rng.randint(10, 28)}/2026"
+    texts = [
+        Text(1092, TASKBAR_Y + 10, clock, "Segoe UI", 12, INK),
+        Text(1074, TASKBAR_Y + 32, date, "Segoe UI", 12, INK),
+    ]
+    return [(TASKBAR, (238, 238, 238))], texts
+
+
+# Windows Terminal: its default background and text colours, Cascadia Mono, rows 1.15 font
+# heights apart, a tab bar above a divider at y=38 and a scrollbar at x=1156-1160.
 TERM_BG: RGB = (12, 12, 12)
 TERM_FG: RGB = (204, 204, 204)
 
 
-def terminal(seed: int, px: int = 16) -> Screen:
+def terminal(seed: int, px: int = 20) -> Screen:
     rng = random.Random(seed)
     proj = rng.choice(PROJECTS)
     prompt = f"PS C:\\work\\{proj}>"
-    adv = round(0.5498 * px)
-    left, top, right = 8, 40, W - 25  # the tab bar above, the scrollbar on the right
+    adv = math.ceil(ImageFont.truetype(str(CASCADIA), px).getlength("M" * 100) / 100)
+    left, top, right = 8, 46, 1150
     cols = (right - left) // adv
     rows: list[str] = []  # logical lines, as the shell printed them
     finds: list[tuple[str, int, int]] = []  # query, logical line, start
@@ -108,18 +136,26 @@ def terminal(seed: int, px: int = 16) -> Screen:
 
     texts: list[Text] = [Text(14, 10, "Windows PowerShell", "Segoe UI", 12, TERM_FG)]
     first_text: dict[int, int] = {}  # logical line -> index of its first drawn row
-    pitch = round(px * 1.2)
+    pitch = round(px * 1.15)
     y = top
     for i, line in enumerate(rows):
         first_text[i] = len(texts)
         for c in range(0, max(1, len(line)), cols):
-            if y + pitch > H - 10:
+            if y + pitch > TASKBAR_Y - 6:
                 break
-            texts.append(Text(left, y, line[c : c + cols], "Consolas", px, TERM_FG))
+            texts.append(Text(left, y, line[c : c + cols], "Cascadia Mono", px, TERM_FG))
             y += pitch
     shown = [i for i in range(len(rows)) if first_text[i] < len(texts)]
     find_list = [
         Find(q, first_text[i], s) for q, i, s in finds if i in shown and s + len(q) <= cols
+    ]
+    bar, clock = _taskbar(rng)
+    thumb = rng.randint(500, 800)
+    rects: Rects = [
+        ((0, 0, W, 38), (32, 32, 32)),
+        ((0, 38, W, 1), (64, 64, 64)),
+        ((1156, thumb, 5, TASKBAR_Y - 20 - thumb), (110, 110, 110)),
+        *bar,
     ]
     return Screen(
         f"terminal-{seed}-{px}",
@@ -127,16 +163,21 @@ def terminal(seed: int, px: int = 16) -> Screen:
         W,
         H,
         TERM_BG,
-        texts,
-        ["Windows PowerShell"] + [rows[i] for i in shown],
+        texts + clock,
+        ["Windows PowerShell"] + [rows[i] for i in shown] + [t.text for t in clock],
         find_list,
-        grid=(0, top - 4, W - 17, H - top),
+        grid=(0, top - 4, 1156, TASKBAR_Y - top + 4),
+        rects=rects,
+        panes=[(0, 0, W, 38), (0, 39, W, TASKBAR_Y - 39), TASKBAR],
     )
 
 
-TEAMS_BG: RGB = (245, 245, 245)
-INK: RGB = (36, 36, 36)
-GREY: RGB = (97, 97, 97)
+# New Teams: title bar above a divider at y=62, the app rail left of a divider at x=88, chat
+# and thread headers above a divider at y=142, and a chat list told from its thread only by
+# background colour.
+TEAMS_BAR: RGB = (235, 235, 235)
+TEAMS_LIST: RGB = (245, 245, 245)
+DIVIDER: RGB = (224, 224, 224)
 
 
 def teams(seed: int, px: int = 14) -> Screen:
@@ -150,35 +191,66 @@ def teams(seed: int, px: int = 14) -> Screen:
         truth.append(s)
         return len(texts) - 1
 
-    put(320, 10, "Search (Ctrl+E)", px, GREY)
+    split, body = 440, TASKBAR_Y - 63
+    put(320, 20, "Search (Ctrl+E)", px, GREY)
     for i, label in enumerate(["Activity", "Chat", "Teams", "Calendar", "Files"]):
-        put(12, 60 + 64 * i, label, px - 3, GREY)
-    put(96, 64, "Chat", px + 4, INK, True)
+        put(12, 90 + 64 * i, label, px - 3, GREY)
+    put(100, 90, "Chat", px + 4, INK, True)
     people = [_name(rng) for _ in range(6)]
     for i, who in enumerate(people):
-        y = 110 + 62 * i
-        at = put(96, y, who, px, INK, True)
+        y = 160 + 62 * i
+        at = put(100, y, who, px, INK, True)
         if i == 2:
             finds.append(Find(who, at))
-        put(96, y + 22, _sentence(rng, 5), px - 1, GREY)
+        put(100, y + 22, _sentence(rng, 5), px - 1, GREY)
     other = people[0]
-    put(456, 64, other, px + 2, INK, True)
-    y = 120
+    put(456, 90, other, px + 2, INK, True)
+    y = 170
     ref = _id(rng)
     for i in range(5):
         who = other if i % 2 == 0 else "You"
         t = f"{rng.randint(8, 17)}:{rng.randint(10, 59)}"
         put(456, y, f"{who}  {t}", px - 1, GREY)
-        body = _sentence(rng, rng.randint(6, 11))
+        text = _sentence(rng, rng.randint(6, 11))
         if i == 3:
-            body = f"the ticket is {ref}, can you check it"
-        idx = put(456, y + 24, body)
+            text = f"the ticket is {ref}, can you check it"
+        idx = put(456, y + 24, text)
         if i == 3:
-            finds.append(Find(ref, idx, body.index(ref)))
+            finds.append(Find(ref, idx, text.index(ref)))
         y += 82
-    compose = put(456, H - 120, "Type a message", px, GREY)
+    compose = put(456, TASKBAR_Y - 80, "Type a message", px, GREY)
     finds.append(Find("Type a message", compose))
-    return Screen(f"teams-{seed}-{px}", "teams", W, H, TEAMS_BG, texts, truth, finds)
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    rects: Rects = [
+        ((0, 0, W, 62), TEAMS_BAR),
+        ((0, 62, W, 1), DIVIDER),
+        ((0, 63, 88, body), TEAMS_BAR),
+        ((88, 63, 1, body), DIVIDER),
+        ((89, 63, split - 89, body), TEAMS_LIST),
+        ((89, 142, W - 89, 1), DIVIDER),
+        *bar,
+    ]
+    panes = [
+        (0, 0, W, 62),
+        (0, 63, 88, body),
+        (89, 63, split - 89, 79),
+        (89, 143, split - 89, TASKBAR_Y - 143),
+        (split, 63, W - split, 79),
+        (split, 143, W - split, TASKBAR_Y - 143),
+        TASKBAR,
+    ]
+    return Screen(
+        f"teams-{seed}-{px}", "teams", W, H, WHITE, texts, truth, finds, rects=rects, panes=panes
+    )
+
+
+# New Outlook: a ribbon from y=103 to 154 between dividers, the app rail left of a divider
+# at x=61, then folders, the message list and, past a divider at x=500, the reading pane.
+OUTLOOK_TOP: RGB = (239, 242, 246)
+OUTLOOK_PANE: RGB = (245, 245, 245)
+OUTLOOK_LINE: RGB = (225, 225, 225)
 
 
 def outlook(seed: int, px: int = 14) -> Screen:
@@ -192,29 +264,133 @@ def outlook(seed: int, px: int = 14) -> Screen:
         truth.append(s)
         return len(texts) - 1
 
+    put(480, 40, "Search", px, GREY)
+    ribbon = ("New mail", "Delete", "Reply", "Forward", "Flag")
+    for x, label in zip((80, 200, 300, 390, 500), ribbon, strict=True):
+        put(x, 120, label, px - 1)
     for i, folder in enumerate(["Inbox", "Drafts", "Sent Items", "Archive", "Deleted Items"]):
-        put(16, 40 + 34 * i, folder, px)
+        put(76, 175 + 34 * i, folder, px)
     subjects = []
     for i in range(6):
-        y = 40 + 74 * i
+        y = 170 + 74 * i
         who = _name(rng)
         subject = rng.choice(["Run report", "Profile export", "Access request", "Invite"])
         subject += f" {rng.randint(100, 999)}"
-        subjects.append((put(200, y, who, px, INK, True), subject))
-        put(200, y + 22, subject, px)
-        put(200, y + 44, _sentence(rng, 5), px - 1, GREY)
+        subjects.append((put(236, y, who, px, INK, True), subject))
+        put(236, y + 22, subject, px)
+        put(236, y + 44, _sentence(rng, 3), px - 1, GREY)
     first, subj = subjects[0][0], subjects[0][1]
-    put(560, 40, subj, px + 4, INK, True)
-    put(560, 80, f"{texts[first].text}  Thu {rng.randint(8, 17)}:{rng.randint(10, 59)}", px - 1)
+    put(516, 170, subj, px + 4, INK, True)
+    put(516, 210, f"{texts[first].text}  Thu {rng.randint(8, 17)}:{rng.randint(10, 59)}", px - 1)
     for i in range(5):
-        put(560, 130 + 28 * i, _sentence(rng, 8), px)
+        put(516, 260 + 28 * i, _sentence(rng, 8), px)
     finds.append(Find(subj, first + 1))
-    finds.append(Find("Archive", 3))
-    return Screen(f"outlook-{seed}-{px}", "outlook", W, H, (255, 255, 255), texts, truth, finds)
+    finds.append(Find("Archive", 9))
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    body = TASKBAR_Y - 155
+    rects: Rects = [
+        ((0, 0, W, 103), OUTLOOK_TOP),
+        ((0, 103, W, 1), OUTLOOK_LINE),
+        ((0, 104, W, 50), (250, 250, 250)),
+        ((0, 154, W, 1), OUTLOOK_LINE),
+        ((0, 155, 61, body), OUTLOOK_TOP),
+        ((61, 155, 1, body), OUTLOOK_LINE),
+        ((62, 155, 158, body), OUTLOOK_PANE),
+        ((500, 155, 1, body), OUTLOOK_LINE),
+        *bar,
+    ]
+    panes = [
+        (0, 0, W, 103),
+        (0, 104, W, 50),
+        (0, 155, 61, body),
+        (62, 155, 158, body),
+        (220, 155, 280, body),
+        (501, 155, W - 501, body),
+        TASKBAR,
+    ]
+    return Screen(
+        f"outlook-{seed}-{px}",
+        "outlook",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        finds,
+        rects=rects,
+        panes=panes,
+    )
+
+
+# Edge: the tab strip, the toolbar with the address box from y=49 to 94 and the favourites
+# bar at y=142 on one background, a divider at y=190, and the page from y=191.
+EDGE_TABS: RGB = (225, 225, 225)
+EDGE_BAR: RGB = (247, 247, 247)
+TITLES = ["Refund for order", "Access to share", "New laptop", "Reset MFA", "VPN drops"]
+
+
+def browser(seed: int, px: int = 14) -> Screen:
+    rng = random.Random(seed)
+    texts: list[Text] = []
+    truth: list[str] = []
+    finds: list[Find] = []
+
+    def put(x: int, y: int, s: str, size: int = px, color: RGB = INK, bold: bool = False) -> int:
+        texts.append(Text(x, y, s, "Segoe UI", size, color, bold))
+        truth.append(s)
+        return len(texts) - 1
+
+    proj = rng.choice(PROJECTS)
+    put(24, 15, f"Request queue - {proj.title()}", px - 2)
+    url = f"https://{proj}.example.net/requests/queue?view=open&page={rng.randint(2, 9)}"
+    at = put(140, 61, url, px)
+    finds.append(Find(f"{proj}.example.net", at, url.index(proj)))
+    favourites = ("Docs", "Requests", "Status board", "Wiki")
+    for x, label in zip((20, 100, 190, 320), favourites, strict=True):
+        put(x, 134, label, px - 1)
+    heading = put(40, 215, "Open requests", px + 10, INK, True)
+    finds.append(Find("Open requests", heading))
+    put(40, 265, _sentence(rng, 10), px)
+    for x, label in zip((40, 190, 560, 780), ("ID", "Title", "Owner", "Status"), strict=True):
+        put(x, 310, label, px, GREY, True)
+    for i in range(6):
+        y = 345 + 36 * i
+        ref = _id(rng)
+        at = put(40, y, ref, px)
+        if i == 2:
+            finds.append(Find(ref, at))
+        put(190, y, f"{rng.choice(TITLES)} {rng.randint(100, 999)}", px)
+        put(560, y, _name(rng), px)
+        put(780, y, rng.choice(["Open", "In progress", "Waiting"]), px)
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    rects: Rects = [
+        ((0, 0, W, 40), EDGE_TABS),
+        ((8, 8, 250, 32), EDGE_BAR),
+        ((0, 40, W, 150), EDGE_BAR),
+        ((120, 49, 880, 45), WHITE),
+        ((0, 190, W, 1), (220, 220, 220)),
+        *bar,
+    ]
+    panes = [(0, 0, W, 40), (0, 40, W, 150), (0, 191, W, TASKBAR_Y - 191), TASKBAR]
+    return Screen(
+        f"browser-{seed}-{px}",
+        "browser",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        finds,
+        rects=rects,
+        panes=panes,
+    )
 
 
 LOCK_BG: RGB = (16, 40, 72)
-WHITE: RGB = (255, 255, 255)
 
 
 def lock(seed: int, variant: int) -> Screen:
@@ -232,7 +408,9 @@ def lock(seed: int, variant: int) -> Screen:
         Text(W // 2 - 8 * len(s) // 2, 420 + 70 * i, s, "Segoe UI", 28 if i == 0 else 16, WHITE)
         for i, s in enumerate(lines)
     ]
-    return Screen(f"lock-{seed}-v{variant}", "lock", W, H, LOCK_BG, texts, lines, locked=True)
+    return Screen(
+        f"lock-{seed}-v{variant}", "lock", W, H, LOCK_BG, texts, lines, locked=True, panes=[]
+    )
 
 
 def ids(seed: int, px: int = 16) -> Screen:
@@ -244,7 +422,7 @@ def ids(seed: int, px: int = 16) -> Screen:
         f"Order AB{rng.randint(10, 99)} shipped, AB{rng.randint(10, 99)} pending",
     ]
     texts = [Text(20, 20 + 30 * i, s, "Segoe UI", px) for i, s in enumerate(lines)]
-    return Screen(f"ids-{seed}-{px}", "ids", W, H, (255, 255, 255), texts, lines)
+    return Screen(f"ids-{seed}-{px}", "ids", W, H, WHITE, texts, lines)
 
 
 # The layouts file an eval reads with: one table per app, anchored on text the generator
@@ -258,13 +436,13 @@ thread = [0.38, 0.08, 0.62, 0.8]
 
 [outlook]
 anchor = "Inbox"
-reading = [0.47, 0, 0.53, 1]
+reading = [0.43, 0.13, 0.57, 0.82]
 
 [terminal]
 anchor = "Windows PowerShell"
 grid = "body"
 focus = "body"
-body = [0, 0.03, 0.985, 0.97]
+body = [0, 0.03, 0.99, 0.92]
 """
 
 
@@ -273,12 +451,14 @@ def suite(quick: bool) -> list[Screen]:
     seeds, every lock variant."""
     seeds = [100] if quick else [100, 101, 102]
     sizes = [16] if quick else [13, 16, 20]
+    term = [20] if quick else [16, 20, 24]  # 12 pt at 125%: rows 23 px apart
     small = [14] if quick else [12, 14, 16]
     out: list[Screen] = []
     for s in seeds:
-        out += [terminal(s, px) for px in sizes]
+        out += [terminal(s, px) for px in term]
         out += [teams(s, px) for px in small]
         out += [outlook(s, px) for px in small]
+        out += [browser(s, px) for px in small]
         out += [ids(s, px) for px in sizes]
-    out += [lock(100 + v, v) for v in range(5 if not quick else 5)]
+    out += [lock(100 + v, v) for v in range(5)]
     return out

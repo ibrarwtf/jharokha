@@ -246,21 +246,26 @@ async def test_verify_shows_and_searches_the_second_reading(source):
     r = await call(source, "jharokha_find_text", query=r"INC\d{7}", regex=True, verify="all")
     assert json.loads(text(r))["matches"][0]["text"] == "Ticket INC0012345 resolved"
     r = text(await call(source, "jharokha_read_text", verify="all", response_format="detailed"))
-    assert '"verify":"second column"' in r and "differ=1" in r
+    assert '"verify":"second column","agree":true' in r and "differ=1" in r
+    assert '"verify":"Ticket INC0012345 resolved","agree":false' in r
 
 
 @pytest.mark.windows
-def test_real_verifier_rereads_a_line():
+def test_real_recognizer_reads_a_line_box_and_a_row_strip():
     import sys
 
     if sys.platform != "win32":
         pytest.skip("Windows")
-    from jharokha.win.verify import Verifier
+    from jharokha.win.recognize import Recognizer
 
     from .conftest import lines_for, render
 
-    items = [("Order AB12 shipped", 20, 20)]
-    assert Verifier().read(render(items), [lines_for(items)[0].box]) == ["Order AB12 shipped"]
+    items = [("Order AB12 shipped", 20, 20), ("PS C:\\Users\\X> dir", 20, 40)]
+    frame, rec = render(items), Recognizer()
+    assert rec.read(frame, [lines_for(items)[0].box]) == ["Order AB12 shipped"]
+    # Without a line box to go by, the model drops spaces between monospaced glyphs.
+    strip = rec.read(frame, [(0, 34, 640, 20)], margin=0)
+    assert [s.replace(" ", "") for s in strip] == ["PSC:\\Users\\X>dir"]
 
 
 async def test_layout_panels_and_named_regions(source):

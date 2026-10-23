@@ -1,7 +1,4 @@
-import importlib
-import importlib.util
-
-# onnxruntime crashes the process when it loads after WinRT, so when the verify extra is
-# installed it loads here, before anything in this package touches WinRT.
-if importlib.util.find_spec("onnxruntime"):
-    importlib.import_module("onnxruntime")
+# onnxruntime crashes the process when it loads after WinRT (still true with onnxruntime
+# 1.31), so it loads here, before anything in this package touches WinRT. Only the module:
+# the model itself loads on first use.
+import onnxruntime  # noqa: F401

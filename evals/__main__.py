@@ -10,6 +10,8 @@ order (and its grid where the screen has one), and scored:
 - find: the first match's centre falls inside the box of the text it should land on
 - lock: read as locked exactly when it is a lock or sign-in screen
 - app: the layouts file's anchor picks the right app, or none
+- panes: for each pane the screen was drawn with, the best IoU of a pane found from the
+  pixels (mean, and the share at 0.8 or more)
 
 --check fails (exit 1) when a summary number is worse than evals/baseline-<mode>.json by
 more than its tolerance; --update rewrites that file. Timings are printed, never gated."""
@@ -22,7 +24,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 from evals import metrics
@@ -31,6 +33,7 @@ from evals.screens import LAYOUTS, suite
 from jharokha import version
 from jharokha.core.layout import parse
 from jharokha.core.models import Line
+from jharokha.core.panes import panes, reading_panes
 from jharokha.core.text import find, format_concise, grid, looks_locked, reading_order
 from jharokha.win.ocr import Ocr
 
@@ -53,7 +56,10 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
     t = time.perf_counter()
     raw = ocr.recognize(frame)
     ms = (time.perf_counter() - t) * 1000
-    lines = reading_order(raw)
+    t = time.perf_counter()
+    found = panes(frame)
+    panes_ms = (time.perf_counter() - t) * 1000
+    lines = reading_order(raw, reading_panes(frame))
     if screen.grid:
         lines = grid(lines, screen.grid)
     got = [ln.text.rstrip() for ln in lines]
@@ -63,6 +69,7 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
         "app": screen.app,
         "config": config,
         "ms": round(ms),
+        "panes_ms": round(panes_ms, 1),
         "cer": metrics.cer(truth, got),
         "wer": metrics.wer(truth, got),
         "bag_f1": metrics.bag_f1(truth, got),
@@ -84,6 +91,10 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
             row.setdefault("find_misses", []).append(f.query)
     if hits:
         row["find_hit"] = mean(hits)
+    if screen.panes:
+        best = [max(metrics.iou(p, f) for f in found) for p in screen.panes]
+        row["panes_iou"] = mean(best)
+        row["panes_hit"] = mean(b >= 0.8 for b in best)
     row["got"] = got
     return row
 
@@ -94,7 +105,17 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
         groups[f"{r['app']}.{r['config']}"].append(r)
     out: dict[str, float] = {}
     for key, rs in sorted(groups.items()):
-        for m in ("cer", "wer", "bag_f1", "lines_exact", "lookalike", "tokens", "find_hit"):
+        for m in (
+            "cer",
+            "wer",
+            "bag_f1",
+            "lines_exact",
+            "lookalike",
+            "tokens",
+            "find_hit",
+            "panes_iou",
+            "panes_hit",
+        ):
             vals = [r[m] for r in rs if m in r]
             if vals:
                 out[f"{key}.{m}"] = round(mean(vals), 4)
@@ -102,6 +123,9 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
     out["all.app_ok"] = round(mean(r["app_ok"] for r in rows), 4)
     finds = [r["find_hit"] for r in rows if "find_hit" in r]
     out["all.find_hit"] = round(mean(finds), 4) if finds else 0.0
+    for m in ("panes_iou", "panes_hit"):
+        vals = [r[m] for r in rows if m in r]
+        out[f"all.{m}"] = round(mean(vals), 4) if vals else 0.0
     return out
 
 
@@ -153,6 +177,10 @@ def main() -> None:
     took = time.perf_counter() - t0
 
     print(f"jharokha {version()} evals, {name}: {len(rows)} reads in {took:.0f} s")
+    print(
+        f"  median ms: OCR {median(r['ms'] for r in rows):.0f}, "
+        f"panes {median(r['panes_ms'] for r in rows):.1f} (timings are not gated)"
+    )
     for key, v in summary.items():
         print(f"  {key:44} {v}")
     misses = [(r["screen"], r["config"], r["find_misses"]) for r in rows if "find_misses" in r]

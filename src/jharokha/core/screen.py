@@ -11,6 +11,7 @@ from PIL import Image
 
 from jharokha.core.cache import FrameCache
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
+from jharokha.core.panes import reading_panes
 from jharokha.core.text import clean, reading_order
 from jharokha.core.watch import changed_bbox
 
@@ -96,7 +97,7 @@ class Screen:
             check_region(region, frame)
         lines = self.cache.get(frame, region)
         if lines is None:
-            lines = reading_order(self.source.ocr(frame, region))
+            lines = reading_order(self.source.ocr(frame, region), reading_panes(frame, region))
             self.cache.put(frame, region, lines)
         return frame, lines
 
@@ -108,7 +109,7 @@ class Screen:
 
 
 MIN_SETTLE_S, QUIET_S, POLL_S = 0.4, 0.3, 0.1
-MAX_VERIFY = 40  # 30 to 60 ms each: a couple of seconds at most
+MAX_VERIFY = 40  # about 30 ms each: a second or two at most
 
 
 def check_region(region: Box, frame: Frame) -> None:

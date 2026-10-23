@@ -39,11 +39,7 @@ Claude Desktop / Cowork (`claude_desktop_config.json`):
 
 Running from a checkout with `uv run --project PATH jharokha` instead: add `--no-sync`. Otherwise every new client session re-syncs the environment, and while another session's server is running, Windows will not replace its `jharokha.exe` (`os error 32`), so the server fails to start.
 
-Optional second OCR engine for IDs and lookalikes (see `verify` below), about 240 MB more on disk (mostly OpenCV, which RapidOCR needs) and 30 MB more memory at start, 60 MB more after the first `verify`:
-
-```
-uvx --from "jharokha[verify] @ git+https://github.com/ibrarwtf/jharokha" jharokha
-```
+The install includes a second OCR engine for IDs and lookalikes (see `verify` below): PP-OCRv6's recognition model on onnxruntime, about 110 MB on disk, loaded on the first `verify`.
 
 ## Tools
 
@@ -67,11 +63,11 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 
 Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or a named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
 
-Panels come from the blank space between text: side-by-side columns (a chat list and its thread, a mail list and the reading pane) and the bands above and below them, each covering its whole cell so text that arrives later still falls inside. They need no setup but follow the screen, so `P1` can change when the screen does.
+Panels are the app's panes, found from the pixels: its 1 to 2 px divider lines and its background colours (a Teams chat list is told from its thread only by its shade of grey), each covering its whole pane so text that arrives later still falls inside. Text is read pane by pane, row by row inside each. On a screen with neither dividers nor colours, panels come from the blank space between text instead: side-by-side columns and the bands above and below them. They need no setup but follow the screen, so `P1` can change when the screen does.
 
 Named regions are yours: a TOML file of boxes as fractions of the client area, one table per app, with an optional `anchor` text that must be on screen or the read fails with `layout_mismatch`. An app measured at several zoom levels gets one `app@variant` table per level, each with `anchor_at`, where its anchor text sat; the nearest one is used. A table with an anchor is an app: `jharokha_status` and full reads name the one on screen (`app=teams`), and its optional `focus` region (`focus = "thread"`) is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. `grid = "body"` marks a region as a terminal's character grid: it is read row by row on the grid, so paths, numbers and table columns that OCR splits apart come back whole (on the synthetic terminal at 16 px, character errors fall from 6% to 2%). `prompt` is a regex for a shell's prompt at the start of a line, for `jharokha_run` (default: PowerShell's, cmd's or bash's). Start from [`layouts.example.toml`](layouts.example.toml); the server reads `--layouts PATH`, else `$JHAROKHA_LAYOUTS`, else `./layouts.toml` (git-ignored in this repo).
 
-`verify` on `read_text` and `find_text` (`flagged` or `all`, needs the `verify` extra) re-reads lines with RapidOCR, recognition only, on the line boxes Windows OCR found: 30 to 60 ms a line, at most 40 lines. `flagged` picks lines with digits or runs of capitals, where IDs hide. Where the engines disagree, `read_text` shows both (`L0 [20,26] Ticket INCOOI 2345 | verify: Ticket INC0012345`) and `find_text` searches the second reading, so a regex for an ID still matches. On the synthetic lookalike screen it takes lines read exactly from 0 of 4 to 3 of 4.
+`verify` on `read_text` and `find_text` (`flagged` or `all`) re-reads lines with a second engine, PP-OCRv6's recognition model, on the line boxes Windows OCR found: about 30 ms a line, at most 40 lines; the first use loads the model (0.3 s). `flagged` picks lines with digits or runs of capitals, where IDs hide. Where the engines disagree, `read_text` shows both (`L0 [20,26] Ticket INCOOI 2345 | verify: Ticket INC0012345`); `detailed` gives each verified line `verify` and `agree` (both engines read the same apart from spacing). `find_text` searches the second reading, so a regex for an ID still matches. On the synthetic lookalike screen it takes lines read exactly from 0 of 4 to 3 of 4.
 
 Terminal, all with `--window-title`:
 
