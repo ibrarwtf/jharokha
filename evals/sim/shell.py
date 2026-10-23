@@ -15,6 +15,8 @@ Every line run is logged."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import math
 import random
 import re
@@ -92,6 +94,7 @@ class Shell(SimApp):
         self.ok, self.exit_code = True, None
         self.log: list[str] = []  # every line run, as typed
         self.files = _files(rng)
+        self.written: dict[str, bytes] = {}  # full path -> bytes, by put_file's statements
 
     @property
     def view(self) -> str:
@@ -210,6 +213,9 @@ class Shell(SimApp):
     # PowerShell, the little of it the simulator knows
 
     def statement(self, stmt: str, line: str) -> Out:
+        put = self.put_statement(stmt, line)
+        if put is not None:
+            return put
         if m := re.fullmatch(r"\$(\w+)\s*=\s*(.+)", stmt):
             self.vars[m.group(1).lower()] = self.value(m.group(2), stmt, line)
             return []
@@ -249,6 +255,11 @@ class Shell(SimApp):
         if len(s) >= 2 and s[0] == s[-1] == "'":
             return s[1:-1]
         if len(s) >= 2 and s[0] == s[-1] == '"':
+            s = re.sub(
+                r"\$\(\$(\w+)\[(\d+)\]\.Length\)",
+                lambda m: str(len(self._element(m.group(1), int(m.group(2)), stmt, line))),
+                s,
+            )
             return re.sub(
                 r"\$\{(\w+|\?)\}|\$(\w+|\?)",
                 lambda m: _text(self.var(m.group(1) or m.group(2))),
@@ -259,6 +270,48 @@ class Shell(SimApp):
         if re.fullmatch(r"-?\d+", s):
             return int(s)
         raise Failed(self.unknown(stmt, line))
+
+    def put_statement(self, stmt: str, line: str) -> Out | None:
+        """The statements core.shell.put_file types for PowerShell: a hashtable of base64
+        chunks, the path resolved against the location, the bytes written and their hash.
+        None for any other statement."""
+        if m := re.fullmatch(r"\$(\w+)\s*=\s*@\{\}", stmt):
+            self.vars[m.group(1).lower()] = {}
+            return []
+        if m := re.fullmatch(r"\$(\w+)\[(\d+)\]\s*=\s*'([^']*)'", stmt):
+            table = self.vars.get(m.group(1).lower())
+            if not isinstance(table, dict):
+                raise Failed(self.unknown(stmt, line))
+            table[int(m.group(2))] = m.group(3)
+            return []
+        resolve = r"\$ExecutionContext\.SessionState\.Path\.GetUnresolvedProviderPathFromPSPath"
+        if m := re.fullmatch(rf"\$(\w+)\s*=\s*{resolve}\('((?:[^']|'')*)'\)", stmt, re.I):
+            path = m.group(2).replace("''", "'")
+            full = path if re.match(r"[A-Za-z]:\\", path) else f"{self.cwd}\\{path}"
+            self.vars[m.group(1).lower()] = full
+            return []
+        write = (
+            r"\[IO\.File\]::WriteAllBytes\(\$(\w+),\s*\[Convert\]::FromBase64String"
+            r"\(\(-join \$(\w+)\[(\d+)\.\.(\d+)\]\)\)\)"
+        )
+        if m := re.fullmatch(write, stmt, re.I):
+            path = str(self.vars.get(m.group(1).lower()))
+            a, b = int(m.group(3)), int(m.group(4))
+            joined = "".join(self._element(m.group(2), i, stmt, line) for i in range(a, b + 1))
+            self.written[path] = base64.b64decode(joined)
+            return []
+        if m := re.fullmatch(r"\(Get-FileHash -A SHA256 -LiteralPath \$(\w+)\)\.Hash", stmt, re.I):
+            data = self.written.get(str(self.vars.get(m.group(1).lower())))
+            if data is None:
+                raise Failed(self.unknown(stmt, line))
+            return [(hashlib.sha256(data).hexdigest().upper(), TERM_FG)]
+        return None
+
+    def _element(self, name: str, i: int, stmt: str, line: str) -> str:
+        table = self.vars.get(name.lower())
+        if not isinstance(table, dict) or i not in table:
+            return ""
+        return str(table[i])
 
     def var(self, name: str) -> object:
         name = name.lower()

@@ -1,0 +1,89 @@
+# Teams actions, built in, on the chat view. Enter in the compose box sends, so a newline in
+# typed text is Shift+Enter here, and no action presses Enter or clicks Send: drafting is as
+# far as they go.
+format = 1
+
+[policy.teams]
+newline = "shift+enter"
+
+[action.teams.open_chat]
+summary = "Bring Teams forward and open the chat with this name from the chat list."
+max_risk = "reversible"
+args.name = { type = "text", max_len = 200 }
+
+[[action.teams.open_chat.step]]
+do = "focus"
+switch = true
+view = "chat"
+
+[[action.teams.open_chat.step]]
+do = "click"
+target = { text = "{name}", region = "list" }
+risk = "reversible"
+expect = { text = "{name}", region = "header" }
+
+[action.teams.new_messages]
+summary = """The messages in a chat after a time (H:MM, or a date and time), scrolling the thread
+back until one at or before it is on screen. Each has who, time and text (screen text)."""
+max_risk = "reversible"
+args.chat = { type = "text", max_len = 200 }
+args.since = { type = "text", pattern = '[\d/:. APMapm-]{3,20}', doc = "e.g. 7:30, 2026-10-23 7:30" }
+
+[[action.teams.new_messages.step]]
+do = "focus"
+switch = true
+view = "chat"
+
+[[action.teams.new_messages.step]]
+do = "click"
+target = { text = "{chat}", region = "list" }
+risk = "reversible"
+expect = { text = "{chat}", region = "header" }
+
+[[action.teams.new_messages.step]]
+do = "scroll"
+region = "thread"
+exclude = "compose"
+ticks = 3
+max = 12
+until = { before = "{since}", region = "thread" }
+collect = "messages"
+item = '^(?P<who>\D.*?)\s+(?P<time>\d{1,2}\s?[:.]\s?\d{2}(?:\s*[AP]M)?)$'
+since = "{since}"
+timeout_s = 20
+
+[[action.teams.new_messages.step]]
+do = "extract"
+items = "messages"
+pick = "count"
+into = "count"
+
+[action.teams.draft]
+summary = """Type text into a chat's compose box and leave it there: newlines become
+Shift+Enter, and nothing is sent. Read it back, then send it yourself if you mean to."""
+max_risk = "reversible"
+args.chat = { type = "text", max_len = 200 }
+args.text = { type = "text", max_len = 4000 }
+
+[[action.teams.draft.step]]
+do = "focus"
+switch = true
+view = "chat"
+
+[[action.teams.draft.step]]
+do = "click"
+target = { text = "{chat}", region = "list" }
+risk = "reversible"
+expect = { text = "{chat}", region = "header" }
+
+[[action.teams.draft.step]]
+do = "click"
+target = { region = "compose" }
+risk = "reversible"
+
+[[action.teams.draft.step]]
+do = "type"
+text = "{text}"
+newline = "shift+enter"
+risk = "reversible"
+expect = { text = "{text}", region = "compose" }
