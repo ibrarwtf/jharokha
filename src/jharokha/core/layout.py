@@ -24,6 +24,9 @@ class Layout:
     # Where the anchor sits (x, y fractions) in this variant. `app@variant` layouts of one
     # app, e.g. one per zoom level, are told apart by it.
     anchor_at: tuple[float, float] | None = None
+    # The region input tools report changes in while this app is on screen: the thread,
+    # not the chat list beside it.
+    focus: str | None = None
 
     @property
     def app(self) -> str:
@@ -71,7 +74,7 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
             raise LayoutError(f"{source}: {name}.anchor_at must be [x, y] fractions, with anchor")
         regions: dict[str, Fraction] = {}
         for key, v in table.items():
-            if key in ("anchor", "anchor_at"):
+            if key in ("anchor", "anchor_at", "focus"):
                 continue
             ok = isinstance(v, list) and len(v) == 4
             ok = ok and all(isinstance(f, int | float) and 0 <= f <= 1 for f in v)
@@ -81,7 +84,11 @@ def parse(text: str, source: str = "layouts") -> dict[str, Layout]:
                     "of the client area that stay inside it"
                 )
             regions[key] = (float(v[0]), float(v[1]), float(v[2]), float(v[3]))
-        layouts[name] = Layout(name, anchor, regions, (float(at[0]), float(at[1])) if at else None)
+        focus = table.get("focus")
+        if focus is not None and (not anchor or focus not in regions):
+            raise LayoutError(f"{source}: {name}.focus must name one of its regions, with anchor")
+        at_xy = (float(at[0]), float(at[1])) if at else None
+        layouts[name] = Layout(name, anchor, regions, at_xy, focus)
     return layouts
 
 
@@ -163,7 +170,11 @@ def to_fraction(box: Box, width: int, height: int) -> Fraction:
 
 
 def table(
-    name: str, anchor: str, regions: dict[str, Fraction], at: tuple[float, float] | None
+    name: str,
+    anchor: str,
+    regions: dict[str, Fraction],
+    at: tuple[float, float] | None,
+    focus: str | None = None,
 ) -> str:
     """One TOML table, in the format parse() reads."""
 
@@ -173,6 +184,8 @@ def table(
     out = [f'["{name}"]' if "@" in name else f"[{name}]", f"anchor = {json.dumps(anchor)}"]
     if at:
         out.append(f"anchor_at = {nums(at)}")
+    if focus:
+        out.append(f"focus = {json.dumps(focus)}")
     out += [f"{k} = {nums(f)}" for k, f in regions.items()]
     return "\n".join(out) + "\n"
 

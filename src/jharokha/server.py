@@ -50,7 +50,9 @@ AFTER_INPUT = (
     "appears, matched as in jharokha_wait_for_text, a regex with until_regex=true, up to "
     "timeout_s, max 30) and returns, per show: changed = only the lines that "
     "changed since just before the input (default; the whole screen when most of it changed), "
-    "full = the whole screen, none = nothing. region limits that read."
+    "full = the whole screen, none = nothing. region limits that read; without it, changed "
+    "is limited to the focus region of the app on screen when the layouts file sets one "
+    "(the header says focus= and how many lines changed elsewhere)."
 )
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 INPUT = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
@@ -93,6 +95,20 @@ def _box(region: list[int] | None) -> Box | None:
     if len(region) != 4:
         raise ScreenError("region_out_of_bounds", "region must be [x, y, width, height]")
     return (region[0], region[1], region[2], region[3])
+
+
+def _inside(lines: list[Line], box: Box) -> list[Line]:
+    x, y, w, h = box
+    return [
+        ln
+        for ln in lines
+        if x <= ln.box[0] + ln.box[2] / 2 < x + w and y <= ln.box[1] + ln.box[3] / 2 < y + h
+    ]
+
+
+def _outside(lines: list[Line], box: Box) -> list[Line]:
+    keep = set(map(id, _inside(lines, box)))
+    return [ln for ln in lines if id(ln) not in keep]
 
 
 def _unlocked(lines: list[Line]) -> list[Line]:
@@ -167,6 +183,15 @@ def build_server(
     def anchors(group: list[Layout]) -> str:
         return " or ".join(sorted({f"'{la.anchor}'" for la in group if la.anchor}))
 
+    def on_screen(frame: Frame, lines: list[Line]) -> Layout | None:
+        """The first app in the layouts file whose anchor is on screen; layouts without an
+        anchor (a taskbar under every app) are not an app."""
+        for app in dict.fromkeys(la.app for la in layouts.values()):
+            group = [la for la in layouts.values() if la.app == app and la.anchor]
+            if group and (lay := pick(group, frame, lines)):
+                return lay
+        return None
+
     # One watcher per server; its closures read watch_args, rebound on every start.
     watch_args: dict[str, Any] = {"window_title": None, "region": None}
     watcher = Watcher(
@@ -187,8 +212,9 @@ def build_server(
     def jharokha_status(window_title: str | None = None) -> str:
         """Is there a remote-desktop window and can it be read? Call this first. Returns the
         window title, process, state (normal, minimized, locked, no_frames, window_not_found),
-        client size in pixels, DPI scale and whether it is the foreground window. Pass
-        window_title (a substring) when more than one session is open."""
+        client size in pixels, DPI scale, whether it is the foreground window, and the app on
+        screen when the layouts file knows it. Pass window_title (a substring) when more than
+        one session is open."""
         info: dict[str, Any] = {"found": False, "state": "window_not_found"}
         try:
             w = screen.source.window(window_title)
@@ -202,7 +228,8 @@ def build_server(
                     "dpi_scale": w.dpi_scale,
                     "foreground": w.foreground,
                 }
-            read(window_title, None)
+            lay = on_screen(*read(window_title, None))
+            info["app"] = lay.app if lay else None
         except ScreenError as e:
             info["state"] = e.code
             info["detail"] = str(e)
@@ -231,6 +258,8 @@ def build_server(
         alt, note = second_reading(frame, lines, verify, page)
         fmt = format_detailed if response_format == "detailed" else format_concise
         head = f"frame_id={frame.frame_id} ts={frame.ts:.3f} size={frame.width}x{frame.height}"
+        if region is None and (lay := on_screen(frame, lines)):
+            head += f" app={lay.app}"
         return head + note + "\n" + fmt(lines, offset, limit, alt)
 
     def second_reading(
@@ -398,11 +427,20 @@ def build_server(
             return head
         frame, lines = read(window_title, box)
         head = f"frame_id={frame.frame_id} {head}"
-        if old is not None:
-            added, _ = diff_lines(old, lines)
-            if len(added) <= max(10, len(lines) // 2):
-                return f"{head} changed:\n{format_diff(old, lines)}"
-            head += " most of the screen changed, so all of it follows"
+        if old is None:
+            return f"{head}\n{format_concise(lines)}"
+        lay = on_screen(frame, lines) if box is None else None
+        if lay and lay.focus:
+            fbox = to_box(lay.regions[lay.focus], frame.width, frame.height)
+            elsewhere = sum(map(len, diff_lines(_outside(old, fbox), _outside(lines, fbox))))
+            old, lines = _inside(old, fbox), _inside(lines, fbox)
+            head += f" focus={lay.app}.{lay.focus}"
+            if elsewhere:
+                head += f" ({elsewhere} lines changed elsewhere: pass region, or show=full)"
+        added, _ = diff_lines(old, lines)
+        if len(added) <= max(10, len(lines) // 2):
+            return f"{head} changed:\n{format_diff(old, lines)}"
+        head += " most of it changed, so all of it follows"
         return f"{head}\n{format_concise(lines)}"
 
     def jharokha_click(

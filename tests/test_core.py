@@ -219,8 +219,9 @@ def test_measure_finds_columns_and_bands_and_writes_toml():
     assert regions["col1"][0] == 0 and regions["col2"][0] < regions["top"][0]
     assert regions["top"][1] == 0 and regions["body"][1] < 120 <= regions["body"][1] + 40
     fr = {k: layout.to_fraction(b, 640, 400) for k, b in regions.items()}
-    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02))
+    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02), focus="body")
     text_ = layout.replace_app('[other]\nr = [0, 0, 1, 1]\n["app@0"]\nanchor = "x"\n', "app", t)
     parsed = layout.parse(text_)
     assert set(parsed) == {"other", "app@-1"} and parsed["app@-1"].anchor_at == (0.3, 0.02)
+    assert parsed["app@-1"].focus == "body"
     assert layout.to_box(parsed["app@-1"].regions["body"], 640, 400) == regions["body"]

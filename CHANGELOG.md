@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.11.0
+
+- App profiles: a layouts table with an anchor is an app. `jharokha_status` returns `app`, and a full `jharokha_read_text` says `app=teams` in its header.
+- `focus = "<region>"` in an app's table: input tools with `show=changed` and no `region` report only the changes inside that region while the app is on screen, plus a count of lines that changed elsewhere. A click in the Teams chat list returns the thread that opened, not the list and the taskbar clock again.
+- `jharokha measure APP --focus NAME` writes it; remeasuring keeps the focus already set.
+- Measured, not built: inverting dark screens before OCR changes nothing on the synthetic terminal (CER .060 either way at 16 px); Windows OCR binarizes on its own, so dark themes need no handling.
+
 ## v0.10.2
 
 - After a click, scroll or `focus_at`, the cursor is moved to the middle of the session's right edge before it is given back. The session kept the last position it saw, so a cursor left on a link or a name kept a tooltip or hover card in every later read.

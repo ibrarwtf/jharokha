@@ -239,3 +239,21 @@ async def test_layout_panels_and_named_regions(source):
         assert r.is_error and "app.right" in text(r) and text(r).startswith("region_unknown:")
         r = await c.call_tool("jharokha_read_text", {"region": "P9"})
         assert r.is_error and "2 panels" in text(r)
+
+
+async def test_app_on_screen_and_its_focus_region_after_input(source):
+    layouts = parse(
+        "[taskbar]\nbar = [0, 0.9, 1, 0.1]\n"
+        '[app]\nanchor = "Build"\nfocus = "lower"\nlower = [0, 0.6, 1, 0.4]\n'
+    )
+    async with Client(build_server(source, allow_input=True, layouts=layouts)) as c:
+        assert json.loads(text(await c.call_tool("jharokha_status", {})))["app"] == "app"
+        assert " app=app\n" in text(await c.call_tool("jharokha_read_text", {}))
+        # The fake types at y 230, above the focus (y 240 on), and presses at y 260, in it.
+        r = text(await c.call_tool("jharokha_type", {"text": "hi"}))
+        assert "focus=app.lower (1 lines changed elsewhere" in r and "(no text changed)" in r
+        r = text(await c.call_tool("jharokha_press", {"keys": "enter"}))
+        assert "elsewhere" not in r and "+ L0 [10,260] pressed enter" in r
+        assert "Build succeeded" not in r
+    with pytest.raises(ValueError, match="focus must name one of its regions"):
+        parse('[app]\nanchor = "x"\nfocus = "nope"\nall = [0, 0, 1, 1]')
