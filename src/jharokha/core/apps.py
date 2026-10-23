@@ -34,6 +34,11 @@ An app's `policy` table shapes and limits input to it (core.guard.Policy):
     newline = "shift+enter"               # a typed newline adds a line, never sends
     irreversible_keys = ["enter"]         # refused unless the call passes allow="irreversible"
 
+An app that declares no policy table gets DEFAULT_POLICY: Enter, Ctrl+Enter and Alt+S held
+back and newlines typed as Shift+Enter, since most reply boxes send on one of them. A table
+declared empty (`[app.x.policy]` alone, as the terminal's) opts out. The generic app, the
+screen no definition knows, has none.
+
 An app's `spots` name its text-less targets (jharokha_learn names them from its icons):
 
     [app.tickets]
@@ -64,6 +69,13 @@ FORMAT = 1
 GENERIC = "generic"
 SESSION = "session"
 PANE_FIT = 0.6
+# For an app whose definition has no [app.x.policy]: a learned app, or one written by hand.
+# Its reply box may send on any of these, so typing never submits and each needs
+# allow="irreversible" until the user declares what the app really does.
+DEFAULT_POLICY: dict[str, Any] = {
+    "newline": "shift+enter",
+    "irreversible_keys": ["enter", "ctrl+enter", "alt+s"],
+}
 
 Point2 = tuple[float, float]
 Spot = tuple[float, ...]  # x, y; or the centre and the size: x, y, width, height
@@ -136,7 +148,8 @@ class App:
     name: str
     cues: tuple[Cue, ...] = ()
     views: dict[str, View] = field(default_factory=dict)
-    policy: dict[str, Any] = field(default_factory=dict)  # as written; checked when parsed
+    # As written, checked when parsed; None when the definition has no policy table.
+    policy: dict[str, Any] | None = None
     action: dict[str, Any] = field(default_factory=dict)  # reserved: actions (0.20)
     source: str = "built-in"
     # Text-less targets (a send button, an attach icon) by name: the icon's centre and, when
@@ -146,7 +159,10 @@ class App:
 
     @property
     def input_policy(self) -> Policy:
-        return Policy.parse(self.policy, f"app.{self.id}.policy")
+        table = self.policy
+        if table is None:
+            table = {} if self.id == GENERIC else DEFAULT_POLICY
+        return Policy.parse(table, f"app.{self.id}.policy")
 
 
 @dataclass(frozen=True)
@@ -378,7 +394,7 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
         name=_text(t.get("name", aid), f"{where}.name"),
         cues=_cues(t.get("cue", []), f"{where}.cue"),
         views=views,
-        policy=dict(t.get("policy", {})),
+        policy=dict(t["policy"]) if "policy" in t else None,
         action=dict(t.get("action", {})),
         source=source,
         spots=spots,

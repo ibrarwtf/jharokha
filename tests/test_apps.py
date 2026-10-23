@@ -58,6 +58,24 @@ def test_builtin_input_policies_keep_sends_behind_allow():
         apps.parse(bad)
 
 
+def test_an_app_with_no_policy_holds_back_the_send_keys_until_it_declares_one():
+    head = 'format = 1\n[app.crm]\n[[app.crm.cue]]\ntext = "CRM"\n'
+    view = "[app.crm.view.main]\n"
+    implicit = apps.catalog(apps.parse(head + view)).apps["crm"]
+    p = implicit.input_policy
+    assert implicit.policy is None and p.newline == "shift+enter"
+    assert all(p.irreversible(k) for k in ("Return", "ctrl+enter", "Alt+S"))
+    assert not p.irreversible("shift+enter") and not p.irreversible("tab")
+    # Declared, even empty, it is the app's own: the user opted out.
+    empty = apps.catalog(apps.parse(head + "[app.crm.policy]\n" + view)).apps["crm"]
+    assert empty.policy == {} and empty.input_policy == apps.Policy()
+    own = 'newline = "alt+enter"\nirreversible_keys = ["ctrl+s"]\n'
+    mine = apps.catalog(apps.parse(head + "[app.crm.policy]\n" + own + view)).apps["crm"]
+    assert mine.input_policy == apps.Policy("alt+enter", frozenset({"ctrl+s"}))
+    # The screen no definition knows keeps none.
+    assert apps.catalog().policies()["generic"] == apps.Policy()
+
+
 def test_definitions_are_validated():
     ok = "format = 1\n[app.x]\n[app.x.view.v]\n[app.x.view.v.region.r]\nbox = [0, 0, 1, 1]\n"
     assert apps.parse(ok).apps["x"].views["v"].regions["r"].box == (0, 0, 1, 1)

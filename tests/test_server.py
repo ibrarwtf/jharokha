@@ -693,8 +693,11 @@ async def test_app_on_screen_and_its_focus_region_after_input(source):
         # The fake types at y 230, above the focus (y 240 on), and presses at y 260, in it.
         r = text(await c.call_tool("jharokha_act", {"op": "type", "text": "hi"}))
         assert "focus=app.lower (1 lines changed elsewhere" in r and "(no text changed)" in r
+        # An app from an old layouts file has no policy, so the default holds Enter back.
         r = text(await c.call_tool("jharokha_act", {"op": "press", "keys": "enter"}))
-        assert "elsewhere" not in r and "+ L0 [10,260] pressed enter" in r
+        assert r.startswith("irreversible: enter is irreversible in app.main")
+        r = text(await c.call_tool("jharokha_act", {"op": "press", "keys": "tab"}))
+        assert "elsewhere" not in r and "+ L0 [10,260] pressed tab" in r
         assert "Build succeeded" not in r
     with pytest.raises(ValueError, match="grid must name one of its regions"):
         parse('[app]\nanchor = "x"\ngrid = "nope"\nall = [0, 0, 1, 1]')
