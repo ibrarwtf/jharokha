@@ -519,27 +519,45 @@ def _month(name: str) -> str:
     return str(1 + [m[:3] for m in _MONTHS.split("|")[:12]].index(name[:3]))
 
 
-def since(items: list[Item], when: datetime | str, now: datetime) -> list[Item]:
-    """The items at or after when (a datetime or a string parse_when reads). Without a clock
-    on either side, by day. A message without a time (one of several under one header) has
-    the time of the one before it; other items without a time, or none before, are left out."""
+def _start(when: datetime | str, now: datetime) -> tuple[datetime, bool]:
     if isinstance(when, str):
         parsed = parse_when(when, now)
         if parsed is None:
             raise ValueError(f"cannot read {when!r} as a date or time")
-        start, start_clock = parsed
-    else:
-        start, start_clock = when, True
-    out = []
+        return parsed
+    return when, True
+
+
+def _timed(items: list[Item], now: datetime) -> Iterable[tuple[Item, tuple[datetime, bool]]]:
+    """Each item with its time. A message without a time (one of several under one header)
+    has the time of the one before it; other items without a time, or none before, are
+    left out."""
     last: tuple[datetime, bool] | None = None
     for it in items:
         at = parse_when(it.time, now) if it.time else None
         if at is None and it.kind == "message":
             at = last
         last = at or last
-        if at is None:
-            continue
-        dt, has_clock = at
-        if (dt >= start) if has_clock and start_clock else dt.date() >= start.date():
-            out.append(it)
-    return out
+        if at is not None:
+            yield it, at
+
+
+def _cmp(at: tuple[datetime, bool], start: tuple[datetime, bool]) -> int:
+    """-1, 0 or 1 as at is before, at or after start; by day without a clock on either."""
+    (dt, clock), (st, st_clock) = at, start
+    a, b = (dt, st) if clock and st_clock else (dt.date(), st.date())
+    return (a > b) - (a < b)  # type: ignore[operator]
+
+
+def since(items: list[Item], when: datetime | str, now: datetime) -> list[Item]:
+    """The items at or after when (a datetime or a string parse_when reads). Without a clock
+    on either side, by day."""
+    start = _start(when, now)
+    return [it for it, at in _timed(items, now) if _cmp(at, start) >= 0]
+
+
+def before(items: list[Item], when: datetime | str, now: datetime) -> bool:
+    """Whether an item is at or before when: a list scrolled back far enough to hold every
+    item since then."""
+    start = _start(when, now)
+    return any(_cmp(at, start) <= 0 for _, at in _timed(items, now))

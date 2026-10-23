@@ -1,0 +1,43 @@
+# Terminal actions, built in. Both work only in a terminal already in front: they never
+# switch to one, since a command typed anywhere else goes somewhere else (a browser's
+# address bar searches the web for it).
+format = 1
+
+[action.terminal.run]
+summary = """Run one command in the shell in front and return what it printed and its exit
+code, read up to an end marker the command prints (not the prompt, which OCR misreads)."""
+max_risk = "irreversible"
+args.command = { type = "text", max_len = 2000, doc = "one line" }
+args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+
+[[action.terminal.run.step]]
+do = "focus"
+
+[[action.terminal.run.step]]
+do = "run"
+command = "{command}"
+shell = "{shell}"
+region = "body"
+clear = true  # Ctrl+L first, so the reply starts at the top whatever OCR makes of its echo
+risk = "irreversible"
+timeout_s = 30
+
+[action.terminal.put_file]
+summary = """Write a file in the shell in front: its bytes as base64 typed in short chunks, each
+confirmed, then decoded there and its SHA-256 checked against the one sent."""
+max_risk = "irreversible"
+args.path = { type = "text", max_len = 260 }
+args.content_base64 = { type = "base64", max_len = 200000 }
+args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+
+[[action.terminal.put_file.step]]
+do = "focus"
+
+[[action.terminal.put_file.step]]
+do = "put_file"
+path = "{path}"
+content_base64 = "{content_base64}"
+shell = "{shell}"
+region = "body"
+risk = "irreversible"
+timeout_s = 15

@@ -13,9 +13,10 @@ from typing import Any
 import pytest
 from mcp import Client
 
-from evals.scenarios import Agent, seen
+from evals.scenarios import PUT_DATA, Agent, body, seen
 from evals.sim import Desktop, SimSource
 from evals.sim.source import HWND
+from jharokha.core import actions
 from jharokha.core.trace import Trace
 from jharokha.server import build_server
 
@@ -215,8 +216,18 @@ async def test_terminal_typed_command_and_its_output():
         r = await a.call("jharokha_type", text=cmd, until="KX7R4C", show="full")
         assert seen(r, source.desk.shell.files["notes.txt"][0]) and seen(r, "KX7R4C:True:")
         r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
-        assert r.startswith("run_ms=") and seen(r, "October 23, 2026")
-        assert source.desk.shell.log == [cmd.strip(), "Get-Date"]
+        assert r.startswith("run_ms=") and " exit_code= ok=true " in r.split("\n")[0]
+        assert seen(r, "October 23, 2026") and not seen(r, "$LASTEXITCODE")
+        log = source.desk.shell.log
+        assert log[0] == cmd.strip() and log[1].startswith("Get-Date; $jkq=$?; ")
+        r = await a.call("jharokha_run", command="Get-Content nope.txt", timeout_s=10)
+        assert " ok=false " in r.split("\n")[0] and seen(r, "Cannot find path")
+        r = await a.call("jharokha_run", command="Get-Date", timeout_s=10, shell="other")
+        assert (
+            r.startswith("run_ms=")
+            and "exit_code" not in r
+            and source.desk.shell.log[-1] == "Get-Date"
+        )
 
 
 @pytest.mark.windows
@@ -292,7 +303,7 @@ async def test_a_second_agent_holding_the_session_is_refused(tmp_path):
         assert (await a.status())["input"]["lease"] is None
         r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
         assert r.startswith("run_ms=")
-    assert source.desk.shell.log == ["Get-Date"]
+    assert [c.split(";")[0] for c in source.desk.shell.log] == ["Get-Date"]
 
 
 @pytest.mark.windows
@@ -357,3 +368,77 @@ async def test_teams_ctrl_enter_sends_and_is_held_back():
         assert teams.sent == [] and teams.chat.draft == ["one", "two"]
         await a.call("jharokha_press", keys="ctrl+enter", allow="irreversible", show="none")
     assert teams.sent == [(teams.chat.name, "one\ntwo")]
+
+
+# Actions through jharokha_do: the same guard, the same codes.
+
+
+@pytest.mark.windows
+async def test_apps_lists_the_actions_and_a_dry_run_needs_no_input():
+    source = SimSource(Desktop(100, front="terminal"))
+    local = actions.load(
+        'format = 1\n[action.terminal.where]\nsummary = "Where the shell is"\n'
+        'max_risk = "irreversible"\n[[action.terminal.where.step]]\ndo = "run"\n'
+        'command = "Get-Location"\nrisk = "irreversible"\n'
+    )
+    server = build_server(source, catalog=source.catalog(), actions=local)
+    async with Client(server) as c:
+        a = Agent(c, source)
+        doc = json.loads(await a.call("jharokha_apps"))
+        ids = {x["action"]: x for x in doc["actions"]}
+        assert len(ids) == 10 and ids["terminal.where"]["source"] == "local"
+        assert ids["teams.draft"]["args"]["text"] == {"type": "text", "required": True}
+        teams = next(x for x in doc["apps"] if x["app"] == "teams")
+        assert "enter" in teams["policy"]["irreversible_keys"] and doc["input"] is False
+        out = await a.call("jharokha_do", action="terminal.put_file", args={"path": "x"})
+        assert out.startswith("input_disabled:")
+        args = {"chat": "Ana", "text": "a\nb"}
+        out = await a.call("jharokha_do", action="teams.draft", args=args, dry_run=True)
+        plan = body(out)["plan"]
+        assert [p["do"] for p in plan] == ["focus", "click", "click", "type"]
+    assert source.desk.shell.log == [] and source.desk.events == []
+
+
+@pytest.mark.windows
+async def test_do_refuses_as_the_input_tools_do_and_traces_each_input(tmp_path):
+    source = SimSource(Desktop(100, front="browser"))
+    trace = Trace(tmp_path / "trace.jsonl")
+    server = build_server(source, allow_input=True, catalog=source.catalog(), trace=trace)
+    async with Client(server) as c:
+        a = Agent(c, source)
+        args = {"command": "Get-ChildItem"}
+        out = await a.call("jharokha_do", action="terminal.run", args=args)
+        assert out.startswith("irreversible: step 2:run (run) is irreversible")
+        out = await a.call("jharokha_do", action="terminal.run", args=args, allow="irreversible")
+        assert out.startswith("wrong_app: expected terminal in front, but the screen shows browser")
+        assert source.desk.browser.searches == [] and source.desk.shell.log == []
+        # teams.draft switches to Teams by its taskbar icon and types a draft, never sends.
+        chat = source.desk.teams.chats[3]
+        args = {"chat": chat.name, "text": "line one\nline two"}
+        r = body(await a.call("jharokha_do", action="teams.draft", args=args))
+        assert r["ok"] and [s["do"] for s in r["steps_done"]] == ["focus", "click", "click", "type"]
+        assert chat.draft == ["line one", "line two"] and source.desk.teams.sent == []
+    assert source.desk.safety() == []
+    recs = [json.loads(ln) for ln in (tmp_path / "trace.jsonl").read_text("utf-8").splitlines()]
+    assert [r["action"] for r in recs] == ["click", "click", "click", "type", "press", "type"]
+    assert all(r["result"] == "sent" for r in recs) and recs[-1]["front_app"] == "teams.chat"
+
+
+@pytest.mark.windows
+async def test_do_put_file_round_trip_checks_the_hash():
+    import base64
+
+    source = SimSource(Desktop(100, front="terminal"))
+    async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
+        a = Agent(c, source)
+        args = {"path": "out\\blob.bin", "content_base64": base64.b64encode(PUT_DATA).decode()}
+        out = await a.call("jharokha_do", action="terminal.put_file", args=args)
+        assert out.startswith("irreversible:")  # writing a file is, under the default allow
+        out = await a.call(
+            "jharokha_do", action="terminal.put_file", args=args, allow="irreversible"
+        )
+        r = body(out)
+        assert r["ok"] and r["fields"]["hash_check"] in ("exact", "folded")
+        assert r["fields"]["size"] == len(PUT_DATA)
+    shell = source.desk.shell
+    assert shell.written == {f"{shell.cwd}\\out\\blob.bin": PUT_DATA}
