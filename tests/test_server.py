@@ -105,10 +105,34 @@ async def test_scroll_is_opt_in_and_returns_the_new_screen(source):
         tools = (await c.list_tools()).tools
         scroll = next(t for t in tools if t.name == "jharokha_scroll")
         assert scroll.annotations and scroll.annotations.read_only_hint is False
-        r = await c.call_tool("jharokha_scroll", {"ticks": -1})
+        r = await c.call_tool("jharokha_scroll", {"ticks": -1, "show": "full"})
         assert "L0 [10,-10] Build succeeded" in text(r)
+        r = await c.call_tool("jharokha_scroll", {"ticks": 1})
+        assert "(no text changed)" in text(r)  # lines moved, none appeared
         r = await c.call_tool("jharokha_scroll", {"ticks": 1, "x": 9999, "y": 0})
         assert r.is_error and text(r).startswith("region_out_of_bounds")
+
+
+async def test_input_returns_what_changed_after_the_screen_settles(source):
+    async with Client(build_server(source, allow_input=True)) as c:
+        r = await c.call_tool("jharokha_type", {"text": "hello"})
+        assert "settled_ms=" in text(r) and "changed:" in text(r)
+        assert "+ L3 [10,230] typed hello" in text(r)
+        assert "Build succeeded" not in text(r)
+        r = await c.call_tool("jharokha_press", {"keys": "enter", "show": "none"})
+        assert text(r).startswith("settled_ms=") and "screen_text" not in text(r)
+        r = await c.call_tool("jharokha_click", {"x": 5, "y": 5, "region": [0, 190, 640, 30]})
+        assert "+ L0 [10,200] clicked left at 5,5" in text(r)
+
+
+async def test_until_waits_for_text_after_input(source):
+    async with Client(build_server(source, allow_input=True)) as c:
+        r = await c.call_tool("jharokha_type", {"text": "dir", "until": "typed dir"})
+        assert "until_ms=" in text(r)
+        r = await c.call_tool(
+            "jharokha_press", {"keys": "enter", "until": "never shown", "timeout_s": 0.5}
+        )
+        assert r.is_error and text(r).startswith("timeout: the input was sent, but")
 
 
 async def test_click_type_press_are_opt_in_and_return_the_new_screen(source):

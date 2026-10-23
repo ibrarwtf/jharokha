@@ -42,6 +42,22 @@ def diff_lines(old: list[Line], new: list[Line]) -> tuple[list[Line], list[Line]
     return added, removed
 
 
+def format_diff(old: list[Line], new: list[Line]) -> str:
+    """The lines that changed between two reads: added ones with their ref in the new read
+    (`+ L<n> [x,y] text`, so a click can target them) and removed ones (`- [x,y] text`)."""
+    sm = difflib.SequenceMatcher(None, [ln.text for ln in old], [ln.text for ln in new])
+    out = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag in ("replace", "delete"):
+            out.extend(f"- [{ln.box[0]},{ln.box[1]}] {clean(ln.text)}" for ln in old[i1:i2])
+        if tag in ("replace", "insert"):
+            out.extend(
+                f"+ L{j} [{new[j].box[0]},{new[j].box[1]}] {clean(new[j].text)}"
+                for j in range(j1, j2)
+            )
+    return wrap_untrusted("\n".join(out) or "(no text changed)")
+
+
 def changed_bbox(old: Frame | None, new: Frame) -> Box | None:
     """Where the pixels differ, or None when the frames are the same for our purposes."""
     if old is None or (old.width, old.height) != (new.width, new.height):
