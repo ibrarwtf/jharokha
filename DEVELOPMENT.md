@@ -32,7 +32,7 @@ uv run python -m evals --show terminal    # truth against what was read, line by
 
 Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, and whether the layouts anchor picks the right app. The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
 
-The baseline comes from CI's runner, which runs a different Windows OCR build than a laptop; run `--check` locally only as a guide.
+The numbers are deterministic: this laptop (Windows 11) and CI's `windows-latest` runner gave identical summaries for both sets. If they ever drift, run the workflow by hand (`gh workflow run ci.yml`): it regenerates both baselines on the runner and uploads them as an artifact.
 
 MCP end to end: `npx @modelcontextprotocol/inspector --cli uv run jharokha --method tools/list`, or register it in Claude Code with `claude mcp add --transport stdio jharokha -- uv run --directory <repo> jharokha`.
 

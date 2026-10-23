@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.14.0
+
+- Evals (`uv run python -m evals --quick | --full`), replacing `tests/eval_ocr.py`. Generated screens shaped like the work: a PowerShell terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox, five lock and sign-in screens, lookalike IDs; synthetic names and data from a seeded generator, scored on seeds not used for tuning. Drawn with GDI and ClearType like real apps, then through a codec-like JPEG pass.
+- Scored per app: CER and WER (true edit distance), bag-of-words F1, lines exact, lookalike misses, tokens per read, `find` landing inside the drawn word, lock screens read as locked, app picked by its layouts anchor.
+- CI: `--quick --check` on every push fails on a drop against `evals/baseline-quick.json`; `--full` on `v0.x.0` tags; results uploaded as an artifact; a manual run regenerates the baselines on the runner. The laptop and the runner give identical numbers.
+- First findings, now the baseline: the terminal is the weak spot (CER .21 quick, about .45 across sizes; `find` lands 22 to 39%), as the live sessions showed. Four of the five lock screens are not recognized as locked; the Teams sign-in screen reads as a normal one.
+- `fake_session.py` shows the generated screens (`terminal`, `teams`, `outlook`, `ids`, `lock`).
+
 ## v0.13.1
 
 - Agents can tell which jharokha they are talking to: `jharokha_status` returns `version`, and the server's instructions start with `jharokha <version>.`; `jharokha --version` in a shell.
