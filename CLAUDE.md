@@ -5,6 +5,7 @@ MCP server that OCRs a Windows remote-desktop window; read-only unless started w
 ## Layout
 - `src/jharokha/core/`: pure logic. Imports neither `mcp` nor any Windows API; `tests/test_core.py` fails if it does. Models, panels and reading order, named-region layouts (`layout.py`), concise/detailed formatting, fuzzy find, untrusted-text wrapping, frame cache, the `Source` protocol, the change watcher.
 - `src/jharokha/win/`: Windows only, `ctypes` + pywinrt. `window.py` finds the client window, `capture.py` PrintWindows it, `ocr.py` runs Windows OCR, `verify.py` re-reads lines with RapidOCR, `source.py` wires them into a `Source`.
+- `src/jharokha/measure.py`: `jharokha measure`, writes named regions (and zoom variants) into `layouts.toml` from the live screen.
 - `src/jharokha/server.py`: the MCP tools over a `Source`. `__main__.py`: stdio server and the `jharokha` terminal commands.
 - `tests/`: `conftest.py` has a synthetic `FakeSource` with ground truth; `harness/fake_session.py` is a local window for end-to-end runs.
 - No `mac/` or `linux/`: a port is a sibling of `win/` reusing `core/`, added when someone builds it.

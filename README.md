@@ -96,6 +96,7 @@ Input is off by default. Start the server with `--allow-input` (add it to the `a
 
 - RDP sends no frames to a minimized window. Covered by other windows is fine; minimized is not.
 - Windows OCR gives no confidence score and confuses lookalikes (`0`/`O`, `1`/`l`/`I`). Words mixing digits and letters are flagged in `detailed` output; `find` folds them; `verify` gets a second opinion.
+- Keep the session window one size. Panels adapt to any size, but named regions and click points measured at one size and zoom are only right at that size; launch the client at a fixed window size rather than resizing it by hand.
 - Windows only. A port would live beside `src/jharokha/win/` and reuse `core/`.
 
 ## Licence

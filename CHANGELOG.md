@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.8.0
 
+- `jharokha measure APP --anchor TEXT [--names a,b,...] [--zoom=-5..2]` writes an app's named regions into the layouts file from what is on screen: full-height columns, and the widest column split into a top bar, body and bottom bars. With `--zoom` it steps the app's zoom (Ctrl+0, Ctrl+=, Ctrl+-), writes one `app@variant` per step and restores the zoom.
+- Reading order joins pieces of one line that OCR split apart (it does on monospaced terminal text) when the gap is under 1.5 line heights; wider gaps stay separate table cells.
+- Panels: every blank band is tried as a column split, widest first, not only the widest one.
 - `type` and `press` send nothing unless the session window is in the foreground, checked before every key: where Windows refused to bring the session forward, keys used to land in whatever local window had focus. They now fail with `not_foreground`. `focus_at` clicks a blank client point first, which activates the session where `SetForegroundWindow` is refused.
 - Shell commands for everything the server does: `read --region`, `screenshot`, and with `--allow-input`, `click`, `scroll`, `type` (`--stdin` for text that needs no extra quoting, `--enter`) and `press`. Input commands print the screen text afterwards, like the tools.
 
