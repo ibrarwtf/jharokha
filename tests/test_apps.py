@@ -46,6 +46,10 @@ def test_builtin_input_policies_keep_sends_behind_allow():
     cat = apps.catalog()
     teams = cat.apps["teams"].input_policy
     assert teams.newline == "shift+enter" and teams.irreversible("enter")
+    assert teams.irreversible("Ctrl+Return") and not teams.irreversible("shift+enter")
+    outlook = cat.apps["outlook"].input_policy
+    assert outlook.irreversible("ctrl+enter") and outlook.irreversible("Alt+S")
+    assert outlook.newline is None and not outlook.irreversible("enter")  # a line in a mail
     assert cat.apps["browser"].input_policy.irreversible("Return")
     assert cat.apps["terminal"].input_policy == apps.Policy()
     assert cat.knows("teams") and cat.knows("outlook.calendar") and not cat.knows("teams.mail")

@@ -16,11 +16,16 @@ from jharokha.core.screen import ScreenError
 SIZE = (640, 400)
 
 
-def render(items: list[tuple[str, int, int]], size: tuple[int, int] = SIZE) -> Frame:
-    img = Image.new("RGBA", size, "white")
+def render(
+    items: list[tuple[str, int, int]],
+    size: tuple[int, int] = SIZE,
+    bg: str | tuple[int, int, int] = "white",
+    ink: str | tuple[int, int, int] = "black",
+) -> Frame:
+    img = Image.new("RGBA", size, bg)
     d = ImageDraw.Draw(img)
     for text, x, y in items:
-        d.text((x, y), text, fill="black")
+        d.text((x, y), text, fill=ink)
     return Frame(size[0], size[1], img.tobytes("raw", "BGRA"), frame_id=1, ts=time.time())
 
 

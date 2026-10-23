@@ -101,35 +101,69 @@ def test_press_is_guarded_too(inp, monkeypatch):
     assert inp.sent == []
 
 
-def test_typing_stops_when_the_user_types_between_chunks(inp, monkeypatch):
-    from jharokha.core.guard import TYPE_CHUNK, TypingInterrupted, UserActive
+class FakeWatch:
+    """The hooks' verdict as the sender reads it: the user's first key comes once `after`
+    events have been sent; entered and left are recorded."""
+
+    def __init__(self, sent: list[object], after: int | None) -> None:
+        self.sent, self.after = sent, after
+        self.log: list[str] = []
+
+    def __call__(self) -> FakeWatch:
+        return self
+
+    def __enter__(self) -> FakeWatch:
+        self.log.append(f"enter at {len(self.sent)}")
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.log.append(f"exit at {len(self.sent)}")
+
+    def user_seen(self) -> float | None:
+        return 0.0 if self.after is not None and len(self.sent) >= self.after else None
+
+
+def test_typing_stops_at_the_users_first_key_and_the_watch_ends(inp, monkeypatch):
+    from jharokha.core.guard import TypingInterrupted
 
     monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
-    checks = []
+    watch = FakeWatch(inp.sent, after=2 * 5)  # a down and an up per character
+    text = "Get-ChildItem"
+    with pytest.raises(TypingInterrupted, match=f"after 5 of {len(text)} characters, 'Get-C'"):
+        inp.type_text(SESSION, text, watch=watch)
+    assert len(inp.sent) == 10
+    assert watch.log == ["enter at 0", "exit at 10"]  # removed on the way out
 
-    def between() -> None:
-        checks.append(len(inp.sent))
-        if len(checks) == 2:
-            raise UserActive(0.1, 3)
 
-    text = "a" * (3 * TYPE_CHUNK)
-    with pytest.raises(TypingInterrupted, match=f"after {2 * TYPE_CHUNK} of {len(text)}"):
-        inp.type_text(SESSION, text, between=between)
-    assert checks == [2 * TYPE_CHUNK, 4 * TYPE_CHUNK]  # a down and an up per character
-    assert len(inp.sent) == 4 * TYPE_CHUNK
+def test_typing_with_a_quiet_user_sends_everything_without_pauses(inp, monkeypatch):
+    monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
+    slept: list[float] = []
+    monkeypatch.setattr(inp.time, "sleep", slept.append)
+    watch = FakeWatch(inp.sent, after=None)
+    inp.type_text(SESSION, "a" * 40, watch=watch)
+    assert len(inp.sent) == 80 and sum(slept) == pytest.approx(0.4)  # 10 ms a key, no more
+    assert watch.log == ["enter at 0", "exit at 80"]
+
+
+def test_the_watch_starts_after_the_focus_click(inp, monkeypatch):
+    monkeypatch.setattr(inp, "user32", FakeUser32([OTHER, SESSION]))
+    watch = FakeWatch(inp.sent, after=None)
+    inp.type_text(SESSION, "ab", focus_at=(5, 5), watch=watch)
+    assert watch.log == ["enter at 2", "exit at 6"]  # the click is ours, not the user's
 
 
 def test_paste_checks_for_the_user_before_its_enter(inp, clip, monkeypatch):
     from jharokha.core.guard import UserActive
 
     monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
-
-    def busy() -> None:
-        raise UserActive(0.2, 3)
-
+    watch = FakeWatch(inp.sent, after=0)
     with pytest.raises(UserActive, match="the rest was not sent"):
-        inp.paste_text(SESSION, "Get-Date\n", between=busy)
+        inp.paste_text(SESSION, "Get-Date\n", watch=watch)
     assert len(inp.sent) == 4 and clip[-1] == "user's text"  # Ctrl+V, no Enter
+    assert watch.log == ["enter at 0", "exit at 4"]
+    inp.sent.clear()
+    inp.paste_text(SESSION, "no enter", watch=watch)  # nothing after the paste to stop
+    assert len(inp.sent) == 4 and watch.log[2:] == []
 
 
 def test_every_send_is_noted_as_our_own_input(monkeypatch):
