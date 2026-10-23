@@ -5,9 +5,15 @@ cannot see these: a Teams chat list and its thread are separated only by backgro
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
 
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.models import Box, Frame
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
 
 # Green between pixels two apart; two apart so a boundary the codec smeared over two pixels
 # still counts. Green alone carries most of the brightness and costs a third of mixing all

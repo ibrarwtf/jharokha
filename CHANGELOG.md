@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.23.0
+
+
+- Graders: what an answer must contain (`contains`, `regex`) may now be anywhere in the final reply, not only its `ANSWER:` line (a summing-up line that leaves out a reason the table above it gives is not wrong); `exact` and `none_of` still hold for the `ANSWER:` line. New `not_listed = [{name, as, unless}]`: a sentence or table row fails when it names something as what it is not (P07 as failed), but not when it names it as the one that recovered; it replaces `none_of = ['P0?7']` in `term_failed_profiles` and `action_saved`. `term_failed_profiles` takes "timed out" as well as "timeout".
+- `python -m evals.agents --regrade RESULTS.json [--out FILE]` grades the kept transcripts and simulator logs again with the current graders and `tasks.toml`, without calling claude, and prints the runs whose grade changed. Summaries now have per-group pass rates.
+- A run whose jharokha server is not connected when the agent starts is infra, never a fail: the runner stops it at once, plays it again once (as `<task>-<trial>-retry.*`, the first transcript kept), and a run still infra counts in no pass rate. Pass rates are over graded runs; tokens, cost and time over all.
+- Faster server start: numpy, onnxruntime and WinRT now load on the first read, not at start. onnxruntime still loads before WinRT (it crashes the process otherwise): `win/__init__.py`'s import became `win.before_winrt()`, which `Ocr()` calls first, and `core/lazy.py` stands in for numpy in `panes`, `elements`, `rows`, `learn` and `win/recognize` until first used. Most of what remains of start-up is importing the MCP SDK.
+- CI resource budget (`evals/budget.json`, profile `ci`) set from the windows-latest runs: the highest of the last five successful main runs plus 25% for memory, 50% for CPU time and 1 point for idle.
+
 ## v0.22.2
 
 - Fix: an app whose definition has no `[app.x.policy]` (every app `jharokha_learn` made, one written by hand, an anchored table of an old layouts file) had no input policy, so Enter in its reply box sent and a typed newline was Enter. Such an app now gets a conservative default, `apps.DEFAULT_POLICY`: `newline = "shift+enter"` and `irreversible_keys = ["enter", "ctrl+enter", "alt+s"]`, so typing never submits and those keys need `allow="irreversible"` (in `act`, and as a step's risk in actions). A declared policy is the app's own, also an empty one: `[app.x.policy]` with `irreversible_keys = []` opts out (the terminal's built-in empty table is that). The generic app (nothing identified) still has none, and `expect` still applies. `learn(step="propose")` writes the default into the definition, so the diff the user confirms at save shows `[app.<id>.policy]`; a known app's own policy is kept. `App.policy` is `None` when no table was written; `definition_toml` writes an empty declared table, so the built-ins still round-trip. `jharokha_apps` lists the policy of such apps.

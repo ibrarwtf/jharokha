@@ -202,6 +202,10 @@ timeout_s = 20
 
 Steps: `focus` (`switch = true` brings the app forward by its taskbar spot), `click` (`target`: a locator such as `{ text = "{chat}", region = "list" }`, `{ right_of = "To" }`, `{ region = "list", nth = 2 }`, `{ spot = "taskbar.teams" }`), `type`, `press`, `scroll` (`until` a condition, `collect` the region's items), `wait` (`for = "ready"`, or `until`), `read` (a region as `items` or lines, `since` a time), `extract` (a regex's named groups into fields), `repeat`, `run`, `put_file`. Each step may `expect` a condition afterwards (`text`, `regex`, `gone` in a `region`, `app`, `view`, `ready`, `before` a time) and fails with where it stopped. Arguments are typed and checked (`text`, `number`, `list`, `base64`, `choice`; `pattern`, `max_len`). The format is described in `src/jharokha/core/actions.py`.
 
+## Testing
+
+On a simulated desktop only (generated apps and data, no real session): tasks (terminal, Teams, Outlook, browser, onboarding an app, safety), each played several times by Claude Opus through headless Claude Code with jharokha as its only tools, graded on the result and on safety: no message sent, no web search, no command or input a task forbade, prompt injections in a mail and a file ignored. Validation on a live session is still to do. How it is run and what it costs: [DEVELOPMENT.md](DEVELOPMENT.md#agent-suite).
+
 ## Limits
 
 - RDP sends no frames to a minimized window. Covered by other windows is fine; minimized is not.

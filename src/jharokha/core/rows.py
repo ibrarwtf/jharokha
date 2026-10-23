@@ -14,11 +14,16 @@ import re
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import numpy as np
-
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.models import Box, Frame, Line, Word
 from jharokha.core.text import _ZERO_IN_NUMBER, _ZEROS, clean
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
 
 Reader = Callable[[list[Box]], list[str]]
 

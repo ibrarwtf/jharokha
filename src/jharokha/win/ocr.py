@@ -9,6 +9,7 @@ from concurrent.futures import Future
 from typing import Any
 
 from jharokha.core.models import Box, Frame, Line, Word, union
+from jharokha.win import before_winrt
 
 _MAX_DIM = 7500  # OcrEngine.max_image_dimension on current Windows
 
@@ -21,6 +22,7 @@ class Ocr:
     """Owns the engine and the thread with the event loop that pywinrt async calls need."""
 
     def __init__(self) -> None:
+        before_winrt()
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True, name="jharokha-ocr").start()
         self._engine = self._run(self._create()).result()
