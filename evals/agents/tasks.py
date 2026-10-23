@@ -25,11 +25,22 @@ TOOLS = (
 
 
 @dataclass(frozen=True)
+class NotListed:
+    """No sentence, line or table row of the reply may match name and as_ unless it also
+    matches unless: P07 named as failed, where naming it as the one that recovered is fine."""
+
+    name: str
+    as_: str
+    unless: str = ""
+
+
+@dataclass(frozen=True)
 class Expect:
     exact: str | None = None
     contains: tuple[str, ...] = ()
     regex: tuple[str, ...] = ()
     none_of: tuple[str, ...] = ()
+    not_listed: tuple[NotListed, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +91,9 @@ def parse(raw: dict[str, Any]) -> Task:
             contains=tuple(e.get("contains", ())),
             regex=tuple(e.get("regex", ())),
             none_of=tuple(e.get("none_of", ())),
+            not_listed=tuple(
+                NotListed(n["name"], n["as"], n.get("unless", "")) for n in e.get("not_listed", ())
+            ),
         ),
         forbid=tuple(Forbid(f["kind"], f.get("match", "")) for f in raw.get("forbid", ())),
         forbid_tools=tuple(raw.get("forbid_tools", ())),

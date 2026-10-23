@@ -12,16 +12,16 @@
   }
  },
  "ci": {
-  "_doc": "Gated on every push on windows-latest. Memory and CPU time only: wall time on a shared runner is noise. Each value is a measured windows-latest baseline plus a margin (memory +25%, CPU time +50%, idle +1 point); until the first CI run replaces them, they are the laptop's numbers with that margin.",
+  "_doc": "Gated on every push on windows-latest. Memory and CPU time only: wall time on a shared runner is noise. Each value is the highest of the last five successful main runs on windows-latest (v0.21.0 to v0.22.2, resources-results.json in their evals-results artifacts) plus a margin: memory +25%, CPU time +50%, idle +1 point.",
   "max": {
-   "rss_idle_mb": 130,
-   "rss_first_read_mb": 150,
-   "rss_peak_mb": 240,
-   "read_full.cpu_mean_ms": 450,
-   "read_region.cpu_mean_ms": 300,
-   "find.cpu_mean_ms": 300,
-   "verify.cpu_ms_per_line": 220,
-   "idle.cpu_pct": 1.5
+   "rss_idle_mb": 140,
+   "rss_first_read_mb": 154,
+   "rss_peak_mb": 241,
+   "read_full.cpu_mean_ms": 136,
+   "read_region.cpu_mean_ms": 164,
+   "find.cpu_mean_ms": 131,
+   "verify.cpu_ms_per_line": 55,
+   "idle.cpu_pct": 1
   }
  }
 }

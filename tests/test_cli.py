@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 
 import pytest
@@ -97,6 +98,43 @@ def test_learn_shows_the_change_saves_with_save_and_measure_is_its_alias(
     with pytest.raises(SystemExit, match="layout_mismatch"):
         run(monkeypatch, source, "--apps", str(path), "learn", "--app", "terminal", "--save")
     assert not any(t.startswith(("pressed", "hovered")) for t, _, _ in source.items)
+
+
+def test_the_server_starts_without_numpy_onnxruntime_or_winrt():
+    # They load on the first read; at start they cost about 0.25 s before tools/list.
+    # onnxruntime must still come before WinRT, so the OCR engine loads it first.
+    code = (
+        "import sys, jharokha.__main__, jharokha.server, jharokha.win.source\n"
+        "print(sorted(m for m in ('numpy', 'onnxruntime', 'winrt') if m in sys.modules))\n"
+        "from jharokha.core.panes import panes\n"
+        "print(type(sys.modules['jharokha.core.panes'].np).__name__)\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert out == ["[]", "LazyNumpy"]
+    from jharokha.core import panes as panes_module
+    from jharokha.core.models import Frame
+
+    panes_module.panes(Frame(4, 4, bytes(64), 1, 0.0))
+    assert type(panes_module.np).__name__ == "module"  # numpy itself after the first use
+
+
+@pytest.mark.windows
+def test_the_ocr_engine_loads_onnxruntime_before_winrt():
+    if sys.platform != "win32":
+        pytest.skip("Windows OCR")
+    code = (
+        "import sys\n"
+        "from jharokha.win.ocr import Ocr\n"
+        "assert 'onnxruntime' not in sys.modules\n"
+        "Ocr()\n"
+        "names = list(sys.modules)\n"
+        "first_winrt = min(i for i, n in enumerate(names) if n.startswith('winrt'))\n"
+        "print(names.index('onnxruntime') < first_winrt)\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.stdout.strip() == "True", out.stderr
 
 
 def test_screenshot_writes_a_png(monkeypatch, source, tmp_path, capsys):

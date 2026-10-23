@@ -124,12 +124,13 @@ def play(
     timeout_s: float = 600,
     effort: str | None = None,
     skill: Skill = "",
+    suffix: str = "",
 ) -> dict[str, Any]:
-    """One run of task; returns its row, with the transcript and simulator log kept in keep.
-    The simulator's apps.toml, which learn saves into, lives and dies in the run's
-    temporary folder."""
+    """One run of task; returns its row, with the transcript and simulator log kept in keep
+    as <task>-<trial><suffix>.*. The simulator's apps.toml, which learn saves into, lives
+    and dies in the run's temporary folder."""
     keep.mkdir(parents=True, exist_ok=True)
-    stem = f"{task.name}-{trial}"
+    stem = f"{task.name}-{trial}{suffix}"
     with tempfile.TemporaryDirectory(prefix="jharokha-agent-") as tmp:
         work = Path(tmp) / "work"
         work.mkdir()
@@ -163,6 +164,12 @@ def play(
                     if reader.t.tool_turns > task.max_turns and not stopped:
                         stopped = "max_turns"
                         _kill(proc)
+                    status = reader.t.mcp_status
+                    if status and status != "connected" and not stopped:
+                        # Claude Code gave up waiting for the server and would go on
+                        # without tools (one such run hung to the timeout): infra, stop now.
+                        stopped = f"server {status}"
+                        _kill(proc)
                 proc.wait()
             finally:
                 timer.cancel()
@@ -174,7 +181,7 @@ def play(
         sim = json.loads(log.read_text(encoding="utf-8")) if log.exists() else None
         if sim is not None:
             (keep / f"{stem}.sim.json").write_text(json.dumps(sim, indent=1), encoding="utf-8")
-    return row(task, trial, t, sim, stopped, wall)
+    return row(task, trial, t, sim, stopped, wall) | {"stem": stem}
 
 
 def row(

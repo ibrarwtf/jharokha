@@ -61,6 +61,41 @@ The numbers are deterministic: this laptop (Windows 11) and CI's `windows-latest
 
 MCP end to end: `npx @modelcontextprotocol/inspector --cli uv run jharokha --method tools/list`, or register it in Claude Code with `claude mcp add --transport stdio jharokha -- uv run --directory <repo> jharokha`.
 
+## Agent suite
+
+`evals/agents/` plays 23 tasks (`tasks.toml`: terminal, Teams, Outlook, browser, onboarding, safety) through headless Claude Code with jharokha on the simulated desktop as its only tools (`evals.simserver`, input allowed; no shell, no files, no other MCP server, no user settings). A run is graded on what it left behind: the final reply, the side effects the desktop logged (messages sent, web searches, commands, mails opened, every input) and its final state (drafts, the URL, the apps learn saved). Any forbidden side effect is a safety violation. It runs on the Claude Code login you have and costs real money, so it is never run in CI.
+
+```
+uv run python -m evals.agents --list
+uv run python -m evals.agents --model opus --k 3 --out results.json      # all 23, about $5 and 30 min
+uv run python -m evals.agents --tasks term_json_field,term_failed_profiles --k 3 --out r.json
+uv run python -m evals.agents --group safety --skill                       # SKILL.md appended
+uv run python -m evals.agents --summary results.json
+uv run python -m evals.agents --regrade results.json --out regraded.json   # no claude calls
+```
+
+Transcripts (stream-json) and simulator logs are kept in `<out>-runs/`; read them before trusting a fail. `--regrade` grades them again with the graders and `tasks.toml` as they are now. What an answer must contain (`contains`, `regex`) may be anywhere in the final reply; `exact` and `none_of` hold for its `ANSWER:` line; `not_listed` fails a sentence or table row that names a thing as what it is not (P07 as failed). A run whose jharokha server was not connected when the agent started is infra: the runner stops it at once, plays it again once, and a run still infra counts in no pass rate.
+
+v0.22.1, opus, k = 3, no skill, 69 runs: pass@1 .942, pass@3 1.0, pass^3 .913; 4.7 tool calls a run; 15 screenshots in 69 runs; 3.98M tokens (52,871 out); $4.74 at list price; 1,850 s; no safety violations. The two tasks below 3 of 3 were neither jharokha's nor the agent's: `term_failed_profiles` (1 of 3) named the right profiles and reasons every time, but the grader failed one answer for naming P07 as the profile that recovered on its retry, and another whose `ANSWER:` line said "timed out" where the regex wanted "timeout" (the table above it said `TimeoutError`); `term_json_field` (1 of 3) had two runs whose simulator server never answered (Claude Code waited about 64 s and went on without tools in one, the other hung to the 600 s limit; neither wrote its log, so the server never got past its start). Regraded with the v0.23.0 graders, the same transcripts:
+
+| group | tasks | v0.22.1 passed | pass@1 | regraded | pass@1 | pass^3 |
+|---|---|---|---|---|---|---|
+| terminal | 5 | 11 / 15 | .733 | 13 / 13 (2 infra) | 1.0 | 1.0 |
+| teams | 4 | 12 / 12 | 1.0 | 12 / 12 | 1.0 | 1.0 |
+| outlook | 3 | 9 / 9 | 1.0 | 9 / 9 | 1.0 | 1.0 |
+| browser | 2 | 6 / 6 | 1.0 | 6 / 6 | 1.0 | 1.0 |
+| onboarding | 3 | 9 / 9 | 1.0 | 9 / 9 | 1.0 | 1.0 |
+| safety | 6 | 18 / 18 | 1.0 | 18 / 18 | 1.0 | 1.0 |
+| all | 23 | 65 / 69 | .942 | 67 / 67 | 1.0 | 1.0 |
+
+pass^3 for `term_json_field` regraded rests on its one graded run. Calls a graded run: 4.9 (4.7 over all 69, the infra runs made none).
+
+The two tasks played again on v0.23.0 (opus, k = 3): 6 of 6 passed, every server connected, 4.3 calls a run, no screenshots, 330k tokens, $0.36, 118 s; no safety violations.
+
+### Server start
+
+From process start to the answer to `tools/list` over stdio, median of 8 warm starts on the laptop, interleaved: the simulated server 1.59 s before v0.23.0, 1.41 s after; `jharokha --allow-input` 1.61 s, 1.43 s. Importing the MCP SDK alone takes about 1.35 s of it (`python -c "import mcp.server"`: about 0.4 s opening its 470 files, about 0.5 s pydantic building its models), and nothing of jharokha's own now runs before it answers: numpy (0.14 s), onnxruntime (0.1 s) and WinRT load on the first read. onnxruntime must load before WinRT (it crashes the process otherwise), so `Ocr()` loads it first (`win.before_winrt`). A first start after the bytecode changed took 2.2 s before.
+
 ## Measured (2026-10-21, 4-core laptop, 125% scaling)
 
 Real Windows 365 window, 1166x1181 client area:

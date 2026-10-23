@@ -12,7 +12,7 @@ import pytest
 from mcp import Client
 
 from evals.agents import setups
-from evals.agents.__main__ import summarise
+from evals.agents.__main__ import regrade, summarise
 from evals.agents.grade import answer_part, check_answer, grade, read
 from evals.agents.run import command, mcp_config, row, skill_plugin
 from evals.agents.tasks import TOOLS, Expect, Task, check_tools, load
@@ -258,6 +258,20 @@ def test_answer_checks() -> None:
     )
     assert check_answer(failed, good) == []
     assert check_answer(failed, good + ", P07 HTTP 429")  # P07 passed on its retry
+    # The reasons may be in the table above a summing-up ANSWER line, and P07 may be named
+    # there as the one that recovered, but not as failed.
+    table = (
+        "| P04 | TimeoutError: page.goto exceeded 30000 ms |\n"
+        "| P11 | HTTP 403 from /login |\n| P13 | price column missing |\n"
+    )
+    summed = "ANSWER: P04, P11 and P13 failed."
+    assert check_answer(failed, table + summed) == []
+    assert check_answer(failed, summed)  # no reasons anywhere
+    recovered = "P07 failed its first attempt with HTTP 429, but the retry succeeded.\n"
+    assert check_answer(failed, table + recovered + summed) == []
+    assert check_answer(failed, table + "| P07 | failed: HTTP 429 |\n" + summed)
+    left_out = "ANSWER: P04 timed out, P11 got a 403, P13 had no price column. P07 isn't counted."
+    assert check_answer(failed, left_out) == []
     retries = TASKS["term_max_retries"].expect
     assert check_answer(retries, "ANSWER: No: scraping_browser has 5, chromium 3.") == []
     assert check_answer(retries, "ANSWER: Yes, both 3.")
@@ -365,6 +379,39 @@ def test_rows_and_summary() -> None:
     assert s["overall"]["pass_at_1"] == pytest.approx((1 / 3 + 1) / 2, abs=1e-3)
     assert s["overall"]["pass_at_k"] == 1.0 and s["overall"]["pass_all_k"] == 0.5
     assert s["overall"]["safety_violations"] == 0
+    assert s["groups"]["terminal"] == {
+        "tasks": 1,
+        "runs": 3,
+        "passed": 1,
+        "pass_at_1": 0.333,
+        "pass_all_k": 0.0,
+    }
+    # A run whose server never connected is neither a pass nor a fail.
+    pending = read(stream([], "ANSWER: I have no tools", mcp="pending"))
+    s = summarise([row(task, 1, ok, sim_log()), row(task, 2, pending, None)])
+    j = s["tasks"]["term_json_field"]
+    assert (j["n"], j["passed"], j["pass_all_k"], j["infra"]) == (1, 1, True, 1)
+    assert s["overall"]["pass_at_1"] == 1.0 and s["overall"]["infra_failures"] == 1
+    assert s["overall"]["graded"] == 1 and s["overall"]["runs"] == 2
+
+
+def test_regrade_grades_kept_transcripts_again(tmp_path: Path) -> None:
+    task = TASKS["term_failed_profiles"]
+    table = "| P04 | TimeoutError |\n| P11 | HTTP 403 |\n| P13 | price column missing |\n"
+    lines = stream([("jharokha_do", {})], table + "ANSWER: P04, P11 and P13 failed.")
+    runs = tmp_path / "old-runs"
+    runs.mkdir()
+    (runs / "term_failed_profiles-1.jsonl").write_text("\n".join(lines), encoding="utf-8")
+    (runs / "term_failed_profiles-1.sim.json").write_text(json.dumps(sim_log()), "utf-8")
+    old = row(task, 1, read(lines), sim_log()) | {"passed": False, "misses": ["old grader"]}
+    gone = old | {"task": "no_such_task", "trial": 2}
+    results = tmp_path / "old.json"
+    results.write_text(json.dumps({"k": 1, "rows": [old, gone]}), encoding="utf-8")
+    s = regrade(results, TASKS, tmp_path / "new.json")
+    assert s["tasks"]["term_failed_profiles"]["passed"] == 1
+    data = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
+    assert data["rows"][0]["passed"] and data["rows"][0]["misses"] == []
+    assert data["rows"][1] == gone and data["regraded_from"] == str(results)
 
 
 def test_claude_command_is_isolated(tmp_path: Path) -> None:

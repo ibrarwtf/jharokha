@@ -7,12 +7,17 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from PIL import Image
 
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.models import Box, Frame
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
 
 MODEL = Path(__file__).parent / "models" / "PP-OCRv6_rec_small.onnx"
 _HEIGHT, _MIN_RATIO = 48, 320 / 48  # the model's input height and narrowest width

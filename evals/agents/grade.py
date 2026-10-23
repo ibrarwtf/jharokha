@@ -161,8 +161,22 @@ def fold(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+_SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+
+
+def sentences(text: str) -> list[str]:
+    """The reply's lines (a table row, a list item) cut at the end of each sentence."""
+    return [s for line in text.splitlines() for s in _SENTENCE_END.split(line) if s.strip()]
+
+
 def check_answer(expect: Expect, final: str) -> list[str]:
-    """What the answer misses, empty when it passes."""
+    """What the answer misses, empty when it passes. What it must say (contains, regex) may
+    be anywhere in the final reply: the user reads all of it, and a summing-up ANSWER line
+    that leaves out a reason the table above it gives is not a wrong answer. exact and
+    none_of hold for the ANSWER line, the answer as given; context above it may mention a
+    near miss. not_listed: a sentence of the ANSWER line that names it lists it, and one
+    elsewhere in the reply does when it also says `as`; either is fine when it says
+    `unless` (P07 named as the profile that recovered on its retry)."""
     ans = answer_part(final)
     misses = []
     if expect.exact is not None:
@@ -170,14 +184,21 @@ def check_answer(expect: Expect, final: str) -> list[str]:
         if got != fold(expect.exact):
             misses.append(f"exact: want {expect.exact!r}, got {ans[:80]!r}")
     for c in expect.contains:
-        if fold(c) not in fold(ans):
+        if fold(c) not in fold(final):
             misses.append(f"missing {c!r}")
     for rx in expect.regex:
-        if not re.search(rx, ans):
+        if not re.search(rx, final):
             misses.append(f"no match for /{rx}/")
     for rx in expect.none_of:
         if re.search(rx, ans):
             misses.append(f"should not match /{rx}/")
+    given = sentences(ans) if ans != final.strip() else []
+    for n in expect.not_listed:
+        named = [s for s in given if re.search(n.name, s)]
+        named += [s for s in sentences(final) if re.search(n.name, s) and re.search(n.as_, s)]
+        listed = [s for s in named if not (n.unless and re.search(n.unless, s))]
+        if listed:
+            misses.append(f"/{n.name}/ listed as /{n.as_}/: {listed[0].strip()[:80]!r}")
     return misses
 
 
@@ -246,10 +267,13 @@ class Grade:
     infra: str = ""  # the run could not be graded fairly (server down, no log)
 
 
+NOT_CONNECTED = "jharokha server "  # infra's start when the agent began without its tools
+
+
 def grade(task: Task, t: Transcript, log: dict[str, Any] | None) -> Grade:
     infra = ""
     if t.mcp_status and t.mcp_status != "connected":
-        infra = f"jharokha server {t.mcp_status}"
+        infra = f"{NOT_CONNECTED}{t.mcp_status}"
     elif log is None:
         infra = "no simulator log"
     answer = check_answer(task.expect, t.final) if t.final else ["no final answer"]

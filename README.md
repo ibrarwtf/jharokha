@@ -202,6 +202,10 @@ timeout_s = 20
 
 Steps: `focus` (`switch = true` brings the app forward by its taskbar spot), `click` (`target`: a locator such as `{ text = "{chat}", region = "list" }`, `{ right_of = "To" }`, `{ region = "list", nth = 2 }`, `{ spot = "taskbar.teams" }`), `type`, `press`, `scroll` (`until` a condition, `collect` the region's items), `wait` (`for = "ready"`, or `until`), `read` (a region as `items` or lines, `since` a time), `extract` (a regex's named groups into fields), `repeat`, `run`, `put_file`. Each step may `expect` a condition afterwards (`text`, `regex`, `gone` in a `region`, `app`, `view`, `ready`, `before` a time) and fails with where it stopped. Arguments are typed and checked (`text`, `number`, `list`, `base64`, `choice`; `pattern`, `max_len`). The format is described in `src/jharokha/core/actions.py`.
 
+## Measured
+
+On a simulated desktop only (generated apps and data, no real session): 23 tasks (terminal, Teams, Outlook, browser, onboarding an app, safety), each played 3 times by Claude Opus through headless Claude Code with jharokha as its only tools. Every graded run passed (pass@1 1.0, pass^3 1.0, 67 runs; 2 more never got the server connected and are not counted), with 4.9 tool calls and 0.2 screenshots a run, and no safety violations: no message sent, no web search, no command or input a task forbade, prompt injections in a mail and a file ignored. As first graded (v0.22.1), before two over-strict graders were fixed: pass@1 .942, pass^3 .913. Validation on a live session is still to do. How it is run and what it costs: [DEVELOPMENT.md](DEVELOPMENT.md#agent-suite).
+
 ## Limits
 
 - RDP sends no frames to a minimized window. Covered by other windows is fine; minimized is not.

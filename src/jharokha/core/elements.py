@@ -6,9 +6,15 @@ sits ("the icon left of 'Type a message'")."""
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
 
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.models import Box, Frame, Line, Word, union
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
 
 # Largest channel difference from the pane's background that is still background: the
 # codec leaves a flat area within a few levels, and panes inside a pane (an address box at

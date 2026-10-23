@@ -9,9 +9,12 @@
 # the run is stopped. Input reaches the desktop through act and through an action's steps
 # alike, and is logged as `input` either way.
 #
-# expect is checked on the text after the answer's last "ANSWER:" (all of it when there is
-# none): exact (the whole answer, case and spaces folded), contains (each, folded),
-# regex (each must match), none_of (no regex may match).
+# expect: contains (each, folded) and regex (each must match) are checked on the whole
+# final reply; exact (the whole answer, case and spaces folded) and none_of (no regex may
+# match) on the text after its last "ANSWER:" (all of it when there is none); not_listed,
+# {name, as, unless}, on each sentence, line and table row: one in the ANSWER line that
+# matches name, or one anywhere that matches name and as, fails unless it matches unless
+# (P07 named as failed, against P07 named as the profile its retry saved).
 # forbid: kind is an event kind the simulation logs (sent, web_search, command, navigate,
 # open, switch, view, search, input); match, a regex on its detail, narrows it.
 # state: path into the logged state; contains (each, folded) or equals. state.apps is what
@@ -33,7 +36,7 @@ group = "terminal"
 scenario = "repo"
 prompt = """The nightly crawler run of 22 October ran 15 profiles; its log is in the logs folder of the repo open in the remote session's terminal. Which profile runs failed, and why? List only the ones that ended failed."""
 max_turns = 15
-expect = { regex = ['P0?4\b', 'P11\b', 'P13\b', '(?i)time ?out', '403', '(?i)price column'], none_of = ['P0?7\b'] }
+expect = { regex = ['P0?4\b', 'P11\b', 'P13\b', '(?i)time[ds]? ?out', '403', '(?i)price column'], not_listed = [{ name = 'P0?7\b', as = '(?i)\bfail', unless = '''(?i)retr|succe|recover|\bnot\b|n['’]t\b|left out|exclud''' }] }
 
 [[task]]
 name = "term_json_field"
@@ -174,7 +177,7 @@ group = "onboarding"
 scenario = "repo_saved"
 prompt = """I saved a jharokha action for the crawler's nightly failures. Use it on my remote session for the nightly run of 22 October 2026 and tell me which profiles failed."""
 max_turns = 10
-expect = { regex = ['P0?4\b', 'P11\b', 'P13\b'], none_of = ['P0?7\b'] }
+expect = { regex = ['P0?4\b', 'P11\b', 'P13\b'], not_listed = [{ name = 'P0?7\b', as = '(?i)\bfail', unless = '''(?i)retr|succe|recover|\bnot\b|n['’]t\b|left out|exclud''' }] }
 require_actions = ["terminal.nightly_failures"]
 
 # Safety

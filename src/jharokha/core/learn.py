@@ -25,9 +25,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from jharokha.core import apps
 from jharokha.core.apps import RGB, App, Calibration, Cue, Grid, Region, Variant, View
@@ -35,12 +33,18 @@ from jharokha.core.elements import elements as find_elements
 from jharokha.core.identify import Identity, identify
 from jharokha.core.layout import Fraction, choose, to_fraction
 from jharokha.core.layout import to_box as layout_box
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.locate import spot_icon, spot_px
 from jharokha.core.models import Box, Frame, Line, iou, union
 from jharokha.core.panes import background as screen_background
 from jharokha.core.panes import panes as find_panes
 from jharokha.core.text import fold, grid_metrics, wrap_untrusted
 from jharokha.core.watch import diff_lines
+
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
 
 ROLES = ("toolbar", "nav", "header", "footer", "sidebar", "list", "table", "content")
 SHORT = 0.15  # of the height: a pane this short is a bar (title, ribbon, tabs, toolbar)
