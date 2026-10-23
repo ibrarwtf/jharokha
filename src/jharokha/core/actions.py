@@ -46,10 +46,12 @@ typed text.
 The guard is core.guard's, as for the input tools, with the same codes: before every input
 step the app in front must be the action's (wrong_app), a key its policy calls irreversible
 makes its step irreversible (and a typed newline is the policy's newline, Shift+Enter in
-Teams), a step riskier than the action's max_risk or the call's allow is refused before
-any input (irreversible), and the Source refuses input while another agent holds the
-window (input_leased) or someone uses this computer (user_active). Typed text never
-carries a raw newline, so Enter is only ever a declared key."""
+Teams), a run step whose command only reads (core.readonly) is reversible at most, whatever
+it declares, and the result's risk says which and why; a step riskier than the action's
+max_risk or the call's allow is refused before any input (irreversible), and the Source
+refuses input while another agent holds the window (input_leased) or someone uses this
+computer (user_active). Typed text never carries a raw newline, so Enter is only ever a
+declared key."""
 
 from __future__ import annotations
 
@@ -65,7 +67,7 @@ from functools import cache
 from importlib import resources
 from typing import Any, Literal, Protocol
 
-from jharokha.core import guard, listread, readers
+from jharokha.core import guard, listread, readers, readonly
 from jharokha.core import shell as sh
 from jharokha.core.apps import GENERIC
 from jharokha.core.guard import Policy
@@ -429,11 +431,14 @@ class Result:
     safety: list[dict[str, str]] = field(default_factory=list)  # kind, step, detail
     plan: list[dict[str, Any]] | None = None
     dry_run: bool = False
+    risk: str | None = None  # a command's risk and why: `reversible (read-only: ...)`
 
     def to_dict(self, brief: bool = False) -> dict[str, Any]:
         """brief leaves out steps_done when the action succeeded: what it found is the
         answer, and how it got there costs a few dozen tokens a step."""
         out: dict[str, Any] = {"action": self.action, "ok": self.ok}
+        if self.risk:
+            out["risk"] = self.risk
         for k in ("fields", "items", "lines", "output", "exit_code", "failed", "safety", "plan"):
             v = getattr(self, k)
             if v not in (None, {}, []):
@@ -551,6 +556,8 @@ class Runner:
         cap = min(action.max_risk, self.allow, key=RISKS.index)
         policy = self.policies.get(action.app, Policy())
         for label, s, risk, why in _risks(action, action.steps, env, "", policy):
+            if s.kind == "run":
+                res.risk = f"{risk} ({why.removeprefix(', ')})"
             if RISKS.index(risk) > RISKS.index(cap):
                 detail = (
                     f"step {label} ({s.kind}{why}) is {risk}, above what {action.id} may do "
@@ -601,11 +608,13 @@ class Runner:
             label = f"{prefix}{i + 1}" + (f" {s.label}" if s.label else "")
             self._at = f"{label}:{s.kind}"
             t0 = self.ex.now()
-            note = getattr(self, f"_{s.kind}")(s, fill(s.params, env), env, f"{prefix}{i + 1}.")
+            p = fill(s.params, env)
+            note = getattr(self, f"_{s.kind}")(s, p, env, f"{prefix}{i + 1}.")
             if s.expect:
                 self._until(fill(s.expect, env), s.timeout_s, "expected")
             ms = int((self.ex.now() - t0) * 1000)
-            self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, s.risk, ms, note or ""))
+            risk = _command(s, p)[0] if s.kind == "run" else s.risk
+            self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, risk, ms, note or ""))
 
     def _focus(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         app, view = p.get("app", self.action.app), p.get("view")
@@ -1130,10 +1139,23 @@ def _newline(s: Step, action: Action, policy: Policy) -> str:
     return s.params.get("newline") or action.newline or policy.newline or "forbid"
 
 
+def _command(s: Step, p: Mapping[str, Any]) -> tuple[Risk, str]:
+    """A run step's risk by its command: one that only reads (core.readonly) is at most
+    reversible, whatever the step declares; any other keeps what the step declares
+    (irreversible for terminal.run). With why, either way."""
+    v = readonly.classify(str(p.get("command", "")), str(p.get("shell", "powershell")))
+    if v.read_only:
+        return ("reversible" if s.risk == "irreversible" else s.risk), v.describe()
+    return s.risk, v.describe()
+
+
 def _effective(s: Step, p: dict[str, Any], action: Action, policy: Policy) -> tuple[Risk, str]:
     """A step's risk with what its filled values and the app's policy show, and why when
     that is above what was declared: a key the policy calls irreversible (Enter in Teams),
-    or typed text with a newline that is Enter."""
+    or typed text with a newline that is Enter; for a command, whether it only reads."""
+    if s.kind == "run":
+        risk, why = _command(s, p)
+        return risk, f", {why}"
     if s.kind == "press" and policy.irreversible(str(p.get("keys", ""))):
         return "irreversible", f", {p['keys']} is irreversible in {action.app}"
     if s.kind == "type":
@@ -1175,7 +1197,8 @@ def _plan(
         p.pop("step", None)
         if s.kind == "put_file":
             p["content_base64"] = f"<{len(str(p.get('content_base64', '')))} characters>"
-        row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind, "risk": s.risk}
+        risk = _command(s, p)[0] if s.kind == "run" else s.risk
+        row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind, "risk": risk}
         row |= {k: v for k, v in p.items()}
         if s.expect:
             try:
