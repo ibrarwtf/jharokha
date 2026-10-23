@@ -12,7 +12,7 @@ uv run pytest            # includes tests on the real Windows OCR engine and the
 `tests/harness/fake_session.py` opens a local window showing one of the generated eval screens. The allowlist of client processes is `msrdc.exe`, `mstsc.exe`, `windowsapp.exe`, `windows365.exe`; override it with `JHAROKHA_PROCESSES` (comma-separated) to accept the fake window:
 
 ```
-uv run python tests/harness/fake_session.py terminal     # also: teams, outlook, browser, ids, lock; optional seed
+uv run python tests/harness/fake_session.py terminal     # also: teams, outlook, calendar, browser, ids, lock; optional seed
 $env:JHAROKHA_PROCESSES = "python.exe,pythonw.exe"
 uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
@@ -28,9 +28,9 @@ uv run python -m evals --quick --update   # accept the current numbers as the ba
 uv run python -m evals --show terminal    # truth against what was read, line by line
 ```
 
-`evals/screens.py` generates screens shaped like the work jharokha does: a PowerShell terminal in Windows Terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox, an Edge-like browser (address bar, favourites, a request queue page), five lock and sign-in screens, lookalike-heavy IDs. The app screens carry the pane backgrounds, divider lines and session taskbar measured on a live session at 125% (Teams: rail divider x=88, header dividers y=62 and 142, chat list 245 against thread 255; new Outlook: rail divider x=61, list and reading pane split at x=500, ribbon y=103 to 154; Edge: address box y=49 to 94, favourites at y≈142, page from y=191; Windows Terminal: tab bar divider y=38, scrollbar x=1156 to 1160 on (12,12,12); taskbar y=1121 to 1181), and each records its true pane boxes. The terminal is Cascadia Mono, Windows Terminal's font, rows 1.15 font heights apart (23 px at 20 px, as live); the font is vendored in `evals/fonts/` (SIL OFL, licence beside it) and loaded for the eval process only (`AddFontResourceExW` with `FR_PRIVATE`). Names, IDs, URLs and log lines come from fixed lists and a seeded generator; nothing comes from a real session, and none ever should. Seeds under 100 are for tuning, the eval scores seeds from 100. `evals/render.py` draws them with GDI and ClearType as real apps do, then through JPEG with 4:2:0 chroma, standing in for the RDP codec; `--full` adds clean GDI and PIL.
+`evals/screens.py` generates screens shaped like the work jharokha does: a PowerShell terminal in Windows Terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox and work-week calendar, an Edge-like browser (address bar, favourites, a request queue page), five lock and sign-in screens, lookalike-heavy IDs. Each draws the generic UI text the built-in app definitions recognise it by ("Search (Ctrl+E)", "Type a message", "Inbox", "New event", "Other favourites", a PowerShell prompt) and records the app and view it shows. The app screens carry the pane backgrounds, divider lines and session taskbar measured on a live session at 125% (Teams: rail divider x=88, header dividers y=62 and 142, chat list 245 against thread 255; new Outlook: rail divider x=61, list and reading pane split at x=500, ribbon y=103 to 154; Edge: address box y=49 to 94, favourites at y≈142, page from y=191; Windows Terminal: tab bar divider y=38, scrollbar x=1156 to 1160 on (12,12,12); taskbar y=1121 to 1181), and each records its true pane boxes. The terminal is Cascadia Mono, Windows Terminal's font, rows 1.15 font heights apart (23 px at 20 px, as live); the font is vendored in `evals/fonts/` (SIL OFL, licence beside it) and loaded for the eval process only (`AddFontResourceExW` with `FR_PRIVATE`). Names, IDs, URLs and log lines come from fixed lists and a seeded generator; nothing comes from a real session, and none ever should. Seeds under 100 are for tuning, the eval scores seeds from 100. `evals/render.py` draws them with GDI and ClearType as real apps do, then through JPEG with 4:2:0 chroma, standing in for the RDP codec; `--full` adds clean GDI and PIL.
 
-Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, whether the layouts anchor picks the right app, and panes: for each true pane the best IoU of a pane found from the pixels (mean, and the share at 0.8 or more). The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
+Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, whether the built-in definitions identify the right app (`app_ok`) and view (`identify_ok`; none on a lock screen, generic on the IDs screen) and with what confidence (`identify_conf`), with a confusion table of misses, and panes: for each true pane the best IoU of a pane found from the pixels (mean, and the share at 0.8 or more). The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
 
 The numbers are deterministic: this laptop (Windows 11) and CI's `windows-latest` runner gave identical summaries for both sets. If they ever drift, run the workflow by hand (`gh workflow run ci.yml`): it regenerates both baselines on the runner and uploads them as an artifact.
 
@@ -155,6 +155,31 @@ Text gaps inside a pane only cut the browser's table into columns, so reading go
 
 The terminal is now the measured one, Cascadia Mono at 20 px, and Windows OCR fails on it as it did live: `PS C:\work\pricing>` reads `PS C:`, timestamps drop, and the grid then misplaces what is left (quick CER .51, from .21 on the old 16 px Consolas screen). Reading its rows with the second engine is the next step.
 
+### App model and identification (v0.16.0)
+
+Definitions are TOML in `src/jharokha/apps/` (built in) and `apps.toml` (local), parsed and merged by `core/apps.py`; `core/identify.py` scores them. Choices:
+
+- A region is the pane (from `core/panes.py`) under a point, optionally widened to the pane under a second point, with a box of fractions as fallback and check. Considered and not taken: choosing panes by order or role ("the second column"), which breaks when a dialog or an extra bar adds a pane; and divider positions, which change with zoom. A point keeps working while the pane around it moves and resizes. The check: a pane overlapping the box by less than 0.6 IoU is a different arrangement (a dialog over everything gives 0.52 against the Teams thread's box), so the box is used. Edge's tab strip runs into its toolbar and is placed by its box this way.
+- Score: the weighted share of an app's and a view's cues present, text 1 where it belongs (`near` 0.1 of an `at` position) and 0.3 elsewhere, so a URL printed in a terminal does not make it a browser. Pane cues weigh 0.5: a terminal's body and a browser's page are both a full-width pane under a strip. Text matches exactly (folded as `find` folds: case, lookalikes, punctuation spacing), not fuzzily: a fuzzy "Chat" would match too much.
+- Confidence: the best score, times `min(1, 0.5 + best - runner_up)`. Below 0.5 the screen is generic, with confidence 1 - best.
+- Calibration comes before panes and boxes, and replaces the definition's `at` for its anchor: the user's measured anchor position is better evidence than a generic one.
+
+Identify axis, built-in definitions only, no calibration (`--full`: 3 seeds, 3 sizes, 3 renderers):
+
+| kind | right | mean confidence |
+|---|---|---|
+| terminal | 27 / 27 | .93 (.57 at 24 px through the codec, where the prompt and tab title are partly lost) |
+| teams | 27 / 27 | .92 (.55 at 12 px in PIL: "Search (Ctrl+E)" misread) |
+| outlook mail | 27 / 27 | .97 |
+| outlook calendar | 27 / 27 | 1.0 |
+| browser | 27 / 27 | 1.0 |
+| ids (generic) | 27 / 27 | .89 |
+| lock (none) | 15 / 15 | |
+
+Median 4.8 ms a frame to identify, beside 10.8 ms for panes and 119 ms of OCR. On the fake windows end to end (`fake_session.py`, real capture and OCR): teams chat 1.0 with every region placed on its pane but compose (box); outlook calendar 1.0, `outlook.week` spanning the grid from the hours column to the last cell (`to`); browser page 1.0 with the URL reported; terminal shell 1.0 with the grid applied; ids generic .89.
+
+Not measured on the live session: the definitions' positions come from the recon at 1166x1181 and 125%, and identification was not run against it for this release.
+
 ### Panels (v0.6.0)
 
 Live session, one OCR frame each, panels found: with the first rule (columns wherever a 3-line-height gap runs the full height) 19, mostly toolbar buttons and labels split into columns; requiring a region to be at least 3 lines tall before it can split into columns, 13; merging stacked blocks of the same width, 5 where pairwise merging gave 9 on the same frames (the body was 5 full-width slices). Eval CER and lines exact unchanged on all synthetic screens. `jharokha_layout` 360 ms, a panel read ~210 ms on the fake windows.
@@ -175,6 +200,8 @@ Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`
 
 - Terminal rows through the second engine (strips at the grid's pitch, words placed by its character width), where Windows OCR drops text on Cascadia Mono.
 - Edge's tab strip, which runs into the toolbar through the selected tab.
+- Identification on the live session, and calibration of Outlook and the browser there.
+- Readers for `list`, `table` and `form` regions (named in definitions, read as text until then); the grid reader taking calibrated pitch from second-engine rows.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 
 ## Release

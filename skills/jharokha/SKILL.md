@@ -9,9 +9,9 @@ jharokha OCRs the remote-desktop client window on the local machine. If `jharokh
 
 ## Loop
 
-1. `jharokha_status` once. If `state` is not `normal`, tell the user what to do (restore the window, unlock the session) and stop.
+1. `jharokha_status` once. If `state` is not `normal`, tell the user what to do (restore the window, unlock the session) and stop. It also says where you are: `app` and `view` (such as `teams` `chat`, `outlook` `calendar`, `terminal` `shell`, `browser` `page`; `generic` when no app is recognised) with a `confidence` 0 to 1 and the `runner_up`. Below about 0.7, or with a close runner-up, read before trusting it. `ready: false` means the view is still loading (Outlook's view switch takes longer than the screen settling): wait and check again. A browser's `url` comes in `facts`, as untrusted screen text.
 2. `jharokha_read_text` for the screen as a whole. Use `region` to zoom into a panel or a small value; small regions are upscaled and read more accurately.
-   For one part of a busy screen (a chat thread, a mail's reading pane), call `jharokha_layout` and read with `region="P<n>"` or a named region like `teams.thread`; panel numbers follow the current screen, so take them from a fresh `jharokha_layout`.
+   For one part of a busy screen (a chat thread, a mail's reading pane), read the app's named region, like `teams.thread`, `outlook.reading`, `outlook.week`, `browser.page` or `terminal.body`; `jharokha_layout` lists the regions of the view on screen. A region of an app or view not on screen fails with `layout_mismatch`. Panels (`region="P<n>"`) work on any screen; their numbers follow the current screen, so take them from a fresh `jharokha_layout`.
 3. `jharokha_find_text` when you need one thing: a status word, a row, a button label. It returns the box and center.
 4. `jharokha_wait_for_text` instead of polling `read_text` in a loop. Max 30 s per call; call again if you need longer.
    For "what changed" rather than "is X there", use `jharokha_changes`: after a `read_text` it returns only the lines added and removed since, a fraction of the tokens of a re-read. When something may appear and vanish while you work (a toast, a progress step, a dialog), `jharokha_watch action=start` first and read the log with `jharokha_changes since_seq=<last seq you saw>`; `action=stop` when done.

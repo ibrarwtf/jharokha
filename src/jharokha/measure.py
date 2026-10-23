@@ -1,4 +1,4 @@
-"""`jharokha measure`: write an app's named regions to the layouts file, from what is on screen.
+"""`jharokha measure`: write an app view's calibration to apps.toml, from what is on screen.
 
 With --zoom it also steps the app's zoom (Ctrl+0, Ctrl+=, Ctrl+-) and writes one variant per
 step, then puts the zoom back where it was. Those keys are the only input it sends."""
@@ -9,10 +9,10 @@ import re
 import time
 from pathlib import Path
 
-from jharokha.core import layout
+from jharokha.core import apps, layout
 from jharokha.core.models import Box
 from jharokha.core.screen import Screen, ScreenError
-from jharokha.core.text import find
+from jharokha.core.text import find, grid_metrics
 
 _SETTLE_S = 1.5  # the app re-lays itself out after a zoom key
 
@@ -27,11 +27,27 @@ def run(
     names: str | None,
     focus: str | None = None,
     grid: str | None = None,
+    view: str | None = None,
 ) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", app):
-        raise SystemExit("measure: app must be letters, digits, - or _")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", app) or app == apps.SESSION:
+        raise SystemExit("measure: app must be letters, digits, - or _ (and not session)")
+    old = path.read_text(encoding="utf-8") if path.exists() else ""
+    known = apps.catalog(apps.parse(old, str(path))) if old else apps.catalog()
+    if app in known.apps:
+        views = list(known.apps[app].views)
+        view = view or views[0]
+        if view not in views:
+            raise SystemExit(f"measure: {app} has the views {', '.join(views)}, not {view}")
+    else:
+        # A new app: a definition with one view, recognised by the anchor measured here.
+        view = view or "main"
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", view):
+            raise SystemExit("measure: view must be letters, digits, - or _")
+        new = f'[app.{app}]\nname = "{app}"\n\n[app.{app}.view.{view}]\n'
+        old = (old.rstrip() or f"format = {apps.FORMAT}") + "\n\n" + new
+        known = apps.catalog(apps.parse(old, str(path)))
     steps = _zoom_steps(zoom) if zoom else []
-    seen: dict[int, tuple[dict[str, Box], tuple[float, float]]] = {}
+    seen: dict[int, tuple[dict[str, Box], tuple[float, float], dict[str, apps.Grid]]] = {}
     size = (0, 0)
 
     def snap(step: int | None) -> tuple[float, float]:
@@ -43,7 +59,12 @@ def run(
             raise ScreenError("layout_mismatch", f"'{anchor}' is not on screen")
         at = (m[0].box[0] / frame.width, m[0].box[1] / frame.height)
         if step is not None:
-            seen[step] = (layout.measure(lines, frame.width, frame.height), at)
+            regions = layout.measure(lines, frame.width, frame.height)
+            grids = {}
+            for k, b in regions.items():
+                if rename.get(k, k) == grid and (g := grid_metrics(lines, b)):
+                    grids[grid] = apps.Grid(round(g[0], 1), round(g[1], 2), g[2])
+            seen[step] = (regions, at, grids)
         return at
 
     def press(combo: str, times: int = 1) -> None:
@@ -51,6 +72,15 @@ def run(
             screen.source.press(screen.window(window_title), combo)
             time.sleep(0.3)
         time.sleep(_SETTLE_S)
+
+    rename: dict[str, str] = {}
+    if names:
+        # The regions of the first screen fix how many names there must be.
+        frame, lines = screen.read(window_title, None)
+        found = list(layout.measure(lines, frame.width, frame.height))
+        rename = dict(zip(found, names.split(","), strict=False))
+        if len(names.split(",")) != len(found):
+            raise SystemExit(f"measure: --names needs {len(found)} names for {', '.join(found)}")
 
     start = snap(None if steps else 0)
     original = 0
@@ -72,38 +102,44 @@ def run(
             if original:
                 press("ctrl+=" if original > 0 else "ctrl+-", abs(original))
 
-    keys = {s: list(r) for s, (r, _) in seen.items()}
+    keys = {s: list(r) for s, (r, _, _) in seen.items()}
     if len({tuple(k) for k in keys.values()}) > 1:
         for s, k in sorted(keys.items()):
             print(f"  step {s:+d}: {', '.join(k)}")
         raise SystemExit("measure: zoom steps found different regions; nothing written")
     found = next(iter(keys.values()))
-    rename = dict(zip(found, names.split(","), strict=True)) if names else {}
-    if names and len(rename) != len(found):
-        raise SystemExit(f"measure: --names needs {len(found)} names for {', '.join(found)}")
+    names_found = {rename.get(k, k) for k in found}
 
     w, h = size
-    old = path.read_text(encoding="utf-8") if path.exists() else ""
     # Remeasuring keeps the focus, grid and prompt set earlier, by hand or with the flags.
-    before = [la for la in layout.parse(old, str(path)).values() if la.app == app]
-    profile = {}
-    for key, given in (("focus", focus), ("grid", grid), ("prompt", None)):
-        value = given or next((getattr(la, key) for la in before if getattr(la, key)), None)
-        if key != "prompt" and value and value not in {rename.get(k, k) for k in found}:
+    before = known.calibration.get((app, view))
+    defined = known.apps[app].views[view]
+    keep_focus = before.focus if before else None
+    focus = focus or keep_focus
+    readers = dict(before.readers) if before else {}
+    if grid:
+        readers[grid] = "grid"
+    for key, value in (("focus", focus), ("grid", grid)):
+        if value and value not in names_found and value not in defined.regions:
             raise SystemExit(f"measure: {key} {value} is not one of the regions found")
-        if value:
-            profile[key] = value
-    tables = []
-    for s, (regions, at) in sorted(seen.items(), reverse=True):
-        name = f"{app}@{s:+d}" if steps else app
+    variants = []
+    for s, (regions, at, grids) in sorted(seen.items(), reverse=True):
+        name = f"{s:+d}" if steps else ""
         fr = {rename.get(k, k): layout.to_fraction(b, w, h) for k, b in regions.items()}
-        tables.append(layout.table(name, anchor, fr, at if steps else None, profile))
-        print(f"{name}: " + "  ".join(f"{rename.get(k, k)}={list(b)}" for k, b in regions.items()))
-    head = f"# {app}: written by `jharokha measure` at {w}x{h} client"
-    path.write_text(layout.replace_app(old, app, head + "\n" + "\n".join(tables)), encoding="utf-8")
-    layout.load(path)  # what we wrote must read back
+        variants.append(apps.Variant(name, anchor, at if steps else None, fr, grids))
+        label = f"{app}.{view}" + (f"@{name}" if name else "")
+        print(f"{label}: " + "  ".join(f"{rename.get(k, k)}={list(b)}" for k, b in regions.items()))
+        for g, m in grids.items():
+            print(f"  grid {g}: pitch {m.pitch} px, character {m.char_width} px, origin {m.origin}")
+    cal = apps.Calibration(
+        tuple(variants), focus=focus, prompt=before.prompt if before else None, readers=readers
+    )
+    note = f"written by `jharokha measure` at {w}x{h} client"
+    text = apps.replace_calibration(old, app, view, apps.calibration_toml(app, view, cal, note))
+    path.write_text(text, encoding="utf-8")
+    apps.catalog(apps.parse(text, str(path)))  # what we wrote must read back
 
-    regions, _ = seen[original]
+    regions, _, _ = seen[original]
     print(f"zoom back at step {original:+d}; reading each region there:")
     for k, b in regions.items():
         _, lines = screen.read(window_title, b)

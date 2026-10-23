@@ -1,5 +1,6 @@
 """Generated screens shaped like the work jharokha does: a PowerShell terminal, a Teams-like
-chat, an Outlook-like mailbox, an Edge-like browser, lock and sign-in screens. Every name,
+chat, an Outlook-like mailbox and calendar, an Edge-like browser, lock and sign-in screens.
+Each draws the generic UI text the built-in app definitions recognise it by. Every name,
 ID, URL and log line comes from the lists below and a seeded random generator: nothing from
 a real session.
 
@@ -169,6 +170,7 @@ def terminal(seed: int, px: int = 20) -> Screen:
         grid=(0, top - 4, 1156, TASKBAR_Y - top + 4),
         rects=rects,
         panes=[(0, 0, W, 38), (0, 39, W, TASKBAR_Y - 39), TASKBAR],
+        view="shell",
     )
 
 
@@ -242,7 +244,17 @@ def teams(seed: int, px: int = 14) -> Screen:
         TASKBAR,
     ]
     return Screen(
-        f"teams-{seed}-{px}", "teams", W, H, WHITE, texts, truth, finds, rects=rects, panes=panes
+        f"teams-{seed}-{px}",
+        "teams",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        finds,
+        rects=rects,
+        panes=panes,
+        view="chat",
     )
 
 
@@ -321,6 +333,104 @@ def outlook(seed: int, px: int = 14) -> Screen:
         finds,
         rects=rects,
         panes=panes,
+        view="mail",
+    )
+
+
+# New Outlook's calendar, a work week: the same ribbon and rail as mail, the calendars on
+# the pane colour, a date header above a line at y=215, then hours down the left and a
+# line around every day and hour.
+CAL_DAY, CAL_HOUR = 165, 86
+CAL_LEFT, CAL_GRID, CAL_TOP = 280, 340, 250
+CAL_EVENT: RGB = (222, 236, 249)
+EVENTS = ["Standup", "Pricing review", "Release check", "Profile export", "Team sync"]
+
+
+def calendar(seed: int, px: int = 14) -> Screen:
+    rng = random.Random(seed)
+    texts: list[Text] = []
+    truth: list[str] = []
+    finds: list[Find] = []
+
+    def put(x: int, y: int, s: str, size: int = px, color: RGB = INK, bold: bool = False) -> int:
+        texts.append(Text(x, y, s, "Segoe UI", size, color, bold))
+        truth.append(s)
+        return len(texts) - 1
+
+    put(480, 40, "Search", px, GREY)
+    ribbon = ("New event", "Day", "Work week", "Week", "Month")
+    for x, label in zip((80, 220, 290, 410, 490), ribbon, strict=True):
+        at = put(x, 120, label, px - 1)
+        if label == "New event":
+            finds.append(Find(label, at))
+    put(76, 175, "October 2026", px, INK, True)
+    put(76, 230, "My calendars", px - 1, GREY)
+    for i, name in enumerate(["Calendar", "Birthdays"]):
+        put(90, 262 + 32 * i, name, px)
+    day0 = rng.randint(5, 26)
+    put(296, 175, "Today", px)
+    put(380, 175, f"October {day0}-{day0 + 4}, 2026", px + 2, INK, True)
+    for k in range(10):
+        hour = 8 + k
+        label = f"{(hour - 1) % 12 + 1} {'AM' if hour < 12 else 'PM'}"
+        put(288, CAL_TOP + 6 + CAL_HOUR * k, label, px - 2, GREY)
+    slots = sorted(rng.sample([(d, h) for d in range(5) for h in range(10)], 6))
+    rects: Rects = []
+    for d, name in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri"]):
+        x = CAL_GRID + CAL_DAY * d
+        put(x + 8, 224, f"{name} {day0 + d}", px - 1, GREY)
+        for sd, h in slots:
+            if sd != d:
+                continue
+            y = CAL_TOP + CAL_HOUR * h
+            rects.append(((x + 4, y + 4, CAL_DAY - 8, CAL_HOUR - 8), CAL_EVENT))
+            title = rng.choice([*EVENTS, f"1:1 {_name(rng)}"])
+            at = put(x + 12, y + 12, title, px - 1)
+            if not any(f.query == title for f in finds) and len(finds) < 3:
+                finds.append(Find(title, at))
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    body = TASKBAR_Y - 155
+    grid_h = TASKBAR_Y - 216
+    rects = [
+        ((0, 0, W, 103), OUTLOOK_TOP),
+        ((0, 103, W, 1), OUTLOOK_LINE),
+        ((0, 104, W, 50), (250, 250, 250)),
+        ((0, 154, W, 1), OUTLOOK_LINE),
+        ((0, 155, 61, body), OUTLOOK_TOP),
+        ((61, 155, 1, body), OUTLOOK_LINE),
+        ((62, 155, CAL_LEFT - 62, body), OUTLOOK_PANE),
+        ((CAL_LEFT, 215, W - CAL_LEFT, 1), OUTLOOK_LINE),
+        *[((CAL_GRID + CAL_DAY * d, 216, 1, grid_h), OUTLOOK_LINE) for d in range(5)],
+        *[
+            ((CAL_GRID + 1, CAL_TOP + CAL_HOUR * k, W - CAL_GRID - 1, 1), OUTLOOK_LINE)
+            for k in range(11)
+        ],
+        *rects,
+        *bar,
+    ]
+    panes = [
+        (0, 0, W, 103),
+        (0, 104, W, 50),
+        (0, 155, 61, body),
+        (62, 155, CAL_LEFT - 62, body),
+        (CAL_LEFT, 155, W - CAL_LEFT, 60),
+        (CAL_LEFT, 216, CAL_GRID - CAL_LEFT, grid_h),
+        TASKBAR,
+    ]
+    return Screen(
+        f"calendar-{seed}-{px}",
+        "outlook",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        finds,
+        rects=rects,
+        panes=panes,
+        view="calendar",
     )
 
 
@@ -347,8 +457,8 @@ def browser(seed: int, px: int = 14) -> Screen:
     url = f"https://{proj}.example.net/requests/queue?view=open&page={rng.randint(2, 9)}"
     at = put(140, 61, url, px)
     finds.append(Find(f"{proj}.example.net", at, url.index(proj)))
-    favourites = ("Docs", "Requests", "Status board", "Wiki")
-    for x, label in zip((20, 100, 190, 320), favourites, strict=True):
+    favourites = ("Docs", "Requests", "Status board", "Wiki", "Other favourites")
+    for x, label in zip((20, 100, 190, 320, 1000), favourites, strict=True):
         put(x, 134, label, px - 1)
     heading = put(40, 215, "Open requests", px + 10, INK, True)
     finds.append(Find("Open requests", heading))
@@ -387,6 +497,7 @@ def browser(seed: int, px: int = 14) -> Screen:
         finds,
         rects=rects,
         panes=panes,
+        view="page",
     )
 
 
@@ -425,27 +536,6 @@ def ids(seed: int, px: int = 16) -> Screen:
     return Screen(f"ids-{seed}-{px}", "ids", W, H, WHITE, texts, lines)
 
 
-# The layouts file an eval reads with: one table per app, anchored on text the generator
-# always draws.
-LAYOUTS = """
-[teams]
-anchor = "Search (Ctrl+E)"
-focus = "thread"
-list = [0.07, 0.04, 0.3, 0.9]
-thread = [0.38, 0.08, 0.62, 0.8]
-
-[outlook]
-anchor = "Inbox"
-reading = [0.43, 0.13, 0.57, 0.82]
-
-[terminal]
-anchor = "Windows PowerShell"
-grid = "body"
-focus = "body"
-body = [0, 0.03, 0.99, 0.92]
-"""
-
-
 def suite(quick: bool) -> list[Screen]:
     """Quick: one of each kind at the size the session shows; full: three sizes, more
     seeds, every lock variant."""
@@ -458,6 +548,7 @@ def suite(quick: bool) -> list[Screen]:
         out += [terminal(s, px) for px in term]
         out += [teams(s, px) for px in small]
         out += [outlook(s, px) for px in small]
+        out += [calendar(s, px) for px in small]
         out += [browser(s, px) for px in small]
         out += [ids(s, px) for px in sizes]
     out += [lock(100 + v, v) for v in range(5)]

@@ -1,0 +1,13 @@
+# What any screen has: no cues, so it is what a screen is when no app scores high enough;
+# it is read by its panes (P0, P1, ...). Also the session's own Windows taskbar, under every
+# app (y=1121 to 1181 at 1166x1181 and 125% scaling).
+format = 1
+
+[app.generic]
+name = "Any app"
+
+[app.generic.view.screen]
+
+[session.region.taskbar]
+at = [0.5, 0.99]
+box = [0, 0.949, 1, 0.051]

@@ -9,7 +9,9 @@ order (and its grid where the screen has one), and scored:
 - recognition: CER, WER, bag-of-words F1, lines exact, lookalike misses, tokens per read
 - find: the first match's centre falls inside the box of the text it should land on
 - lock: read as locked exactly when it is a lock or sign-in screen
-- app: the layouts file's anchor picks the right app, or none
+- identify: the built-in app definitions name the right app (app_ok) and view
+  (identify_ok): none on a lock screen, generic where no app is drawn; and the mean
+  confidence they give (identify_conf); a confusion table of the misses
 - panes: for each pane the screen was drawn with, the best IoU of a pane found from the
   pixels (mean, and the share at 0.8 or more)
 
@@ -29,11 +31,12 @@ from typing import Any
 
 from evals import metrics
 from evals.render import FontMissing, Screen, render
-from evals.screens import LAYOUTS, suite
+from evals.screens import suite
 from jharokha import version
-from jharokha.core.layout import parse
-from jharokha.core.models import Line
-from jharokha.core.panes import panes, reading_panes
+from jharokha.core import apps
+from jharokha.core.apps import GENERIC, Catalog
+from jharokha.core.identify import LOCKED, identify
+from jharokha.core.panes import background, panes, reading_panes
 from jharokha.core.text import find, format_concise, grid, looks_locked, reading_order
 from jharokha.win.ocr import Ocr
 
@@ -43,14 +46,17 @@ TOLERANCE = {"tokens": 0.10}  # relative; everything else is a rate, absolute
 RATE_TOLERANCE = 0.02
 
 
-def detect_app(lines: list[Line]) -> str | None:
-    for name, lay in parse(LAYOUTS).items():
-        if lay.anchor and find(lines, lay.anchor):
-            return name
-    return None
+def expected(screen: Screen) -> tuple[str | None, str | None]:
+    """The app and view a screen should be identified as: none on a lock screen, generic
+    where no built-in app is drawn."""
+    if screen.locked:
+        return None, None
+    if screen.view is None:
+        return GENERIC, "screen"
+    return screen.app, screen.view
 
 
-def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
+def score(screen: Screen, config: str, ocr: Ocr, catalog: Catalog) -> dict[str, Any]:
     engine, _, codec = config.partition("+")
     frame, boxes = render(screen, engine, codec == "codec")
     t = time.perf_counter()
@@ -60,16 +66,27 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
     found = panes(frame)
     panes_ms = (time.perf_counter() - t) * 1000
     lines = reading_order(raw, reading_panes(frame))
+    t = time.perf_counter()
+    who = (
+        LOCKED
+        if looks_locked(lines)
+        else identify(
+            catalog.apps.values(), lines, found, background(frame), frame.width, frame.height
+        )
+    )
+    identify_ms = (time.perf_counter() - t) * 1000
     if screen.grid:
         lines = grid(lines, screen.grid)
     got = [ln.text.rstrip() for ln in lines]
     truth = screen.truth
+    want = expected(screen)
     row: dict[str, Any] = {
         "screen": screen.name,
-        "app": screen.app,
+        "kind": screen.name.split("-")[0],
         "config": config,
         "ms": round(ms),
         "panes_ms": round(panes_ms, 1),
+        "identify_ms": round(identify_ms, 1),
         "cer": metrics.cer(truth, got),
         "wer": metrics.wer(truth, got),
         "bag_f1": metrics.bag_f1(truth, got),
@@ -77,9 +94,12 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
         "lookalike": metrics.lookalike_misses(truth, got),
         "tokens": len(format_concise(lines)) // 4,
         "lock_ok": looks_locked(lines) == screen.locked,
-        "app_ok": detect_app(lines)
-        == (screen.app if screen.app in ("teams", "outlook", "terminal") else None),
+        "app_ok": who.app == want[0],
+        "identify_ok": (who.app, who.view) == want,
+        "identified": f"{who.app}.{who.view}",
     }
+    if not screen.locked:
+        row["identify_conf"] = who.confidence
     hits = []
     for f, (x, y, w, h) in zip(screen.finds, boxes, strict=True):
         m = find(lines, f.query, regex=f.regex)
@@ -102,7 +122,7 @@ def score(screen: Screen, config: str, ocr: Ocr) -> dict[str, Any]:
 def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in rows:
-        groups[f"{r['app']}.{r['config']}"].append(r)
+        groups[f"{r['kind']}.{r['config']}"].append(r)
     out: dict[str, float] = {}
     for key, rs in sorted(groups.items()):
         for m in (
@@ -115,12 +135,17 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
             "find_hit",
             "panes_iou",
             "panes_hit",
+            "identify_ok",
+            "identify_conf",
         ):
             vals = [r[m] for r in rs if m in r]
             if vals:
                 out[f"{key}.{m}"] = round(mean(vals), 4)
     out["all.lock_ok"] = round(mean(r["lock_ok"] for r in rows), 4)
     out["all.app_ok"] = round(mean(r["app_ok"] for r in rows), 4)
+    out["all.identify_ok"] = round(mean(r["identify_ok"] for r in rows), 4)
+    conf = [r["identify_conf"] for r in rows if "identify_conf" in r]
+    out["all.identify_conf"] = round(mean(conf), 4) if conf else 0.0
     finds = [r["find_hit"] for r in rows if "find_hit" in r]
     out["all.find_hit"] = round(mean(finds), 4) if finds else 0.0
     for m in ("panes_iou", "panes_hit"):
@@ -159,12 +184,13 @@ def main() -> None:
     configs = ["gdi+codec"] if name == "quick" else ["gdi+codec", "gdi", "pil"]
 
     ocr = Ocr()
+    catalog = apps.catalog()  # the built-in definitions only, as on a fresh install
     rows = []
     t0 = time.perf_counter()
     for screen in suite(name == "quick"):
         for config in configs:
             try:
-                row = score(screen, config, ocr)
+                row = score(screen, config, ocr, catalog)
             except FontMissing as e:
                 print(f"skip {screen.name} {config}: {e}", file=sys.stderr)
                 continue
@@ -179,18 +205,25 @@ def main() -> None:
     print(f"jharokha {version()} evals, {name}: {len(rows)} reads in {took:.0f} s")
     print(
         f"  median ms: OCR {median(r['ms'] for r in rows):.0f}, "
-        f"panes {median(r['panes_ms'] for r in rows):.1f} (timings are not gated)"
+        f"panes {median(r['panes_ms'] for r in rows):.1f}, "
+        f"identify {median(r['identify_ms'] for r in rows):.1f} (timings are not gated)"
     )
     for key, v in summary.items():
         print(f"  {key:44} {v}")
     misses = [(r["screen"], r["config"], r["find_misses"]) for r in rows if "find_misses" in r]
     for m in misses:
         print(f"  find missed on {m[0]} {m[1]}: {m[2]}")
+    confusion: dict[tuple[str, str], int] = defaultdict(int)
     for r in rows:
         if not r["lock_ok"]:
             print(f"  lock wrong on {r['screen']} {r['config']}")
-        if not r["app_ok"]:
-            print(f"  app wrong on {r['screen']} {r['config']}")
+        if not r["identify_ok"]:
+            print(f"  identified {r['screen']} {r['config']} as {r['identified']}")
+            confusion[(r["kind"], r["identified"])] += 1
+    if confusion:
+        print("  confusion (screen kind -> identified as: count):")
+        for (kind, got), n in sorted(confusion.items()):
+            print(f"    {kind} -> {got}: {n}")
 
     if args.out:
         Path(args.out).write_text(

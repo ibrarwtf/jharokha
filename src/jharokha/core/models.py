@@ -20,6 +20,14 @@ def union(boxes: Iterable[Box]) -> Box:
     return (x1, y1, x2 - x1, y2 - y1)
 
 
+def iou(a: Box, b: Box) -> float:
+    """Intersection over union of two boxes."""
+    ix = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    return inter / max(1, a[2] * a[3] + b[2] * b[3] - inter)
+
+
 @dataclass(frozen=True)
 class Frame:
     """One capture of the client area, raw BGRA, row-major, no padding."""

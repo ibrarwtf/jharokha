@@ -1,0 +1,58 @@
+# Microsoft Teams (new Teams), built in. Generic UI text only; positions are fractions of
+# the client area, measured at 1166x1181 and 125% scaling: a title bar above a divider at
+# y=62, the app rail left of a divider at x=88, chat and thread headers above a divider at
+# y=142, and the chat list told from the thread only by its background (245 against 255).
+format = 1
+
+[app.teams]
+name = "Microsoft Teams"
+
+[[app.teams.cue]]
+text = "Search (Ctrl+E)"
+at = [0.3, 0.02]
+weight = 2
+
+[[app.teams.cue]]
+text = "Activity"
+
+[[app.teams.cue]]  # the app rail
+pane = [0, 0.053, 0.075, 0.896]
+weight = 0.5
+
+[[app.teams.cue]]  # the title bar
+pane = [0, 0, 1, 0.052]
+weight = 0.5
+
+[app.teams.policy]  # reserved: risk, from 0.19
+
+[app.teams.view.chat]
+ready = "Type a message"
+
+[[app.teams.view.chat.cue]]
+text = "Type a message"
+weight = 2
+
+[[app.teams.view.chat.cue]]
+text = "Chat"
+
+[app.teams.view.chat.region.nav]
+at = [0.04, 0.5]
+box = [0, 0.053, 0.075, 0.896]
+
+[app.teams.view.chat.region.list]
+reader = "list"
+at = [0.2, 0.5]
+box = [0.077, 0.121, 0.3, 0.828]
+
+[app.teams.view.chat.region.header]
+at = [0.65, 0.087]
+box = [0.378, 0.054, 0.622, 0.066]
+
+[app.teams.view.chat.region.thread]
+at = [0.65, 0.5]
+box = [0.378, 0.122, 0.622, 0.828]
+focus = true
+
+# The compose box sits inside the thread's pane with no edge of its own: a box.
+[app.teams.view.chat.region.compose]
+box = [0.378, 0.87, 0.622, 0.079]

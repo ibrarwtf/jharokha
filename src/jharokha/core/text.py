@@ -173,8 +173,47 @@ def _join(row: list[Line]) -> list[Line]:
     return out
 
 
-def grid(lines: list[Line], box: Box) -> list[Line]:
+def _within(lines: list[Line], box: Box) -> list[Line]:
+    x0, y0, bw, bh = box
+    return [
+        ln
+        for ln in lines
+        if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + bw and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + bh
+    ]
+
+
+def _metrics(words: list[Word]) -> tuple[float, float, float, float]:
+    """Row pitch, character width, left edge and first row centre, from the words."""
+    h = sorted(w.box[3] for w in words)[len(words) // 2]
+    pitch = _pitch([w.box[1] + w.box[3] / 2 for w in words], h)
+    widths = sorted(w.box[2] / len(w.text) for w in words if len(w.text) >= 5)
+    widths = widths or sorted(w.box[2] / max(1, len(w.text)) for w in words)
+    cw = widths[len(widths) // 2]
+    left = min(w.box[0] for w in words)
+    top = min(w.box[1] + w.box[3] / 2 for w in words)
+    return pitch, cw, left, top
+
+
+def grid_metrics(lines: list[Line], box: Box) -> tuple[float, float, tuple[int, int]] | None:
+    """What `jharokha measure` writes for a grid region: row pitch and character width in
+    pixels, and the first cell's top-left relative to the region. None without text."""
+    words = [w for ln in _within(lines, box) for w in (ln.words or (Word(ln.text, ln.box),))]
+    if len(words) < 2:
+        return None
+    pitch, cw, left, top = _metrics(words)
+    return pitch, cw, (round(left - box[0]), round(top - pitch / 2 - box[1]))
+
+
+def grid(
+    lines: list[Line],
+    box: Box,
+    pitch: float | None = None,
+    char_width: float | None = None,
+    origin: tuple[int, int] | None = None,
+) -> list[Line]:
     """Lines inside box re-read as a terminal's character grid; the others as they were.
+    pitch, char_width and origin (the first cell's top-left in box) come from calibration
+    when it has them, otherwise from the words on screen.
 
     OCR splits a terminal row into pieces that do not line up and drops the spaces that
     align columns. A grid has a fixed row pitch and character width, so words snap to rows
@@ -183,21 +222,17 @@ def grid(lines: list[Line], box: Box) -> list[Line]:
     edge continues on the next one and is joined to it. Zeros read as e, @ or o inside a
     number (slashed or dotted zeros) become 0."""
     x0, y0, bw, bh = box
-    inside = [
-        ln
-        for ln in lines
-        if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + bw and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + bh
-    ]
+    inside = _within(lines, box)
     words = [w for ln in inside for w in (ln.words or (Word(ln.text, ln.box),))]
     if len(words) < 2:
         return lines
-    h = sorted(w.box[3] for w in words)[len(words) // 2]
-    pitch = _pitch([w.box[1] + w.box[3] / 2 for w in words], h)
-    widths = sorted(w.box[2] / len(w.text) for w in words if len(w.text) >= 5)
-    widths = widths or sorted(w.box[2] / max(1, len(w.text)) for w in words)
-    cw = widths[len(widths) // 2]
-    left = min(w.box[0] for w in words)
-    top = min(w.box[1] + w.box[3] / 2 for w in words)
+    seen = _metrics(words)
+    # Calibration (apps.toml) fixes what one screen can get wrong: a pitch from two rows,
+    # a left edge from an indented first word.
+    pitch = pitch or seen[0]
+    cw = char_width or seen[1]
+    left = x0 + origin[0] if origin else seen[2]
+    top = y0 + origin[1] + pitch / 2 if origin else seen[3]
     rows: dict[int, list[Word]] = {}
     for w in words:
         rows.setdefault(round((w.box[1] + w.box[3] / 2 - top) / pitch), []).append(w)
@@ -256,7 +291,7 @@ def command_output(lines: list[Line], prompt: str, command: str) -> tuple[list[L
     top, the output is everything above the prompt and its start is missing."""
     pat = re.compile(prompt)
     first = next((c for c in command.splitlines() if c.strip()), "")
-    want = _fold(first)[:30]
+    want = fold(first)[:30]
     rows = sorted(lines, key=lambda ln: ln.box[1])
     echoes, idle = [], []
     for i, ln in enumerate(rows):
@@ -266,7 +301,7 @@ def command_output(lines: list[Line], prompt: str, command: str) -> tuple[list[L
         rest = t[m.end() :].strip()
         if len(rest) <= 1:  # nothing typed, or the caret read as a character
             idle.append(i)
-        elif want and difflib.SequenceMatcher(None, _fold(rest)[: len(want)], want).ratio() >= 0.75:
+        elif want and difflib.SequenceMatcher(None, fold(rest)[: len(want)], want).ratio() >= 0.75:
             echoes.append(i)
     if echoes:
         after = [i for i in idle if i > echoes[-1]]
@@ -380,7 +415,8 @@ def normalize(s: str) -> str:
     return _CARET.sub("", _PUNCT_GAP.sub("", s))
 
 
-def _fold(s: str) -> str:
+def fold(s: str) -> str:
+    """s as find compares it: normalized, lower case, lookalikes folded."""
     return normalize(s).lower().translate(_FOLD)
 
 
@@ -394,16 +430,18 @@ def _match(ref: str, words: tuple[Word, ...]) -> Match:
     )
 
 
-def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) -> list[Match]:
+def find(
+    lines: list[Line], query: str, regex: bool = False, all: bool = False, fuzzy: bool = True
+) -> list[Match]:
     """Word spans matching the query. Plain queries fold case, OCR lookalikes and punctuation
     (see normalize), ignore spaces, and fall back to fuzzy (ratio >= 0.8) only when nothing
-    matches exactly. Regex runs on the raw line, then on the normalized line, where the
-    match is the whole line."""
+    matches exactly and fuzzy is on. Regex runs on the raw line, then on the normalized
+    line, where the match is the whole line."""
     exact: list[Match] = []
-    fuzzy: list[Match] = []
+    near: list[Match] = []
     n = max(1, len(query.split()))
     pat = re.compile(query, re.IGNORECASE) if regex else None
-    q = _fold(query)
+    q = fold(query)
     bare = q.replace(" ", "")
     for i, ln in enumerate(lines):
         ref = f"L{i}"
@@ -427,18 +465,19 @@ def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) 
             for s in range(len(ln.words) - size + 1)
         ]
         for size, span in spans:
-            folded = _fold(" ".join(w.text for w in span))
+            folded = fold(" ".join(w.text for w in span))
             if q in folded or bare in folded.replace(" ", ""):
                 exact.append(_match(ref, span))
                 break
-            if size == n and difflib.SequenceMatcher(None, q, folded).ratio() >= 0.8:
-                fuzzy.append(_match(ref, span))
+            close = fuzzy and size == n
+            if close and difflib.SequenceMatcher(None, q, folded).ratio() >= 0.8:
+                near.append(_match(ref, span))
                 break
         else:
             # OCR split one word into more pieces than the spans cover (a URL, a path).
-            if bare in _fold(ln.text).replace(" ", ""):
+            if bare in fold(ln.text).replace(" ", ""):
                 exact.append(_match(ref, ln.words))
-    found = exact or fuzzy
+    found = exact or near
     return found if all else found[:1]
 
 

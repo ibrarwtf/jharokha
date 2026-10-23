@@ -5,6 +5,7 @@ import pytest
 from mcp import Client
 from mcp.types import TextContent
 
+from jharokha.core import apps
 from jharokha.core.layout import parse
 from jharokha.server import build_server
 
@@ -42,6 +43,9 @@ async def test_status(source):
     r = await call(source, "jharokha_status")
     s = json.loads(text(r))
     assert s["found"] and s["state"] == "normal" and s["client_size"] == [640, 400]
+    # No built-in app has its cues on this screen.
+    assert (s["app"], s["view"]) == ("generic", "screen") and s["confidence"] > 0.5
+    assert s["runner_up"]["score"] < 0.5
     source.minimized = True
     s = json.loads(text(await call(source, "jharokha_status")))
     assert s["found"] and s["state"] == "minimized"
@@ -268,17 +272,35 @@ def test_real_recognizer_reads_a_line_box_and_a_row_strip():
     assert [s.replace(" ", "") for s in strip] == ["PSC:\\Users\\X>dir"]
 
 
+async def test_status_names_the_browser_and_reports_its_url_as_untrusted(source):
+    source.items = [("https://queue.example.net/requests", 80, 20), ("Open requests", 20, 120)]
+    s = json.loads(text(await call(source, "jharokha_status")))
+    assert (s["app"], s["view"]) == ("browser", "page")
+    assert s["facts"].startswith('<screen_text source="ocr" untrusted="true">')
+    assert "url=https://queue.example.net/requests" in s["facts"]
+    r = await call(source, "jharokha_read_text", region="teams.thread")
+    assert r.is_error and text(r).startswith("layout_mismatch:") and "browser page" in text(r)
+    r = text(await call(source, "jharokha_layout"))
+    assert "regions of browser page:" in r and "browser.page [" in r
+
+
+def old_layouts(toml: str) -> apps.Catalog:
+    """A catalog with an old layouts file read into it, as the server loads one."""
+    return apps.load(None, parse(toml))
+
+
 async def test_layout_panels_and_named_regions(source):
-    layouts = parse(
+    catalog = old_layouts(
         '[app]\nanchor = "Build"\nright = [0.4, 0, 0.6, 1]\n'
         '[other]\nanchor = "Zzz"\nall = [0, 0, 1, 1]'
     )
-    async with Client(build_server(source, layouts=layouts)) as c:
+    async with Client(build_server(source, catalog=catalog)) as c:
         r = text(await c.call_tool("jharokha_layout", {}))
+        assert " app=app view=main confidence=1.0 runner_up=" in r.split("\n")[0]
         assert "P0 [0,0,232,400] 3 lines: Build succeeded in 12s" in r
         assert "P1 [232,0,408,400] 1 lines: second column" in r
-        assert "layout app (on screen): app.right=[256,0,384,400]" in r
-        assert "layout other (not on screen: needs 'Zzz')" in r
+        assert "regions of app main:\n  app.right [256,0,384,400] calibrated, reader text" in r
+        assert "other.main" in r.split("other apps and views: ")[1]
         r = text(await c.call_tool("jharokha_read_text", {"region": "P1"}))
         assert "second column" in r and "Build" not in r
         r = text(
@@ -296,8 +318,8 @@ async def test_layout_panels_and_named_regions(source):
 async def test_grid_region_reads_as_terminal_rows(source):
     source.items = [("PS C:\\repo> dir", 10, 10), ("a.txt 0.46 kB", 10, 30)]
     source.misreads = {"a.txt 0.46 kB": "a.txt e.46 kB"}
-    layouts = parse('[term]\nanchor = "PS"\ngrid = "body"\nbody = [0, 0, 1, 1]\n')
-    async with Client(build_server(source, layouts=layouts)) as c:
+    catalog = old_layouts('[term]\nanchor = "PS"\ngrid = "body"\nbody = [0, 0, 1, 1]\n')
+    async with Client(build_server(source, catalog=catalog)) as c:
         r = text(await c.call_tool("jharokha_read_text", {}))
         assert "L1 [10,30] a.txt 0.46 kB" in r
         r = text(await c.call_tool("jharokha_read_text", {"region": [0, 25, 640, 30]}))
@@ -305,13 +327,18 @@ async def test_grid_region_reads_as_terminal_rows(source):
 
 
 async def test_app_on_screen_and_its_focus_region_after_input(source):
-    layouts = parse(
+    catalog = old_layouts(
         "[taskbar]\nbar = [0, 0.9, 1, 0.1]\n"
         '[app]\nanchor = "Build"\nfocus = "lower"\nlower = [0, 0.6, 1, 0.4]\n'
     )
-    async with Client(build_server(source, allow_input=True, layouts=layouts)) as c:
-        assert json.loads(text(await c.call_tool("jharokha_status", {})))["app"] == "app"
-        assert " app=app\n" in text(await c.call_tool("jharokha_read_text", {}))
+    async with Client(build_server(source, allow_input=True, catalog=catalog)) as c:
+        status = json.loads(text(await c.call_tool("jharokha_status", {})))
+        assert (status["app"], status["view"], status["confidence"]) == ("app", "main", 1.0)
+        assert " app=app view=main confidence=1.0\n" in text(
+            await c.call_tool("jharokha_read_text", {})
+        )
+        r = text(await c.call_tool("jharokha_read_text", {"region": "taskbar.bar"}))
+        assert "(no text)" in r
         # The fake types at y 230, above the focus (y 240 on), and presses at y 260, in it.
         r = text(await c.call_tool("jharokha_type", {"text": "hi"}))
         assert "focus=app.lower (1 lines changed elsewhere" in r and "(no text changed)" in r

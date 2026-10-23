@@ -61,6 +61,7 @@ class Screen:
     # Filled boxes drawn before the text, in order: pane backgrounds and divider lines.
     rects: list[tuple[Box, RGB]] = field(default_factory=list)
     panes: list[Box] = field(default_factory=list)  # the true panes, as drawn
+    view: str | None = None  # the app's view it shows, as the built-in definitions name it
 
 
 class FontMissing(RuntimeError):

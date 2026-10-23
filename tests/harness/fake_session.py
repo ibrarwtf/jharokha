@@ -1,6 +1,8 @@
 """A local window that stands in for a remote session: a generated eval screen, no real data.
 
-    uv run python tests/harness/fake_session.py [terminal|teams|outlook|browser|ids|lock] [seed]
+    uv run python tests/harness/fake_session.py [KIND] [seed]
+
+KIND is terminal (default), teams, outlook, calendar, browser, ids or lock.
 
 Then, in another terminal, let the allowlist accept python:
 
@@ -25,6 +27,7 @@ KINDS = {
     "terminal": screens.terminal,
     "teams": screens.teams,
     "outlook": screens.outlook,
+    "calendar": screens.calendar,
     "browser": screens.browser,
     "ids": screens.ids,
     "lock": lambda seed: screens.lock(seed, seed % 5),

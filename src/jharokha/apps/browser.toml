@@ -1,0 +1,43 @@
+# Microsoft Edge or Chrome, built in. Positions are fractions of the client area, measured on
+# Edge at 1166x1181 and 125% scaling: the tab strip, the address box from y=49 to 94, the
+# favourites bar at y=142, and the page from y=191. The URL in the address bar is the
+# strongest cue and is reported (as untrusted screen text).
+format = 1
+
+[app.browser]
+name = "Web browser"
+
+[[app.browser.cue]]
+regex = 'https?://\S+|\b(?:[\w-]+\.)+[a-z]{2,}/\S*'
+at = [0.12, 0.05]
+weight = 3
+report = "url"
+
+[[app.browser.cue]]
+text = ["Other favourites", "Other favorites", "Favourites", "Favorites", "Bookmarks"]
+
+[[app.browser.cue]]  # the page
+pane = [0, 0.162, 1, 0.787]
+weight = 0.5
+
+[app.browser.policy]  # reserved: risk, from 0.19
+
+[app.browser.view.page]
+
+# The selected tab has the toolbar's colour, so the tab strip and toolbar can run together
+# into one pane; the box check then falls back to the box.
+[app.browser.view.page.region.tabs]
+at = [0.5, 0.017]
+box = [0, 0, 1, 0.034]
+
+# Address and favourites bars share the toolbar's pane: boxes.
+[app.browser.view.page.region.address]
+box = [0.1, 0.041, 0.76, 0.039]
+
+[app.browser.view.page.region.favourites]
+box = [0, 0.1, 1, 0.06]
+
+[app.browser.view.page.region.page]
+at = [0.5, 0.5]
+box = [0, 0.162, 1, 0.787]
+focus = true

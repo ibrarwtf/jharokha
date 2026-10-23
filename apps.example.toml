@@ -1,0 +1,73 @@
+# App definitions and calibration for jharokha. Copy to apps.toml (git-ignored) and keep
+# what you need: the server reads --apps PATH, else $JHAROKHA_APPS, else ./apps.toml.
+# The values here are synthetic, an example of the shape only; measure your own with
+# `jharokha measure APP --anchor TEXT` and see `jharokha_layout`.
+#
+# Built in (src/jharokha/apps/): terminal (shell), teams (chat), outlook (mail, calendar),
+# browser (page) and generic. Everything below adds to them or replaces them. Positions are
+# fractions 0..1 of the client area, so one file fits any window size.
+format = 1
+
+# Calibration: where things are on your setup. It comes before the built-in panes and boxes.
+
+# The session's own Windows taskbar, and spots on it (points: icons have no text).
+[calibration.session.regions]
+taskbar = [0, 0.95, 1, 0.05]
+
+[calibration.session.spots]
+start = [0.45, 0.975]
+search = [0.49, 0.975]
+
+# One view measured at several zoom levels: a variant each, told apart by where the anchor
+# text sat (anchor_at); the nearest one is used. focus names the region input tools report
+# changes in (a click in the chat list returns the thread it opened).
+[calibration.teams.chat]
+anchor = "Search (Ctrl+E)"
+focus = "thread"
+
+[calibration.teams.chat.variant."0"]
+anchor_at = [0.25, 0.02]
+regions = { nav = [0, 0, 0.07, 0.95], list = [0.07, 0.1, 0.31, 0.85], thread = [0.38, 0.1, 0.62, 0.77], compose = [0.38, 0.87, 0.62, 0.08] }
+
+[calibration.teams.chat.variant."-2"]
+anchor_at = [0.33, 0.02]
+regions = { nav = [0, 0, 0.06, 0.95], list = [0.06, 0.09, 0.25, 0.86], thread = [0.31, 0.09, 0.69, 0.79], compose = [0.31, 0.88, 0.69, 0.07] }
+
+# A terminal's body read as a character grid, with the grid measured: row pitch and
+# character width in pixels, and the first cell's top-left inside the region. prompt is a
+# regex for the shell's prompt at the start of a line, for jharokha_run.
+[calibration.terminal.shell]
+prompt = '^PS [^>]*>'
+regions = { tabs = [0, 0, 1, 0.03], body = [0, 0.03, 1, 0.92] }
+grids.body = { pitch = 23, char_width = 11, origin = [8, 4] }
+
+# An app of your own. Cues are the evidence it is on screen, each weighted: text (any of
+# several spellings), a regex, the screen's background colour, or a pane about here; `at`
+# is where the text's top-left belongs. A view adds its own cues, a `ready` text that shows
+# it has finished loading, and regions: the pane under `at` (widened to the one under
+# `to`), else `box`. reader is text or grid; list, table and form are reserved and read as
+# text for now. policy and action tables are reserved for later versions.
+[app.tickets]
+name = "Ticket queue"
+
+[[app.tickets.cue]]
+text = "New ticket"
+weight = 2
+
+[[app.tickets.cue]]
+regex = 'REQ\d{7}'
+
+[app.tickets.view.queue]
+ready = "Assigned to me"
+
+[[app.tickets.view.queue.cue]]
+text = "Assigned to me"
+
+[app.tickets.view.queue.region.list]
+reader = "table"
+at = [0.5, 0.5]
+box = [0.2, 0.15, 0.8, 0.8]
+focus = true
+
+[app.tickets.view.queue.region.filters]
+box = [0, 0.15, 0.2, 0.8]

@@ -13,7 +13,7 @@ jharokha lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) w
 - **Reads like text, not screenshots:** a full screen is about 1k tokens, in reading order, panel by panel, with boxes and exact click points.
 - **Watches for you:** waits for text to appear, and logs what changed while the agent was busy.
 - **Gets IDs right:** an optional second OCR engine re-reads lines where 0/O and 1/l get confused.
-- **Knows your apps:** detects the panels on screen, and you can name regions (a Teams thread, the compose box) for any window size and zoom.
+- **Knows where it is:** recognises the app and view on screen (Windows Terminal, Teams, Outlook mail and calendar, a browser) with a confidence, and names their parts (a Teams thread, the compose box) for any window size and zoom. Apps are data: add your own in a TOML file.
 - **Safe by default:** read-only unless you opt in; input only reaches the session window while it's in front; screen text is treated as untrusted data.
 - **Private:** nothing on disk, no network, no telemetry.
 
@@ -47,10 +47,10 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 
 | Tool | Purpose |
 |---|---|
-| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also the app on screen and this server's `version`. |
+| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also where you are: `app`, `view`, `confidence`, `runner_up`, `ready`, a browser's `url` (as untrusted text); and this server's `version`. |
 | `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). Paged. |
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
-| `jharokha_layout` | How the screen is divided: detected panels (`P0`, `P1`, ...) with their boxes and first line, and your named regions with whether their app is on screen. |
+| `jharokha_layout` | Where you are and how the screen is divided: the app and view, detected panels (`P0`, `P1`, ...) with their boxes and first line, and the view's named regions with their boxes, readers and focus. |
 | `jharokha_screenshot` | PNG of the window or a region, downscaled to `max_long_edge`, with the scale. |
 | `jharokha_wait_for_text` | Wait up to 30 s for text to appear or (`gone`) disappear. |
 | `jharokha_watch` | Start / stop / status of a background watcher that logs every text change with a timestamp. OCR only when pixels change; stops itself after 10 idle minutes. |
@@ -61,11 +61,9 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. Guarded and `focus_at` as for type. |
 | `jharokha_run` | Opt-in: a command in the shell that has focus (PowerShell, cmd, bash): types or pastes it, waits for the prompt to come back below it, and returns only what it printed. `clear` clears the screen first; output taller than the screen says its start is missing. |
 
-Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or a named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
+Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or an app's named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
 
-Panels are the app's panes, found from the pixels: its 1 to 2 px divider lines and its background colours (a Teams chat list is told from its thread only by its shade of grey), each covering its whole pane so text that arrives later still falls inside. Text is read pane by pane, row by row inside each. On a screen with neither dividers nor colours, panels come from the blank space between text instead: side-by-side columns and the bands above and below them. They need no setup but follow the screen, so `P1` can change when the screen does.
-
-Named regions are yours: a TOML file of boxes as fractions of the client area, one table per app, with an optional `anchor` text that must be on screen or the read fails with `layout_mismatch`. An app measured at several zoom levels gets one `app@variant` table per level, each with `anchor_at`, where its anchor text sat; the nearest one is used. A table with an anchor is an app: `jharokha_status` and full reads name the one on screen (`app=teams`), and its optional `focus` region (`focus = "thread"`) is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. `grid = "body"` marks a region as a terminal's character grid: it is read row by row on the grid, so paths, numbers and table columns that OCR splits apart come back whole (on the synthetic terminal at 16 px, character errors fall from 6% to 2%). `prompt` is a regex for a shell's prompt at the start of a line, for `jharokha_run` (default: PowerShell's, cmd's or bash's). Start from [`layouts.example.toml`](layouts.example.toml); the server reads `--layouts PATH`, else `$JHAROKHA_LAYOUTS`, else `./layouts.toml` (git-ignored in this repo).
+Panels are the app's panes, found from the pixels: its 1 to 2 px divider lines and its background colours (a Teams chat list is told from its thread only by its shade of grey), each covering its whole pane so text that arrives later still falls inside. Text is read pane by pane, row by row inside each. On a screen with neither dividers nor colours, panels come from the blank space between text instead: side-by-side columns and the bands above and below them. They need no setup but follow the screen, so `P1` can change when the screen does. Apps (below) name the panes of the apps they know.
 
 `verify` on `read_text` and `find_text` (`flagged` or `all`) re-reads lines with a second engine, PP-OCRv6's recognition model, on the line boxes Windows OCR found: about 30 ms a line, at most 40 lines; the first use loads the model (0.3 s). `flagged` picks lines with digits or runs of capitals, where IDs hide. Where the engines disagree, `read_text` shows both (`L0 [20,26] Ticket INCOOI 2345 | verify: Ticket INC0012345`); `detailed` gives each verified line `verify` and `agree` (both engines read the same apart from spacing). `find_text` searches the second reading, so a regex for an ID still matches. On the synthetic lookalike screen it takes lines read exactly from 0 of 4 to 3 of 4.
 
@@ -91,11 +89,31 @@ Input is off by default. Start the server with `--allow-input` (add it to the `a
 
 `skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
 
+## Apps
+
+An app is data: a TOML definition (`format = 1`) of the cues it is recognised by and its views, each view with its own cues, a `ready` text that shows it has finished loading, and named regions. Built in, with generic UI text only:
+
+| App | Views and regions |
+|---|---|
+| `terminal` | Windows Terminal with PowerShell or cmd. `shell`: `tabs`, `body` (a character grid) |
+| `teams` | `chat`: `nav`, `list`, `header`, `thread` (focus), `compose` |
+| `outlook` | `mail`: `ribbon`, `folders`, `list`, `reading` (focus); `calendar`: `ribbon`, `calendars`, `week` (a table) |
+| `browser` | Edge or Chrome. `page`: `tabs`, `address`, `favourites`, `page` (focus); the address bar's URL is reported |
+| `generic` | any other screen: panels only |
+| `session` | the session's own Windows taskbar: `session.taskbar` |
+
+Identification scores every app and view on its cues (text where it belongs, a regex such as a URL, the background colour, panes where the app draws them) and reports the best with a confidence 0 to 1 and the runner-up; below 0.5 the screen is `generic`. On the generated eval screens every app and view is identified right, at a mean confidence of .95. `jharokha_status` and full reads name it (`app=teams view=chat confidence=0.97`).
+
+A region is the pane under a point of the screen, found from the app's own divider lines and colours, so it follows the window size and zoom; a box of fractions is its fallback. Its `reader` is `text` or `grid` (`list`, `table` and `form` are reserved, read as text for now). A grid region is read row by row on the terminal's character grid, so paths, numbers and table columns that OCR splits apart come back whole. The `focus` region is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. A terminal view's `prompt` is a regex for its shell's prompt, for `jharokha_run` (default: PowerShell's, cmd's or bash's).
+
+Calibration is yours, in a git-ignored `apps.toml`: per app and view the regions measured on your screen (they come before panes and boxes), variants such as one per zoom level, chosen by where their anchor text sits, a grid's row pitch and character width, the focus and prompt; regions and spots of the session (taskbar icons). The same file can define new apps or replace built-in ones. `jharokha measure APP --anchor TEXT [--view VIEW] [--zoom=-5..2] [--focus NAME] [--grid NAME]` writes calibration from what is on screen. Start from [`apps.example.toml`](apps.example.toml); the server reads `--apps PATH`, else `$JHAROKHA_APPS`, else `./apps.toml`. An old `layouts.toml` (`--layouts`, `$JHAROKHA_LAYOUTS`, `./layouts.toml`) still works unchanged: its tables are read as calibration of the built-in app of the same name (`teams@-3` is a zoom variant of Teams chat), other anchored tables as apps of their own, and tables without an anchor as session regions under their old names.
+
 ## Limits
 
 - RDP sends no frames to a minimized window. Covered by other windows is fine; minimized is not.
 - Windows OCR gives no confidence score and confuses lookalikes (`0`/`O`, `1`/`l`/`I`). Words mixing digits and letters are flagged in `detailed` output; `find` folds them; `verify` gets a second opinion.
-- Keep the session window one size. Panels adapt to any size, but named regions and click points measured at one size and zoom are only right at that size; launch the client at a fixed window size rather than resizing it by hand.
+- Keep the session window one size. Panels and the built-in regions placed on them adapt to any size, but calibrated regions and click points measured at one size and zoom are only right at that size; launch the client at a fixed window size rather than resizing it by hand.
+- Identification knows only the apps it has definitions for, by their English UI text; anything else is `generic`.
 - Windows only. A port would live beside `src/jharokha/win/` and reuse `core/`.
 
 ## Licence
