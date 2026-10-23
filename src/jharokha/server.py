@@ -892,8 +892,8 @@ def build_server(
         """Type text into whatever has keyboard focus inside the remote session. Click or
         focus the field first and confirm with a read. The text is sent as given: a newline
         is Enter (or the app's newline, below), and backslash escapes are not decoded. Long
-        text is typed in short chunks with a check between them that nobody is using this
-        computer, whose keys would mix in; the error says how much went. Nothing is sent
+        text stops at the first key or click of someone using this computer, whose keys
+        would mix in; the error says how much went. Nothing is sent
         unless the session window is in the foreground (error not_foreground); if Windows
         will not bring it there, pass focus_at, a blank client point [x, y] to click first,
         such as empty terminal space. For a command, end text with a newline and pass until =

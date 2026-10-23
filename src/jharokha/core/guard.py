@@ -7,6 +7,7 @@ actions engine can call the same checks before each step."""
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -22,13 +23,15 @@ USER_IDLE_S = 3.0
 # Our SendInput reaches the raw input thread a little after we note the tick, and the tick
 # itself moves in 15.6 ms steps; input this close after ours is still ours.
 OWN_MARGIN_MS = 250
-# While typing, our keys come every few ms and overwrite the last-input time, so a user's
-# keystroke is only seen in a pause after a chunk: one past this margin after our last key.
-# Smaller than OWN_MARGIN_MS so the pause can stay short; a late tick only refuses (safe).
-CHUNK_MARGIN_MS = 50
-TYPE_CHUNK = 8  # characters typed between two checks for the user's own input
-TYPE_PAUSE_S = 0.15  # the pause after a chunk in which a user's keystroke shows
 _WRAP = 1 << 32  # GetTickCount wraps every 49.7 days
+
+# While input is sent, low-level keyboard and mouse hooks see every event on this computer
+# (win/guard.UserWatch); these flags mark the ones SendInput made, which are ours.
+LLKHF_INJECTED = 0x10
+LLMHF_INJECTED = 0x01
+WM_MOUSEMOVE = 0x0200
+# A mouse resting on a desk drifts by a pixel or two; a hand on it moves it further.
+MOVE_SLACK_PX = 4
 
 # Identified this surely, or the front app does not count as the one expected.
 EXPECT_CONFIDENCE = 0.6
@@ -150,6 +153,50 @@ def user_idle_s(
 def check_user_idle(idle_s: float | None, threshold_s: float = USER_IDLE_S) -> None:
     if idle_s is not None and idle_s < threshold_s:
         raise UserActive(idle_s, threshold_s)
+
+
+class Activity:
+    """The user's input while jharokha sends, decided one hook event at a time: a key or a
+    button or wheel that SendInput did not make, or a mouse moved more than slack pixels
+    from where it was when watching began (origin, else its first move). `at` is the
+    clock's time of the first such event, None while there was none. Fed by the hook
+    thread, read by the sender before each character."""
+
+    def __init__(
+        self,
+        origin: Point | None = None,
+        clock: Callable[[], float] | None = None,
+        slack: int = MOVE_SLACK_PX,
+    ) -> None:
+        self.origin = origin
+        self.clock = clock or time.monotonic
+        self.slack = slack
+        self.at: float | None = None
+        self.what = ""  # "key", "button" or "move": the first event that was the user's
+
+    def key(self, flags: int) -> bool:
+        """A key down or up; True when it was the user's."""
+        return not flags & LLKHF_INJECTED and self._seen("key")
+
+    def mouse(self, msg: int, x: int, y: int, flags: int) -> bool:
+        """A mouse event at screen point (x, y); True when it was the user's."""
+        if flags & LLMHF_INJECTED:
+            return False
+        if msg != WM_MOUSEMOVE:
+            return self._seen("button")
+        if self.origin is None:
+            self.origin = (x, y)
+        ox, oy = self.origin
+        return max(abs(x - ox), abs(y - oy)) > self.slack and self._seen("move")
+
+    def _seen(self, what: str) -> bool:
+        if self.at is None:
+            self.at, self.what = self.clock(), what
+        return True
+
+    def user_seen(self) -> float | None:
+        """Seconds since the user's first event while watching, or None."""
+        return None if self.at is None else max(0.0, self.clock() - self.at)
 
 
 def covered_parts(

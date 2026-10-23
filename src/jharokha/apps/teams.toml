@@ -23,11 +23,12 @@ weight = 0.5
 pane = [0, 0, 1, 0.052]
 weight = 0.5
 
-# Enter in the compose box sends the message to everyone in the chat; Shift+Enter adds a
-# line. Typed newlines are sent as Shift+Enter, and Enter itself needs allow="irreversible".
+# Enter in the compose box sends the message to everyone in the chat, and so does Ctrl+Enter
+# (also with formatting on, where Enter adds a line); Shift+Enter adds a line. Typed
+# newlines are sent as Shift+Enter, and Enter or Ctrl+Enter needs allow="irreversible".
 [app.teams.policy]
 newline = "shift+enter"
-irreversible_keys = ["enter"]
+irreversible_keys = ["enter", "ctrl+enter"]
 
 [app.teams.view.chat]
 ready = "Type a message"
