@@ -100,6 +100,17 @@ user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
 user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
+user32.OpenClipboard.argtypes = [wintypes.HWND]
+user32.GetClipboardData.restype = wintypes.HANDLE
+user32.GetClipboardData.argtypes = [wintypes.UINT]
+user32.SetClipboardData.restype = wintypes.HANDLE
+user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+CF_UNICODETEXT, GMEM_MOVEABLE = 13, 0x0002
 user32.VkKeyScanW.restype = ctypes.c_short
 
 
@@ -108,6 +119,10 @@ class Covered(RuntimeError):
 
 
 class NotForeground(RuntimeError):
+    pass
+
+
+class ClipboardBusy(RuntimeError):
     pass
 
 
@@ -228,8 +243,78 @@ def type_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> 
             time.sleep(0.01)
 
 
+def paste_text(hwnd: int, text: str, focus_at: tuple[int, int] | None = None) -> None:
+    """Text through the clipboard and Ctrl+V: exact and as fast for 10 KB as for 10 bytes,
+    where typing goes key by key. Needs clipboard redirection from this machine to the
+    session. A final newline is sent as Enter after the paste. The local clipboard's text is
+    put back afterwards."""
+    body, enter = (text[:-1], True) if text.endswith("\n") else (text, False)
+    old = _clipboard()
+    _set_clipboard(body.replace("\r\n", "\n").replace("\n", "\r\n"))
+    try:
+        time.sleep(0.2)  # the client announces the new clipboard to the session
+        x, y = focus_at or (None, None)
+        with _active(hwnd, x, y):
+            _ensure_foreground(hwnd, focus_at is not None)
+            _chord(_vks("ctrl+v"))
+            if enter:
+                time.sleep(0.2)
+                _ensure_foreground(hwnd, False)
+                _chord([KEYS["enter"]])
+        # The session fetches the text only when it pastes, after the keys arrive.
+        time.sleep(0.5)
+    finally:
+        _set_clipboard(old)
+
+
+def _clipboard() -> str | None:
+    with _open_clipboard():
+        h = user32.GetClipboardData(CF_UNICODETEXT)
+        if not h:
+            return None
+        p = kernel32.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(p) if p else None
+        finally:
+            kernel32.GlobalUnlock(h)
+
+
+def _set_clipboard(text: str | None) -> None:
+    with _open_clipboard():
+        user32.EmptyClipboard()
+        if text is None:
+            return
+        data = ctypes.create_unicode_buffer(text)
+        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, ctypes.sizeof(data))
+        ctypes.memmove(kernel32.GlobalLock(h), data, ctypes.sizeof(data))
+        kernel32.GlobalUnlock(h)
+        user32.SetClipboardData(CF_UNICODETEXT, h)
+
+
+@contextmanager
+def _open_clipboard() -> Iterator[None]:
+    for _ in range(20):  # another program may hold it for a moment
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        raise ClipboardBusy("another program holds the clipboard")
+    try:
+        yield
+    finally:
+        user32.CloseClipboard()
+
+
 def press(hwnd: int, combo: str, focus_at: tuple[int, int] | None = None) -> None:
     """A chord like 'ctrl+shift+esc' or 'enter'. Single characters are keys ('ctrl+c')."""
+    vks = _vks(combo)
+    x, y = focus_at or (None, None)
+    with _active(hwnd, x, y):
+        _ensure_foreground(hwnd, focus_at is not None)
+        _chord(vks)
+
+
+def _vks(combo: str) -> list[int]:
     vks = []
     for part in combo.lower().split("+"):
         if part in KEYS:
@@ -238,9 +323,10 @@ def press(hwnd: int, combo: str, focus_at: tuple[int, int] | None = None) -> Non
             vks.append(vk & 0xFF)
         else:
             raise ValueError(f"unknown key '{part}'; use names like enter, esc, ctrl, f5")
-    x, y = focus_at or (None, None)
-    with _active(hwnd, x, y):
-        _ensure_foreground(hwnd, focus_at is not None)
-        _send(*[_key(vk, False) for vk in vks])
-        time.sleep(0.03)
-        _send(*[_key(vk, True) for vk in reversed(vks)])
+    return vks
+
+
+def _chord(vks: list[int]) -> None:
+    _send(*[_key(vk, False) for vk in vks])
+    time.sleep(0.03)
+    _send(*[_key(vk, True) for vk in reversed(vks)])

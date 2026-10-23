@@ -72,6 +72,9 @@ def main() -> None:
         "--stdin", action="store_true", help="read the text from stdin, less one final newline"
     )
     t.add_argument("--enter", action="store_true", help="press Enter after the text")
+    t.add_argument(
+        "--paste", action="store_true", help="send through the clipboard and Ctrl+V, not keys"
+    )
     k = sub.add_parser("press", parents=[after, focus], help="a key or chord, e.g. ctrl+c")
     k.add_argument("keys")
     sub.add_parser("bench")
@@ -155,7 +158,7 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
         text = sys.stdin.read().removesuffix("\n") if args.stdin else args.text
         if text is None:
             sys.exit("type: give the text or --stdin")
-        screen.source.type_text(w, text + ("\n" if args.enter else ""), point)
+        screen.source.type_text(w, text + ("\n" if args.enter else ""), point, args.paste)
     else:
         screen.source.press(w, args.keys, point)
     screen.settle(args.window_title)

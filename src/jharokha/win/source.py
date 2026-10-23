@@ -65,6 +65,8 @@ class WindowsSource:
                 "not_foreground",
                 f"{e} ('{w.title}'). Pass focus_at, a blank point in the session to click first.",
             ) from e
+        except input.ClipboardBusy as e:
+            raise ScreenError("clipboard_busy", f"{e}; nothing was sent. Retry.") from e
         except ValueError as e:
             raise ScreenError("bad_key", str(e)) from e
 
@@ -74,8 +76,10 @@ class WindowsSource:
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
         self._input(w, "click", x, y, button, double)
 
-    def type_text(self, w: WindowInfo, text: str, focus_at: Point | None = None) -> None:
-        self._input(w, "type_text", text, focus_at)
+    def type_text(
+        self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
+    ) -> None:
+        self._input(w, "paste_text" if paste else "type_text", text, focus_at)
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self._input(w, "press", combo, focus_at)

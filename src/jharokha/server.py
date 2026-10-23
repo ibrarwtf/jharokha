@@ -422,17 +422,23 @@ def build_server(
         show: Show = "changed",
         until: str | None = None,
         timeout_s: float = 10,
+        paste: bool = False,
     ) -> str:
         """Type text into whatever has keyboard focus inside the remote session. Click or
-        focus the field first and confirm with a read. Newlines are sent as Enter. Nothing is
-        sent unless the session window is in the foreground (error not_foreground); if
-        Windows will not bring it there, pass focus_at, a blank client point [x, y] to click
-        first, such as empty terminal space. For a command, end text with a newline and pass
-        until = text its output ends with (a prompt, or a marker the command prints)."""
+        focus the field first and confirm with a read. The text is sent as given: a newline
+        is Enter, and backslash escapes are not decoded. Nothing is sent unless the session
+        window is in the foreground (error not_foreground); if Windows will not bring it
+        there, pass focus_at, a blank client point [x, y] to click first, such as empty
+        terminal space. For a command, end text with a newline and pass until = text its
+        output ends with (a prompt, or a marker the command prints). paste=true sends the
+        text through the clipboard and Ctrl+V instead of key by key: exact and instant for
+        long text (scripts, file contents), and keys pressed on this machine meanwhile cannot
+        mix in; needs clipboard sharing into the session, and the local clipboard is put
+        back afterwards. A terminal may ask to confirm a multi-line paste."""
         w, frame = screen.frame(window_title)
         point = _point(focus_at, frame)
         box, old = before_input(window_title, region, show)
-        screen.source.type_text(w, text, point)
+        screen.source.type_text(w, text, point, paste)
         return after_input(window_title, box, old, show, until, timeout_s)
 
     def jharokha_press(
