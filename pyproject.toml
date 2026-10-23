@@ -1,6 +1,6 @@
 [project]
 name = "jharokha"
-version = "0.14.1"
+version = "0.15.0"
 description = "Local MCP server that lets AI agents read and, opt-in, operate a Windows remote-desktop session."
 readme = "README.md"
 license = "MIT"
@@ -16,10 +16,9 @@ dependencies = [
     "winrt-Windows.Graphics.Imaging>=3.2,<4; sys_platform == 'win32'",
     "winrt-Windows.Media.Ocr>=3.2,<4; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams>=3.2,<4; sys_platform == 'win32'",
+    "onnxruntime>=1.20,<2; sys_platform == 'win32'",
+    "numpy>=1.26",
 ]
-
-[project.optional-dependencies]
-verify = ["rapidocr>=3.10,<4", "onnxruntime>=1.20,<2"]
 
 [project.scripts]
 jharokha = "jharokha.__main__:main"
@@ -32,7 +31,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["jharokha[verify]", "pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "pyright>=1.1"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8", "pyright>=1.1"]
 
 [tool.ruff]
 line-length = 100

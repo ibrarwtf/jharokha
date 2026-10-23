@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.15.0
+
+- The second OCR engine is part of every install; the `verify` extra is gone. jharokha runs PP-OCRv6's recognition model (shipped in the package, Apache-2.0) on onnxruntime itself, without rapidocr and OpenCV: about 109 MB on disk (onnxruntime, numpy, the 21 MB model) where the extra was about 240 MB. It reads any box, a line Windows OCR found or a full-width row strip, exactly as rapidocr's recogniser did; OpenCV's resize is reproduced bit for bit. The model loads on first use; peak memory is less than half, by running one line at a time. `verify_unavailable` now means only that the model failed to load.
+- Detailed reads with `verify` give each verified line `agree`: true when both engines read the same text apart from spacing.
+- Panes from pixels: the app's panes are found from its 1 to 2 px divider lines and background colours, in 7 to 12 ms a frame. Reading order goes pane by pane, rows inside, and only a screen with no panes is split by the blank space between text. `jharokha_layout` and `P<n>` regions are these panes. Outlook's list beside its reading pane (a divider line and no gap) now reads apart, and a browser page's table is read row by row where text gaps had cut it into columns.
+- Evals: the Teams, Outlook and terminal screens have real pane backgrounds, divider lines and a session taskbar; a new Edge-like browser screen (address bar, favourites, a request queue); the terminal is drawn in Cascadia Mono (vendored for the evals, SIL OFL) at Windows Terminal's row pitch, where Windows OCR drops text (`PS C:\workpp>` reads `PS C:`). A `panes` axis scores the panes found against those drawn. Baselines regenerated.
+
 ## v0.14.1
 
 - Lock and sign-in screens read as `locked`: the Windows 11 sign-in screen (a name, a password or PIN box, "Sign-in options", "I forgot my PIN"), the locked-account screen and the clock-only lock screen. A session on the sign-in screen used to report `normal`. A screen counts as one only by these phrases, or by showing little else than a password box or a clock and the date.

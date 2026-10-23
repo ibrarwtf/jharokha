@@ -18,10 +18,12 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from jharokha import version
 from jharokha.core.layout import Layout, choose, to_box
 from jharokha.core.models import Box, Frame, Line, Point
+from jharokha.core.panes import reading_panes
 from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
 from jharokha.core.text import (
     agree,
     apply_verified,
+    cells,
     clean,
     command_output,
     find,
@@ -29,7 +31,6 @@ from jharokha.core.text import (
     format_detailed,
     grid,
     looks_locked,
-    panels,
     reading_order,
     suspect,
     wrap_untrusted,
@@ -154,14 +155,13 @@ def build_server(
         if region is None or isinstance(region, list):
             return _box(region)
         if re.fullmatch(r"P\d+", region):
-            frame, lines = read(window_title, None)
-            cells = panels(lines, (0, 0, frame.width, frame.height))
-            if int(region[1:]) >= len(cells):
+            parts = screen_cells(*read(window_title, None))
+            if int(region[1:]) >= len(parts):
                 raise ScreenError(
                     "region_unknown",
-                    f"{region}: the screen has {len(cells)} panels now; see jharokha_layout.",
+                    f"{region}: the screen has {len(parts)} panels now; see jharokha_layout.",
                 )
-            return cells[int(region[1:])][0]
+            return parts[int(region[1:])][0]
         app, _, key = region.partition(".")
         group = [la for la in layouts.values() if la.app == app]
         if not group or key not in group[0].regions:
@@ -181,6 +181,9 @@ def build_server(
                 "Bring that app up, or see jharokha_layout.",
             )
         return to_box(lay.regions[key], frame.width, frame.height)
+
+    def screen_cells(frame: Frame, lines: list[Line]) -> list[tuple[Box, list[Line]]]:
+        return cells(lines, (0, 0, frame.width, frame.height), reading_panes(frame))
 
     def pick(group: list[Layout], frame: Frame, lines: list[Line]) -> Layout | None:
         found = {}
@@ -216,7 +219,13 @@ def build_server(
     watch_args: dict[str, Any] = {"window_title": None, "region": None}
     watcher = Watcher(
         capture=lambda: screen.frame(watch_args["window_title"])[1],
-        ocr=lambda frame: shape(frame, reading_order(source.ocr(frame, watch_args["region"]))),
+        ocr=lambda frame: shape(
+            frame,
+            reading_order(
+                source.ocr(frame, watch_args["region"]),
+                reading_panes(frame, watch_args["region"]),
+            ),
+        ),
     )
 
     def watch_state() -> dict[str, Any]:
@@ -269,11 +278,12 @@ def build_server(
         flags (OCR gives no confidence; words mixing digits and letters are flagged). A region
         crops before OCR and zooms in on small text. Results are paged
         by offset/limit; a truncation note says how to continue. verify re-reads lines with a
-        second OCR engine (30 to 60 ms a line, at most 40): flagged = lines with digits or
-        capitals, where IDs and lookalikes (0/O, 1/l/I) hide; all = every line on the page. A
-        line where the engines disagree shows `| verify: <second reading>` (detailed: a
-        verify field); the second engine is usually right on IDs. Needs the server's verify
-        extra, else fails with verify_unavailable."""
+        second OCR engine (about 30 ms a line, at most 40; the first use loads it, about
+        0.3 s): flagged = lines with digits or capitals, where IDs and lookalikes (0/O, 1/l/I)
+        hide; all = every line on the page. A line where the engines disagree shows
+        `| verify: <second reading>`; detailed gives every verified line a verify field and
+        agree (true when both engines read the same, apart from spacing: trust those more).
+        The second engine is usually right on IDs."""
         frame, lines = read(window_title, region_box(window_title, region))
         page = range(offset, min(offset + limit, len(lines)))
         alt, note = second_reading(frame, lines, verify, page)
@@ -371,16 +381,16 @@ def build_server(
             time.sleep(0.5)
 
     def jharokha_layout(window_title: str | None = None) -> str:
-        """How the screen is divided now. Panels: side-by-side columns and bands found from
-        the blank space between text, in reading order, as `P<n> [x,y,width,height] <lines>
+        """How the screen is divided now. Panels: the app's panes found from its divider lines
+        and background colours (on a screen with neither, from the blank space between
+        text), those holding text, in reading order, as `P<n> [x,y,width,height] <lines>
         lines: <first line>`; pass 'P<n>' as a region to read only that panel. Panel numbers
         follow the current screen and can change when it does. Named regions come from the
         layouts file, with whether each layout's anchor text is on screen."""
         frame, lines = read(window_title, None)
-        cells = panels(lines, (0, 0, frame.width, frame.height))
         rows = [
             f"P{i} [{','.join(map(str, box))}] {len(ps)} lines: {clean(reading_order(ps)[0].text)}"
-            for i, (box, ps) in enumerate(cells)
+            for i, (box, ps) in enumerate(screen_cells(frame, lines))
         ]
         out = [f"frame_id={frame.frame_id} size={frame.width}x{frame.height}"]
         out.append(wrap_untrusted("\n".join(rows) or "(no text)"))

@@ -2,10 +2,11 @@ import ast
 import pathlib
 
 import pytest
+from PIL import Image, ImageDraw
 
-from jharokha.core import layout, text
+from jharokha.core import layout, panes, text
 from jharokha.core.cache import FrameCache
-from jharokha.core.models import Line, Word, union
+from jharokha.core.models import Frame, Line, Word, union
 
 from .conftest import lines_for, render
 
@@ -222,6 +223,48 @@ def test_panels_cover_their_whole_cell():
         ((0, 33, 172, 367), ["Alice", "Bob"]),
         ((172, 33, 468, 367), ["Alice 10:02"]),
     ]
+
+
+def _app_frame() -> Frame:
+    """A title bar over a rail, a list and a thread: a divider line under the bar and one
+    right of the rail, and the list told from the thread only by its background."""
+    img = Image.new("RGBA", (640, 400), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 0, 639, 39), fill=(235, 235, 235))
+    d.rectangle((0, 40, 639, 40), fill=(224, 224, 224))
+    d.rectangle((0, 41, 59, 399), fill=(235, 235, 235))
+    d.rectangle((60, 41, 60, 399), fill=(224, 224, 224))
+    d.rectangle((61, 41, 299, 399), fill=(245, 245, 245))
+    for s, x, y in [("Search", 250, 12), ("Chat", 8, 60), ("Ana Brook", 70, 60)]:
+        d.text((x, y), s, fill="black")
+    for i in range(8):
+        d.text((70, 90 + 30 * i), f"chat number {i}", fill="black")
+        d.text((310, 90 + 30 * i), f"message number {i} in the thread", fill="black")
+    return Frame(640, 400, img.tobytes("raw", "BGRA"), 1, 0.0)
+
+
+def test_panes_from_divider_lines_and_background_colours():
+    found = panes.panes(_app_frame())
+    assert found == [(0, 0, 640, 40), (0, 40, 60, 360), (60, 40, 240, 360), (300, 40, 340, 360)]
+    assert panes.panes(_app_frame(), (0, 40, 640, 360)) == found[1:]
+    assert panes.within(found, (280, 100, 100, 50)) == [(280, 100, 20, 50), (300, 100, 80, 50)]
+    # Text alone draws no panes: such a screen is read by its text gaps.
+    plain = render([(f"line {i} of a plain screen", 10, 10 + 20 * i) for i in range(15)])
+    assert panes.panes(plain) == [(0, 0, 640, 400)] and panes.reading_panes(plain) is None
+
+
+def test_reading_order_reads_pane_by_pane_and_rows_inside():
+    found = panes.reading_panes(_app_frame())
+    lines = lines_for(
+        [("Search", 250, 12), ("Chat", 8, 60)]
+        + [(f"chat number {i}", 70, 90 + 30 * i) for i in range(3)]
+        + [(f"message {i}", 310, 90 + 30 * i) for i in range(3)]
+    )
+    got = [ln.text for ln in text.reading_order(lines, found)]
+    assert got == ["Search", "Chat"] + [f"chat number {i}" for i in range(3)] + [
+        f"message {i}" for i in range(3)
+    ]
+    assert [box for box, _ in text.cells(lines, None, found)] == found
 
 
 def test_layouts_parse_validate_and_scale():
