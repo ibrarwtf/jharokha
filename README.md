@@ -37,6 +37,8 @@ Claude Desktop / Cowork (`claude_desktop_config.json`):
 {"mcpServers": {"jharokha": {"command": "uvx", "args": ["--from", "git+https://github.com/ibrarwtf/jharokha", "jharokha"]}}}
 ```
 
+Running from a checkout with `uv run --project PATH jharokha` instead: add `--no-sync`. Otherwise every new client session re-syncs the environment, and while another session's server is running, Windows will not replace its `jharokha.exe` (`os error 32`), so the server fails to start.
+
 Optional second OCR engine for IDs and lookalikes (see `verify` below), about 240 MB more on disk (mostly OpenCV, which RapidOCR needs) and 30 MB more memory at start, 60 MB more after the first `verify`:
 
 ```
