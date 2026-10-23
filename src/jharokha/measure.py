@@ -25,6 +25,7 @@ def run(
     path: Path,
     zoom: str | None,
     names: str | None,
+    focus: str | None = None,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", app):
         raise SystemExit("measure: app must be letters, digits, - or _")
@@ -81,14 +82,19 @@ def run(
         raise SystemExit(f"measure: --names needs {len(found)} names for {', '.join(found)}")
 
     w, h = size
+    old = path.read_text(encoding="utf-8") if path.exists() else ""
+    # Remeasuring keeps the focus set earlier, by hand or with --focus.
+    kept = [la.focus for la in layout.parse(old, str(path)).values() if la.app == app]
+    focus = focus or next((f for f in kept if f), None)
+    if focus and focus not in {rename.get(k, k) for k in found}:
+        raise SystemExit(f"measure: --focus {focus} is not one of the regions found")
     tables = []
     for s, (regions, at) in sorted(seen.items(), reverse=True):
         name = f"{app}@{s:+d}" if steps else app
         fr = {rename.get(k, k): layout.to_fraction(b, w, h) for k, b in regions.items()}
-        tables.append(layout.table(name, anchor, fr, at if steps else None))
+        tables.append(layout.table(name, anchor, fr, at if steps else None, focus))
         print(f"{name}: " + "  ".join(f"{rename.get(k, k)}={list(b)}" for k, b in regions.items()))
     head = f"# {app}: written by `jharokha measure` at {w}x{h} client"
-    old = path.read_text(encoding="utf-8") if path.exists() else ""
     path.write_text(layout.replace_app(old, app, head + "\n" + "\n".join(tables)), encoding="utf-8")
     layout.load(path)  # what we wrote must read back
 

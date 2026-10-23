@@ -90,6 +90,9 @@ def main() -> None:
         "and Ctrl+- in the session, then restores the zoom",
     )
     m.add_argument("--names", help="comma-separated names for the regions found, in order")
+    m.add_argument(
+        "--focus", help="the region input tools report changes in, e.g. thread (default: kept)"
+    )
     args = p.parse_args()
     source = _source()
     if args.cmd is None:
@@ -124,7 +127,14 @@ def main() -> None:
 
             path = Path(args.layouts or os.environ.get("JHAROKHA_LAYOUTS") or "layouts.toml")
             measure.run(
-                screen, args.window_title, args.app, args.anchor, path, args.zoom, args.names
+                screen,
+                args.window_title,
+                args.app,
+                args.anchor,
+                path,
+                args.zoom,
+                args.names,
+                args.focus,
             )
     except ScreenError as e:
         sys.exit(str(e))

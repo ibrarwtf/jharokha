@@ -11,16 +11,22 @@
 # fractions where its anchor text sat when measured; `teams.thread` then uses the variant
 # whose anchor is nearest to where it is now.
 #
+# `focus` (optional, needs anchor) names the region input tools report changes in while the
+# app is on screen: after a click in the chat list you get the thread that opened, not the
+# list again. `jharokha measure APP --focus NAME` writes it; remeasuring keeps it.
+#
 # Picked up from --layouts PATH, else $JHAROKHA_LAYOUTS, else ./layouts.toml.
 # These values fit the synthetic chat and mail screens in tests/eval_ocr.py.
 
 [teams]
 anchor = "Chat"
+focus = "thread"
 list = [0, 0, 0.24, 1]
 thread = [0.24, 0, 0.76, 1]
 
 [outlook]
 anchor = "Inbox"
+focus = "reading"
 folders = [0, 0, 0.14, 1]
 list = [0.14, 0, 0.325, 1]
 reading = [0.465, 0, 0.535, 1]
