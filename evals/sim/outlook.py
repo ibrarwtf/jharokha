@@ -3,7 +3,12 @@ an item in the reading pane; the wheel scrolls the list), the reading pane. Cale
 (Ctrl+2 or the rail's Calendar; Ctrl+1 or Mail goes back): the switch takes a second, as
 the real one does. The ribbon changes at once, the calendars pane comes at 0.3 s, and the
 week grid with its "Today", the view's ready text, last at 1.0 s; a screen that settles in
-between is the calendar view, not yet ready."""
+between is the calendar view, not yet ready.
+
+Writing (mail view): Reply or Ctrl+R answers the selected mail, New mail or Ctrl+N starts
+one, in the reading pane. Typing goes to its body, where Enter adds a line; Ctrl+Enter and
+Alt+S SEND it, as Outlook does, and record a `sent` event; Esc discards it. `sent` lists
+every mail sent, so a test can assert that nothing was."""
 
 from __future__ import annotations
 
@@ -55,6 +60,13 @@ class Mail:
     unread: bool = True
 
 
+@dataclass
+class Draft:
+    to: str
+    subject: str
+    body: list[str]
+
+
 class Outlook(SimApp):
     id = "outlook"
 
@@ -71,6 +83,8 @@ class Outlook(SimApp):
         self.day0 = rng.randint(5, 24)
         slots = sorted(rng.sample([(d, h) for d in range(5) for h in range(10)], 6))
         self.events = [(d, h, rng.choice([*EVENTS, f"1:1 {_name(rng)}"])) for d, h in slots]
+        self.draft: Draft | None = None  # the mail being written
+        self.sent: list[tuple[str, str]] = []  # (to, body)
 
     @property
     def view(self) -> str:
@@ -121,6 +135,16 @@ class Outlook(SimApp):
             c.text(236, y + 44, fit(m.preview, 30), PX - 1, GREY)
         if not self.mails:
             c.text(236, LIST_TOP, "Nothing in this folder", PX, GREY)
+        if self.draft is not None:
+            d = self.draft
+            c.text(516, 170, "Send", PX, INK, True)
+            c.text(596, 170, "Discard", PX)
+            c.text(516, 210, f"To  {d.to}", PX - 1)
+            c.text(516, 240, f"Subject  {fit(d.subject, 44)}", PX - 1)
+            for i, line in enumerate(d.body[-20:]):
+                c.text(516, 290 + 28 * i, fit(line, 56), PX)
+            return
+        if not self.mails:
             return
         m = self.mails[self.selected]
         c.text(516, 170, fit(m.subject, 50), PX + 4, INK, True)
@@ -198,6 +222,27 @@ class Outlook(SimApp):
         if switch == self._switch:
             self.stage = stage
 
+    def write(self, reply: bool) -> None:
+        """A reply to the selected mail, or a new one, in the reading pane."""
+        if self._view != "mail" or self.draft is not None:
+            return
+        if reply and self.mails:
+            m = self.mails[self.selected]
+            self.draft = Draft(m.sender, f"RE: {m.subject}", [""])
+        elif not reply:
+            self.draft = Draft("", "", [""])
+        if self.draft is not None:
+            self.event("compose", self.draft.subject or "new mail")
+
+    def send(self) -> None:
+        d = self.draft
+        if d is None:
+            return
+        self.draft = None
+        body = "\n".join(d.body).strip()
+        self.sent.append((d.to, body))
+        self.event("sent", f"{d.to or 'nobody'}: {d.subject}")
+
     def click(self, x: int, y: int, button: str, double: bool) -> None:
         if x < 61 and 165 <= y < 200:
             self.go("mail")
@@ -205,6 +250,14 @@ class Outlook(SimApp):
             self.go("calendar")
         elif self._view != "mail":
             return
+        elif 110 <= y < 140 and 70 <= x < 180:
+            self.write(reply=False)
+        elif 110 <= y < 140 and 290 <= x < 360:
+            self.write(reply=True)
+        elif self.draft is not None and 165 <= y < 195 and 510 <= x < 570:
+            self.send()
+        elif self.draft is not None and 165 <= y < 195 and 590 <= x < 670:
+            self.draft = None
         elif 62 <= x < 220 and 165 <= y < 165 + 34 * len(FOLDERS):
             self.folder = FOLDERS[(y - 165) // 34]
             self.selected = self.top = 0
@@ -220,9 +273,29 @@ class Outlook(SimApp):
             most = max(0, len(self.mails) - self.visible())
             self.top = max(0, min(most, self.top - ticks))
 
+    def char(self, ch: str) -> None:
+        if self.draft is not None:
+            self.draft.body[-1] += ch
+
     def key(self, key: str, mods: Mods) -> None:
+        d = self.draft
         if "ctrl" in mods and key in ("1", "2"):
             self.go("mail" if key == "1" else "calendar")
+        elif "ctrl" in mods and key in ("n", "r"):
+            self.write(reply=key == "r")
+        elif d is None:
+            return
+        elif (key == "enter" and "ctrl" in mods) or (key == "s" and "alt" in mods):
+            self.send()
+        elif key == "enter":
+            d.body.append("")
+        elif key == "esc":
+            self.draft = None
+        elif key == "backspace":
+            if d.body[-1]:
+                d.body[-1] = d.body[-1][:-1]
+            elif len(d.body) > 1:
+                d.body.pop()
 
 
 def _mail(rng: random.Random) -> Mail:

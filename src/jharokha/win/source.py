@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from jharokha.core.guard import CHUNK_MARGIN_MS, InputLeased, UserActive, refusal, warnings
+from jharokha.core.guard import InputLeased, UserActive, refusal, warnings
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.screen import ScreenError
 from jharokha.win import capture, ocr, recognize, window
@@ -71,15 +71,13 @@ class WindowsSource:
         }
         return out
 
-    def _input(self, w: WindowInfo, fn: str, *args: Any, chunked: bool = False) -> None:
+    def _input(self, w: WindowInfo, fn: str, *args: Any, watched: bool = False) -> None:
         """Every input goes through here: this process takes the window's lease (another
         jharokha sending to it refuses), nobody may have used this laptop in the last few
-        seconds, and long text is checked again between chunks."""
+        seconds, and while text is sent, hooks stop it at the user's first key or click."""
         from jharokha.win import guard, input
 
-        kw: dict[str, Any] = {}
-        if chunked:
-            kw["between"] = lambda: guard.ensure_user_idle(margin_ms=CHUNK_MARGIN_MS)
+        kw: dict[str, Any] = {"watch": guard.UserWatch} if watched else {}
         try:
             guard.Lease(w.hwnd).take()
             self._wait_idle(guard.ensure_user_idle)
@@ -100,6 +98,8 @@ class WindowsSource:
             ) from e
         except input.ClipboardBusy as e:
             raise ScreenError("clipboard_busy", f"{e}; nothing was sent. Retry.") from e
+        except guard.WatchFailed as e:
+            raise ScreenError("watch_failed", f"{e}. Retry; if it keeps failing, report it.") from e
         except ValueError as e:
             raise ScreenError("bad_key", str(e)) from e
 
@@ -122,7 +122,7 @@ class WindowsSource:
     def type_text(
         self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
     ) -> None:
-        self._input(w, "paste_text" if paste else "type_text", text, focus_at, chunked=True)
+        self._input(w, "paste_text" if paste else "type_text", text, focus_at, watched=True)
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self._input(w, "press", combo, focus_at)

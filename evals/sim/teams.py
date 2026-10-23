@@ -3,7 +3,8 @@ own, older messages above that the wheel scrolls back to (animated, a message at
 a click on a chat opening it, and a compose box that typing goes to.
 
 Enter in the compose box SENDS what is in it, as Teams does, and records a `sent` event;
-Shift+Enter adds a line, and so does Enter once format mode is on (Ctrl+Shift+X). A paste
+so does Ctrl+Enter, also in format mode (Ctrl+Shift+X), where Enter adds a line instead;
+Shift+Enter always adds a line. A paste
 keeps its newlines as lines. `sent` lists every message sent, so a test can assert that
 nothing was. Each chat keeps its own draft."""
 
@@ -199,7 +200,9 @@ class Teams(SimApp):
                 self.event("search", self.search)
         elif self.focus == "compose":
             draft = self.chat.draft
-            if key == "enter" and ("shift" in mods or self.format):
+            if key == "enter" and "ctrl" in mods:
+                self.send()
+            elif key == "enter" and ("shift" in mods or self.format):
                 draft.append("")
             elif key == "enter":
                 self.send()

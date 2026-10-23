@@ -9,6 +9,11 @@ from datetime import UTC, datetime
 import pytest
 
 from jharokha.core.guard import (
+    LLKHF_INJECTED,
+    LLMHF_INJECTED,
+    MOVE_SLACK_PX,
+    WM_MOUSEMOVE,
+    Activity,
     Holder,
     InputLeased,
     Irreversible,
@@ -85,6 +90,48 @@ def test_check_user_idle_raises_inside_the_threshold():
     with pytest.raises(UserActive, match="1.0 s ago") as e:
         check_user_idle(1.0)
     assert e.value.idle_s == 1.0
+
+
+# What the low-level hooks report while jharokha sends: message, point, flags.
+WM_LBUTTONDOWN, WM_MOUSEWHEEL = 0x0201, 0x020A
+
+
+def watched(origin: tuple[int, int] | None = (500, 300)) -> tuple[Activity, list[float]]:
+    now = [10.0]
+    return Activity(origin, clock=lambda: now[0]), now
+
+
+def test_our_injected_keys_and_clicks_are_not_the_user():
+    a, _ = watched()
+    assert not a.key(LLKHF_INJECTED)
+    assert not a.key(LLKHF_INJECTED | 0x80)  # a key up we sent
+    assert not a.mouse(WM_LBUTTONDOWN, 10, 10, LLMHF_INJECTED)
+    assert not a.mouse(WM_MOUSEMOVE, 900, 900, LLMHF_INJECTED | 0x02)
+    assert a.user_seen() is None
+
+
+def test_a_users_key_stops_input_and_is_dated():
+    a, now = watched()
+    assert not a.key(LLKHF_INJECTED)
+    now[0] = 10.5
+    assert a.key(0x00) and a.what == "key"
+    now[0] = 10.75
+    assert a.user_seen() == 0.25
+    assert a.key(0x80) and a.at == 10.5  # the first one dates it
+
+
+def test_a_users_click_or_wheel_counts_and_a_resting_mouse_does_not():
+    a, _ = watched()
+    assert not a.mouse(WM_MOUSEMOVE, 503, 298, 0)  # drift: within MOVE_SLACK_PX
+    assert not a.mouse(WM_MOUSEMOVE, 496, 304, 0)
+    assert a.user_seen() is None
+    assert a.mouse(WM_MOUSEMOVE, 500 + MOVE_SLACK_PX + 1, 300, 0) and a.what == "move"
+    b, _ = watched()
+    assert b.mouse(WM_MOUSEWHEEL, 500, 300, 0) and b.what == "button"
+    c, _ = watched(origin=None)  # no cursor position: the first move is where it rests
+    assert not c.mouse(WM_MOUSEMOVE, 50, 50, 0)
+    assert not c.mouse(WM_MOUSEMOVE, 52, 51, 0)
+    assert c.mouse(WM_MOUSEMOVE, 40, 50, 0)
 
 
 MONITOR = (0, 0, 1920, 1080)

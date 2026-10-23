@@ -175,6 +175,38 @@ def terminal(seed: int, px: int = 20) -> Screen:
     )
 
 
+SHELLS = [  # a tab's title and its shell's prompt
+    ("Windows PowerShell", "PS C:\\work\\{proj}>"),
+    ("Command Prompt", "C:\\work\\{proj}>"),
+    ("Ubuntu", "dev@build:~/{proj}$"),
+]
+
+
+def prompt(seed: int, px: int = 20, shell: int = 0, empty: bool = False) -> Screen:
+    """A terminal just opened: its tab's title over a fresh prompt and nothing else, or
+    (empty) the title only, as before the prompt shows. Identified by little text."""
+    rng = random.Random(seed)
+    title, line = SHELLS[shell]
+    line = line.format(proj=rng.choice(PROJECTS))
+    texts = [Text(14, 10, title, "Segoe UI", 12, TERM_FG)]
+    if not empty:
+        texts.append(Text(8, 46, line, "Cascadia Mono", px, TERM_FG))
+    bar, clock = _taskbar(rng)
+    return Screen(
+        f"prompt-{seed}-{px}-{shell}{'-empty' if empty else ''}",
+        "terminal",
+        W,
+        H,
+        TERM_BG,
+        texts + clock,
+        [title] + ([] if empty else [line]) + [t.text for t in clock],
+        grid=(0, 42, 1156, TASKBAR_Y - 42),
+        rects=[((0, 0, W, 38), (32, 32, 32)), ((0, 38, W, 1), (64, 64, 64)), *bar],
+        panes=[(0, 0, W, 38), (0, 39, W, TASKBAR_Y - 39), TASKBAR],
+        view="shell",
+    )
+
+
 # New Teams: title bar above a divider at y=62, the app rail left of a divider at x=88, chat
 # and thread headers above a divider at y=142, and a chat list told from its thread only by
 # background colour.
@@ -575,6 +607,8 @@ def suite(quick: bool) -> list[Screen]:
     out: list[Screen] = []
     for s in seeds:
         out += [terminal(s, px) for px in term]
+        out += [prompt(s, px, (s - 100 + i) % len(SHELLS)) for i, px in enumerate(term)]
+        out.append(prompt(s, term[-1], (s - 100) % len(SHELLS), empty=True))
         out += [teams(s, px) for px in small]
         out += [outlook(s, px) for px in small]
         out += [calendar(s, px) for px in small]

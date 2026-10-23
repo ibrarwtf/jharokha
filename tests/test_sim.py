@@ -309,12 +309,51 @@ async def test_someone_at_this_computer_stops_input_even_mid_text():
         r = await a.call("jharokha_type", text="Get-Date\n", show="none", expect="terminal")
         assert r.startswith("user_active: someone used this computer 0.4 s ago")
         assert shell.input == "" and shell.log == []
-        # Idle when typing starts; the user's keys arrive after the first chunk.
-        answers = iter([None])
-        source.user_idle = lambda: next(answers, 0.1)
+        # Idle when typing starts; the hooks see the user's key as the 9th character is due.
+        source.user_idle = lambda: None
+        source.user_keys_at = 8
         r = await a.call("jharokha_type", text="Get-ChildItem -Recurse\n", show="none")
         assert r.startswith(
             "user_active: someone used this computer while jharokha was typing: stopped "
             "after 8 of 23 characters, 'Get-Chil' being the last sent"
         )
-    assert shell.input == "Get-Chil" and shell.log == []
+        assert shell.input == "Get-Chil" and shell.log == []
+        # A paste stops before its Enter.
+        await a.call("jharokha_press", keys="ctrl+c", show="none")
+        source.user_keys_at = 0
+        r = await a.call("jharokha_type", text="Get-Date\n", paste=True, show="none")
+        assert r.startswith("user_active: someone used this computer while jharokha was typing")
+    assert shell.input == "Get-Date" and shell.log == []
+
+
+@pytest.mark.windows
+async def test_outlook_send_keys_are_held_back_until_allowed():
+    source, client = await session("outlook")
+    outlook = source.desk.outlook
+    async with client as c:
+        a = Agent(c, source)
+        await a.call("jharokha_press", keys="ctrl+r", show="none", expect="outlook.mail")
+        await a.call("jharokha_type", text="On it.\nWill reply today.", show="none")
+        assert outlook.draft is not None and outlook.draft.body == ["On it.", "Will reply today."]
+        for keys in ("ctrl+enter", "Alt+S"):
+            r = await a.call("jharokha_press", keys=keys, show="none")
+            assert r.startswith(f"irreversible: {keys.lower()} is irreversible in outlook.mail")
+        assert outlook.sent == [] and source.desk.safety() == []
+        await a.call("jharokha_press", keys="alt+s", allow="irreversible", show="none")
+    assert outlook.sent == [(outlook.mails[0].sender, "On it.\nWill reply today.")]
+    assert [e.kind for e in source.desk.safety()] == ["sent"]
+
+
+@pytest.mark.windows
+async def test_teams_ctrl_enter_sends_and_is_held_back():
+    source, client = await session("teams")
+    teams = source.desk.teams
+    async with client as c:
+        a = Agent(c, source)
+        await a.call("jharokha_press", keys="ctrl+shift+x", show="none")  # formatting on
+        await a.call("jharokha_type", text="one\ntwo", show="none")
+        r = await a.call("jharokha_press", keys="ctrl+enter", show="none")
+        assert r.startswith("irreversible: ctrl+enter is irreversible in teams.chat")
+        assert teams.sent == [] and teams.chat.draft == ["one", "two"]
+        await a.call("jharokha_press", keys="ctrl+enter", allow="irreversible", show="none")
+    assert teams.sent == [(teams.chat.name, "one\ntwo")]

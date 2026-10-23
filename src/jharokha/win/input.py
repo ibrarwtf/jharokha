@@ -10,16 +10,11 @@ import ctypes
 import re
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from ctypes import wintypes
+from typing import Protocol
 
-from jharokha.core.guard import (
-    TYPE_CHUNK,
-    TYPE_PAUSE_S,
-    USER_IDLE_S,
-    TypingInterrupted,
-    UserActive,
-)
+from jharokha.core.guard import USER_IDLE_S, TypingInterrupted
 from jharokha.win.guard import record_own_input
 
 user32 = ctypes.windll.user32
@@ -139,6 +134,14 @@ class ClipboardBusy(RuntimeError):
     pass
 
 
+class Seen(Protocol):
+    def user_seen(self) -> float | None: ...
+
+
+# Starts watching for the user's own input (win/guard.UserWatch) and stops on leaving.
+Watch = Callable[[], AbstractContextManager[Seen]]
+
+
 def _bring_to_front(hwnd: int) -> None:
     """A process without a window may not take the foreground; attaching to the current
     foreground thread lifts that restriction."""
@@ -253,57 +256,55 @@ def type_text(
     hwnd: int,
     text: str,
     focus_at: tuple[int, int] | None = None,
-    between: Callable[[], None] | None = None,
+    watch: Watch | None = None,
 ) -> None:
     """Characters on the current keyboard layout go as scan codes (with shift when needed),
     anything else as a unicode event. focus_at is a client point to click when the session
-    does not come to the front by itself. between, called after each TYPE_CHUNK characters
-    and a short pause, raises UserActive when someone used this laptop meanwhile: their
-    keys would land in the middle of ours, so the rest is not sent."""
+    does not come to the front by itself. watch looks out for the user's own keys and
+    clicks while typing; once it has seen one, TypingInterrupted is raised before the next
+    character: their keys would land in the middle of ours, so the rest is not sent. It
+    starts after the focus click and cursor moves, which are ours."""
     x, y = focus_at or (None, None)
     with _active(hwnd, x, y):
         _ensure_foreground(hwnd, focus_at is not None)
-        for i, ch in enumerate(text):
-            if between and i and i % TYPE_CHUNK == 0:
-                _pause_and_check(between, i, text)
-            if user32.GetForegroundWindow() != hwnd:
-                raise NotForeground(
-                    f"focus left the session after {i} of {len(text)} characters, "
-                    f"{text[:i][-20:]!r} being the last sent; the rest was not sent"
-                )
-            if ch == "\n":
-                _send(_key(KEYS["enter"], False), _key(KEYS["enter"], True))
-                continue
-            vk = user32.VkKeyScanW(ch)
-            if vk == -1 or (vk >> 8) & 0x6:  # not on the layout, or needs ctrl/alt
-                _send(_unicode(ch, False), _unicode(ch, True))
-                continue
-            shift = (vk >> 8) & 0x1
-            seq = [_key(vk & 0xFF, False), _key(vk & 0xFF, True)]
-            if shift:
-                seq = [_key(KEYS["shift"], False), *seq, _key(KEYS["shift"], True)]
-            _send(*seq)
-            time.sleep(0.01)
+        with watch() if watch else nullcontext() as seen:
+            _type(hwnd, text, seen)
 
 
-def _pause_and_check(between: Callable[[], None], sent: int, text: str) -> None:
-    time.sleep(TYPE_PAUSE_S)
-    try:
-        between()
-    except UserActive as e:
-        raise TypingInterrupted(e.idle_s, USER_IDLE_S, sent, text) from e
+def _type(hwnd: int, text: str, seen: Seen | None) -> None:
+    for i, ch in enumerate(text):
+        if seen is not None and (ago := seen.user_seen()) is not None:
+            raise TypingInterrupted(ago, USER_IDLE_S, i, text)
+        if user32.GetForegroundWindow() != hwnd:
+            raise NotForeground(
+                f"focus left the session after {i} of {len(text)} characters, "
+                f"{text[:i][-20:]!r} being the last sent; the rest was not sent"
+            )
+        if ch == "\n":
+            _send(_key(KEYS["enter"], False), _key(KEYS["enter"], True))
+            continue
+        vk = user32.VkKeyScanW(ch)
+        if vk == -1 or (vk >> 8) & 0x6:  # not on the layout, or needs ctrl/alt
+            _send(_unicode(ch, False), _unicode(ch, True))
+            continue
+        shift = (vk >> 8) & 0x1
+        seq = [_key(vk & 0xFF, False), _key(vk & 0xFF, True)]
+        if shift:
+            seq = [_key(KEYS["shift"], False), *seq, _key(KEYS["shift"], True)]
+        _send(*seq)
+        time.sleep(0.01)
 
 
 def paste_text(
     hwnd: int,
     text: str,
     focus_at: tuple[int, int] | None = None,
-    between: Callable[[], None] | None = None,
+    watch: Watch | None = None,
 ) -> None:
     """Text through the clipboard and Ctrl+V: exact and as fast for 10 KB as for 10 bytes,
     where typing goes key by key. Needs clipboard redirection from this machine to the
-    session. A final newline is sent as Enter after the paste. The local clipboard's text is
-    put back afterwards."""
+    session. A final newline is sent as Enter after the paste, unless watch saw the user's
+    own input since the Ctrl+V. The local clipboard's text is put back afterwards."""
     body, enter = (text[:-1], True) if text.endswith("\n") else (text, False)
     old = _clipboard()
     _set_clipboard(body.replace("\r\n", "\n").replace("\n", "\r\n"))
@@ -312,13 +313,14 @@ def paste_text(
         x, y = focus_at or (None, None)
         with _active(hwnd, x, y):
             _ensure_foreground(hwnd, focus_at is not None)
-            _chord(_vks("ctrl+v"))
-            if enter:
-                time.sleep(0.2)
-                if between:
-                    _pause_and_check(between, len(body), body + "\n")
-                _ensure_foreground(hwnd, False)
-                _chord([KEYS["enter"]])
+            with watch() if watch and enter else nullcontext() as seen:
+                _chord(_vks("ctrl+v"))
+                if enter:
+                    time.sleep(0.2)
+                    if seen is not None and (ago := seen.user_seen()) is not None:
+                        raise TypingInterrupted(ago, USER_IDLE_S, len(body), body + "\n")
+                    _ensure_foreground(hwnd, False)
+                    _chord([KEYS["enter"]])
         # The session fetches the text only when it pastes, after the keys arrive.
         time.sleep(0.5)
     finally:

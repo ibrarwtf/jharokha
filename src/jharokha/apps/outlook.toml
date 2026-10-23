@@ -15,7 +15,10 @@ weight = 0.5
 pane = [0, 0.088, 1, 0.042]
 weight = 0.5
 
-[app.outlook.policy]  # none yet: Enter in a mail adds a line
+# Enter in a mail adds a line; Ctrl+Enter and Alt+S send the mail being written, to
+# everyone it is addressed to.
+[app.outlook.policy]
+irreversible_keys = ["ctrl+enter", "alt+s"]
 
 [app.outlook.view.mail]
 ready = "Inbox"
