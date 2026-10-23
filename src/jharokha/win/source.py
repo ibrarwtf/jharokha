@@ -43,11 +43,11 @@ class WindowsSource:
         except ocr.OcrUnavailable as e:
             raise ScreenError("ocr_unavailable", str(e)) from e
 
-    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]:
+    def reread(self, frame: Frame, boxes: list[Box], margin: float = 0.5) -> list[str]:
         try:
             if self._recognizer is None:
                 self._recognizer = recognize.Recognizer()
-            return self._recognizer.read(frame, boxes)
+            return self._recognizer.read(frame, boxes, margin)
         except recognize.RecognizerUnavailable as e:
             raise ScreenError("verify_unavailable", str(e)) from e
 

@@ -37,7 +37,9 @@ box = [0.1, 0.041, 0.76, 0.039]
 [app.browser.view.page.region.favourites]
 box = [0, 0.1, 1, 0.06]
 
+# Read as items, a page is its blocks of text, and any table on it a table.
 [app.browser.view.page.region.page]
+reader = "text"
 at = [0.5, 0.5]
 box = [0, 0.162, 1, 0.787]
 focus = true

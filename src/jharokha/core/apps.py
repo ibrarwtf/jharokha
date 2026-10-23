@@ -14,7 +14,8 @@ layouts.toml is read as calibration of the matching built-in app (from_layouts).
     [app.teams.view.chat]
     ready = "Type a message"              # on screen once the view has finished loading
     [app.teams.view.chat.region.thread]
-    reader = "text"                       # text | grid | list | table | form
+    reader = "list"                       # text | grid | list | table | form (core.readers)
+    kind = "messages"                     # a list's items: messages | entries | mails
     at = [0.65, 0.5]                      # the pane under this point
     box = [0.378, 0.122, 0.622, 0.828]    # fallback, and the check on the pane
     focus = true
@@ -44,11 +45,9 @@ from typing import Any
 
 from jharokha.core.layout import Fraction, Layout, choose, to_box
 from jharokha.core.models import Box, iou
+from jharokha.core.readers import KINDS, READERS
 
 FORMAT = 1
-# Only text and grid read differently today; the others are names kept for later readers
-# and read as text until then.
-READERS = ("text", "grid", "list", "table", "form")
 GENERIC = "generic"
 SESSION = "session"
 PANE_FIT = 0.6
@@ -92,6 +91,12 @@ class Region:
     to: Point2 | None = None
     box: Fraction | None = None
     focus: bool = False
+    kind: str | None = None  # a list's items: messages, entries or mails
+
+    @property
+    def label(self) -> str:
+        """The reader as jharokha_layout names it: list:messages, table, ..."""
+        return f"{self.reader}:{self.kind or 'entries'}" if self.reader == "list" else self.reader
 
 
 @dataclass(frozen=True)
@@ -270,10 +275,13 @@ def _cues(v: Any, where: str) -> tuple[Cue, ...]:
 
 
 def _region(name: str, t: dict[str, Any], where: str) -> Region:
-    _only(t, ("reader", "at", "to", "box", "focus"), where)
+    _only(t, ("reader", "kind", "at", "to", "box", "focus"), where)
     reader = t.get("reader", "text")
     if reader not in READERS:
         raise AppError(f"{where}.reader must be one of {', '.join(READERS)}")
+    kind = t.get("kind")
+    if kind is not None and (reader != "list" or kind not in KINDS):
+        raise AppError(f"{where}.kind is for reader = 'list': one of {', '.join(KINDS)}")
     if "at" not in t and "box" not in t:
         raise AppError(f"{where}: needs at (a pane) or box")
     if "to" in t and "at" not in t:
@@ -288,6 +296,7 @@ def _region(name: str, t: dict[str, Any], where: str) -> Region:
         to=_point(t["to"], f"{where}.to") if "to" in t else None,
         box=_frac(t["box"], f"{where}.box") if "box" in t else None,
         focus=focus,
+        kind=kind,
     )
 
 
@@ -383,8 +392,9 @@ def _calibration(t: dict[str, Any], where: str) -> Calibration:
     named = _tables(t.get("variant", {}), f"{where}.variant")
     variants = tuple(_variant(n, v, base, f"{where}.variant.{n}") for n, v in named.items())
     readers = t.get("readers", {})
-    if not isinstance(readers, dict) or not all(r in READERS for r in readers.values()):
-        raise AppError(f"{where}.readers must map regions to one of {', '.join(READERS)}")
+    ok = (*READERS, *(f"list:{k}" for k in KINDS))
+    if not isinstance(readers, dict) or not all(r in ok for r in readers.values()):
+        raise AppError(f"{where}.readers must map regions to one of {', '.join(ok)}")
     return Calibration(
         variants=variants or (base,),
         focus=_id(t["focus"], f"{where}.focus") if "focus" in t else None,
@@ -512,6 +522,31 @@ class Catalog:
         reg = self.apps[app].views[view].regions.get(name)
         return place(reg, panes, width, height) if reg else None
 
+    def nested(
+        self,
+        app: str,
+        view: str,
+        name: str,
+        panes: list[Box],
+        found: Mapping[str, Box | None],
+        width: int,
+        height: int,
+    ) -> list[Box]:
+        """Where the view's other regions lie inside region name (a compose box in a
+        thread's pane): their lines are not the region's items."""
+        outer = self.region_box(app, view, name, panes, found, width, height)
+        if outer is None:
+            return []
+        out = []
+        for other in self.apps[app].views[view].regions:
+            placed = self.region_box(app, view, other, panes, found, width, height)
+            if other == name or placed is None:
+                continue
+            b = placed[0]
+            if b[2] * b[3] < outer[0][2] * outer[0][3] and _covered(b, outer[0]) >= 0.9:
+                out.append(b)
+        return out
+
     def grid(
         self, app: str, view: str, name: str, found: Mapping[str, Box | None], w: int, h: int
     ) -> Grid:
@@ -534,6 +569,13 @@ def place(reg: Region, panes: list[Box], width: int, height: int) -> tuple[Box, 
         if fallback is None or iou(b, fallback) >= PANE_FIT:
             return b, "pane"
     return (fallback, "box") if fallback else None
+
+
+def _covered(inner: Box, outer: Box) -> float:
+    """The share of inner's area inside outer."""
+    ix = max(0, min(inner[0] + inner[2], outer[0] + outer[2]) - max(inner[0], outer[0]))
+    iy = max(0, min(inner[1] + inner[3], outer[1] + outer[3]) - max(inner[1], outer[1]))
+    return ix * iy / max(1, inner[2] * inner[3])
 
 
 def pane_at(panes: list[Box], at: Point2, to: Point2 | None, width: int, height: int) -> Box | None:
@@ -565,7 +607,8 @@ def _calibrated(app: App, vid: str, cal: Calibration) -> App:
         regions.setdefault(name, Region(name))
     for name, reader in cal.readers.items():
         if name in regions:
-            regions[name] = replace(regions[name], reader=reader)
+            reader, _, kind = reader.partition(":")
+            regions[name] = replace(regions[name], reader=reader, kind=kind or None)
     if cal.focus:
         if cal.focus not in regions:
             raise AppError(f"calibration.{app.id}.{vid}.focus: no region '{cal.focus}'")

@@ -41,6 +41,7 @@ box = [0, 0.053, 0.075, 0.896]
 
 [app.teams.view.chat.region.list]
 reader = "list"
+kind = "entries"
 at = [0.2, 0.5]
 box = [0.077, 0.121, 0.3, 0.828]
 
@@ -49,6 +50,8 @@ at = [0.65, 0.087]
 box = [0.378, 0.054, 0.622, 0.066]
 
 [app.teams.view.chat.region.thread]
+reader = "list"
+kind = "messages"
 at = [0.65, 0.5]
 box = [0.378, 0.122, 0.622, 0.828]
 focus = true
