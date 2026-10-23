@@ -42,12 +42,16 @@ jobs:
         run: |
           uv run python -m evals --quick --update --out evals-results.json
           uv run python -m evals --full --update
+      - name: resources (memory and CPU time; wall time is noisy on shared runners, not gated)
+        if: github.event_name != 'workflow_dispatch'
+        run: uv run python -m evals.resources --repeats 10 --idle-s 15 --check evals/budget.json --profile ci --out resources-results.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evals-results
           path: |
             evals-results.json
+            resources-results.json
             evals/baseline-*.json
 
   gitleaks:
