@@ -143,6 +143,32 @@ def test_grid_rebuilds_terminal_rows():
     assert text.grid(lines[:1], (0, 0, 640, 200)) == lines[:1]
 
 
+def test_command_output_between_its_line_and_the_next_prompt():
+    ps = r"^PS [^>]*>"
+    before = [("PS C:\\a> dir", 0, 0), ("old output", 0, 20), ("PS C:\\a>", 0, 40)]
+    running = lines_for([*before, ("PS C:\\a> Get-Date", 0, 60), ("Friday", 0, 80)])
+    assert text.command_output(running, ps, "Get-Date") is None
+    done = lines_for(
+        [*before, ("PS C:\\a> Get-Date", 0, 60), ("Friday", 0, 80), ("PS C:\\a>I", 0, 100)]
+    )
+    out, whole = text.command_output(done, ps, "Get-Date")  # type: ignore[misc]
+    assert [ln.text for ln in out] == ["Friday"] and whole
+    # The same command again: its newest line counts, not the earlier run.
+    again = lines_for(
+        [
+            ("PS C:\\a> dir", 0, 0),
+            ("one", 0, 20),
+            ("PS C:\\a> dir", 0, 40),
+            ("two", 0, 60),
+            ("PS C:\\a>", 0, 80),
+        ]
+    )
+    assert [ln.text for ln in text.command_output(again, ps, "dir")[0]] == ["two"]  # type: ignore[index]
+    # Longer than the screen: the command's line scrolled away.
+    scrolled = lines_for([("row 7", 0, 0), ("row 8", 0, 20), ("PS C:\\a>", 0, 40)])
+    assert text.command_output(scrolled, ps, "1..8") == (scrolled[:2], False)
+
+
 def test_locked_detection():
     assert text.looks_locked(lines_for([("Press Ctrl+Alt+Del to unlock", 0, 0)]))
     assert not text.looks_locked(lines_for([("hello", 0, 0)]))

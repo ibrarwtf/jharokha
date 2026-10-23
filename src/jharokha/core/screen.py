@@ -18,7 +18,7 @@ from jharokha.core.watch import changed_bbox
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
     ocr_unavailable, region_out_of_bounds, timeout, covered, not_foreground, bad_key,
-    verify_unavailable, clipboard_busy."""
+    verify_unavailable, clipboard_busy, bad_prompt."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
