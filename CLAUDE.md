@@ -8,7 +8,8 @@ MCP server that OCRs a Windows remote-desktop window; read-only unless started w
 - `src/jharokha/win/`: Windows only, `ctypes` + pywinrt. `window.py` finds the client window, `capture.py` PrintWindows it, `ocr.py` runs Windows OCR, `recognize.py` reads boxes with the second engine (PP-OCRv6 rec on onnxruntime; model, licence and provenance in `win/models/`), `source.py` wires them into a `Source`.
 - `src/jharokha/measure.py`: `jharokha measure`, writes an app view's calibration (regions, zoom variants, grid pitch) into `apps.toml` from the live screen.
 - `src/jharokha/server.py`: the MCP tools over a `Source`. `__main__.py`: stdio server and the `jharokha` terminal commands.
-- `tests/`: `conftest.py` has a synthetic `FakeSource` with ground truth; `harness/fake_session.py` is a local window for end-to-end runs.
+- `tests/`: `conftest.py` has a synthetic `FakeSource` with ground truth; `harness/fake_session.py` is a local window for end-to-end runs (`sim` hosts the simulated session); `test_sim.py` drives the MCP server over the simulated session.
+- `evals/`: generated screens (`screens.py`, drawn by `render.py`) scored by `python -m evals`; `sim/` is a simulated session (`SimSource`: terminal, Teams, Outlook, Edge, lock screen that react to input and log safety events: commands run, messages sent, web searches); `scenarios.py` runs scripted scenarios on it.
 - `evals/`: `python -m evals` scores reading and identification on generated screens (terminal, Teams-like, Outlook-like mail and calendar, Edge-like, IDs, lock) against `baseline-quick.json` / `baseline-full.json`; CI runs `--quick --check` on every push and `--full` on `v0.x.0` tags. Generated data only, never real screens or names.
 - No `mac/` or `linux/`: a port is a sibling of `win/` reusing `core/`, added when someone builds it.
 

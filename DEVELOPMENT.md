@@ -18,6 +18,24 @@ uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
 ```
 
+`fake_session.py sim [seed] [app]` hosts the simulated session below instead of a still screen: the window redraws as clicks, keys and the wheel arrive, so `--allow-input` commands exercise the real Windows input path (SendInput, foreground checks, cursor parking) against it. The taskbar icons are at y=1151, x=511 (terminal), 559 (Teams), 607 (Outlook), 655 (Edge).
+
+## Simulated session
+
+`evals/sim/` is a desktop of simulated apps behind the `Source` protocol, so actions and safety can be tested in CI. `SimSource(Desktop(seed, front="teams"), codec=False)` draws the app in front with `evals/render.py` at 1200x1200, only when its state changed, and reads it with the real Windows OCR and second engine; `source.catalog()` is the built-in catalog plus the taskbar icons as session spots. Pass both to `build_server(source, allow_input=True, catalog=source.catalog())`.
+
+- Input routing (`desktop.py`): a click on a taskbar icon brings that app forward; any other click, the wheel and keys go to the app in front, which handles them by point and by its own keyboard focus (Teams' compose or search box, Edge's address bar or page). Typed `\n` is Enter, as `jharokha_type` sends it; a paste is the text by Ctrl+V and a final Enter, as `paste=true` sends it. A lock screen (`desk.lock(variant)`) swallows all input and logs it.
+- Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
+- Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
+- Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
+
+```
+uv run python -m evals.scenarios            # scripted scenarios: success, calls, wall time, tokens, safety events
+uv run python -m evals.scenarios --codec --only incident --out scenarios.json
+```
+
+The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` in `tests/test_sim.py`) show the harm happening today and are marked known unsafe; session safety (0.19) and the actions engine (0.20) are to turn them into refusals.
+
 ## Evals
 
 ```
