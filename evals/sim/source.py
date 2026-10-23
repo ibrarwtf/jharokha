@@ -93,8 +93,8 @@ class SimSource:
         small = region is not None and region[2] * region[3] * 4 <= frame.width * frame.height
         return _ocr().recognize(frame, region, upscale=2.0 if small else 1.0)
 
-    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]:
-        return _recognizer().read(frame, boxes)
+    def reread(self, frame: Frame, boxes: list[Box], margin: float = 0.5) -> list[str]:
+        return _recognizer().read(frame, boxes, margin)
 
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None:
         with self._lock:

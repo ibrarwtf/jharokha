@@ -13,9 +13,10 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote_plus, unquote_plus
 
+from evals.items import table
 from evals.screens import (
     EDGE_BAR,
     EDGE_TABS,
@@ -103,6 +104,28 @@ class Browser(SimApp):
             yy = PAGE_TOP + y - self.top
             if PAGE_TOP + 4 <= yy < TASKBAR_Y - px - 10:
                 c.text(x, yy, text, px, colour, bold)
+
+    def items(self) -> dict[str, dict[str, Any]]:
+        """The table on a queue or status page: the rows drawn whole."""
+        _, items = self.page()
+        shown = [
+            it
+            for it in items
+            if PAGE_TOP + 4 <= PAGE_TOP + it[1] - self.top < TASKBAR_Y - it[3] - 10
+        ]
+        if self.url == "https://requests.example.net/queue":
+            header, first = ["ID", "Title", "Owner", "Status"], 154
+            if not any(it[1] == 119 for it in shown):
+                header = []  # scrolled off: rows without a header
+        elif self.url == "https://status.example.net/":
+            header, first = [], 90
+        else:
+            return {}
+        rows: dict[int, list[str]] = {}
+        for it in shown:
+            if it[1] >= first:
+                rows.setdefault(it[1], []).append(it[2])
+        return {"browser.page": table(header, [r for _, r in sorted(rows.items())])}
 
     # Input
 

@@ -10,7 +10,7 @@
 
 jharokha lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) work with a Windows remote-desktop session they can't otherwise reach: a Windows 365 or Azure Virtual Desktop session in Windows App, an mstsc RDP window, or similar. It reads the session window as text with local OCR, and, only if you start it with `--allow-input`, scrolls, clicks, types and presses keys in it. Nothing is installed in the session; it works from the pixels you already see.
 
-- **Reads like text, not screenshots:** a full screen is about 1k tokens, in reading order, panel by panel, with boxes and exact click points.
+- **Reads like text, not screenshots:** a full screen is about 1k tokens, in reading order, panel by panel, with boxes and exact click points. A chat thread, an inbox or a calendar week reads as structured items: who said what and when, which mails, which events.
 - **Watches for you:** waits for text to appear, and logs what changed while the agent was busy.
 - **Gets IDs right:** an optional second OCR engine re-reads lines where 0/O and 1/l get confused.
 - **Knows where it is:** recognises the app and view on screen (Windows Terminal, Teams, Outlook mail and calendar, a browser) with a confidence, and names their parts (a Teams thread, the compose box) for any window size and zoom. Apps are data: add your own in a TOML file.
@@ -48,7 +48,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | Tool | Purpose |
 |---|---|
 | `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also where you are: `app`, `view`, `confidence`, `runner_up`, `ready`, a browser's `url` (as untrusted text); and this server's `version`. |
-| `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). Paged. |
+| `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). A named region of a list, table or form comes back as items (`format`): messages, mails, table rows. `since` keeps a list's items from a time on. Paged. |
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
 | `jharokha_layout` | Where you are and how the screen is divided: the app and view, detected panels (`P0`, `P1`, ...) with their boxes and first line, and the view's named regions with their boxes, readers and focus. |
 | `jharokha_screenshot` | PNG of the window or a region, downscaled to `max_long_edge`, with the scale. |
@@ -95,16 +95,29 @@ An app is data: a TOML definition (`format = 1`) of the cues it is recognised by
 
 | App | Views and regions |
 |---|---|
-| `terminal` | Windows Terminal with PowerShell or cmd. `shell`: `tabs`, `body` (a character grid) |
-| `teams` | `chat`: `nav`, `list`, `header`, `thread` (focus), `compose` |
-| `outlook` | `mail`: `ribbon`, `folders`, `list`, `reading` (focus); `calendar`: `ribbon`, `calendars`, `week` (a table) |
-| `browser` | Edge or Chrome. `page`: `tabs`, `address`, `favourites`, `page` (focus); the address bar's URL is reported |
+| `terminal` | Windows Terminal with PowerShell or cmd. `shell`: `tabs`, `body` (a character grid, read row by row) |
+| `teams` | `chat`: `nav`, `list` (entries), `header`, `thread` (messages, focus), `compose` |
+| `outlook` | `mail`: `ribbon`, `folders`, `list` (mails), `reading` (focus); `calendar`: `ribbon`, `calendars`, `week` (a table) |
+| `browser` | Edge or Chrome. `page`: `tabs`, `address`, `favourites`, `page` (text, tables as tables; focus); the address bar's URL is reported |
 | `generic` | any other screen: panels only |
 | `session` | the session's own Windows taskbar: `session.taskbar` |
 
 Identification scores every app and view on its cues (text where it belongs, a regex such as a URL, the background colour, panes where the app draws them) and reports the best with a confidence 0 to 1 and the runner-up; below 0.5 the screen is `generic`. On the generated eval screens every app and view is identified right, at a mean confidence of .95. `jharokha_status` and full reads name it (`app=teams view=chat confidence=0.97`).
 
-A region is the pane under a point of the screen, found from the app's own divider lines and colours, so it follows the window size and zoom; a box of fractions is its fallback. Its `reader` is `text` or `grid` (`list`, `table` and `form` are reserved, read as text for now). A grid region is read row by row on the terminal's character grid, so paths, numbers and table columns that OCR splits apart come back whole. The `focus` region is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. A terminal view's `prompt` is a regex for its shell's prompt, for `jharokha_run` (default: PowerShell's, cmd's or bash's).
+A region is the pane under a point of the screen, found from the app's own divider lines and colours, so it follows the window size and zoom; a box of fractions is its fallback. Its `reader` says what reading it gives:
+
+| Reader | Items (`format="items"`; the default for list, table and form) |
+|---|---|
+| `list` with `kind = "messages"` | `{"sender":"Ana Alder","time":"Yesterday 18:05","text":"Evening all","box":[...]}`; `own` for yours, `quote` for a reply's quote, `cut` when it began above the region. A centred date (`Yesterday`, `16 October`) dates the messages below it; a sender's next message under the same header is an item of its own. |
+| `list` with `kind = "entries"` or `"mails"` | `{"title":"Ana Alder","subtitle":"Build report","time":"13:23","text":"All green","section":"Today"}` |
+| `table` | `{"table":{"header":["","Mon 12","Tue 13"],"rows":[["9 AM","Standup",""]]}}`: columns from aligned cells, rows from the first column (a fixed pitch carries rows whose first cell OCR missed), the header row told apart |
+| `form` | `{"label":"Ticket","value":"INC0012345"}` from `Label: value` rows or a label column |
+| `text` | blocks of text, and any table on it as a table item; read as lines by default |
+| `grid` | a terminal's rows, one item a row; read as lines by default |
+
+`since` on a list keeps the items at or after a time as the screen prints it (`16/10 11:40`, `Yesterday`, `Mon`, `16 October`, `09:15`). Items are paged like lines; `detailed` adds the `L<n>` refs of each item's lines. On generated Teams and Outlook screens and the simulated session (all sizes and renderers), list items are found with precision and recall .99 and 94% of their fields read exactly; table cells are where OCR still loses most (calendar hours in small grey text, lookalike IDs), 68% right.
+
+A grid region (a terminal's body) is read row by row: its character grid is measured from the pixels once (or taken from calibration), each row is read by the second engine, and the spaces between columns are put back from where the ink is, so paths, prompts, numbers and table columns that Windows OCR drops or splits come back whole. Only rows whose pixels changed are read again. Where the second engine cannot read, Windows OCR's words are snapped to the grid instead. The `focus` region is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. A terminal view's `prompt` is a regex for its shell's prompt, for `jharokha_run` (default: PowerShell's, cmd's or bash's).
 
 Calibration is yours, in a git-ignored `apps.toml`: per app and view the regions measured on your screen (they come before panes and boxes), variants such as one per zoom level, chosen by where their anchor text sits, a grid's row pitch and character width, the focus and prompt; regions and spots of the session (taskbar icons). The same file can define new apps or replace built-in ones. `jharokha measure APP --anchor TEXT [--view VIEW] [--zoom=-5..2] [--focus NAME] [--grid NAME]` writes calibration from what is on screen. Start from [`apps.example.toml`](apps.example.toml); the server reads `--apps PATH`, else `$JHAROKHA_APPS`, else `./apps.toml`. An old `layouts.toml` (`--layouts`, `$JHAROKHA_LAYOUTS`, `./layouts.toml`) still works unchanged: its tables are read as calibration of the built-in app of the same name (`teams@-3` is a zoom variant of Teams chat), other anchored tables as apps of their own, and tables without an anchor as session regions under their old names.
 

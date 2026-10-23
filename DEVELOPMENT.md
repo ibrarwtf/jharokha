@@ -48,7 +48,7 @@ uv run python -m evals --show terminal    # truth against what was read, line by
 
 `evals/screens.py` generates screens shaped like the work jharokha does: a PowerShell terminal in Windows Terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox and work-week calendar, an Edge-like browser (address bar, favourites, a request queue page), five lock and sign-in screens, lookalike-heavy IDs. Each draws the generic UI text the built-in app definitions recognise it by ("Search (Ctrl+E)", "Type a message", "Inbox", "New event", "Other favourites", a PowerShell prompt) and records the app and view it shows. The app screens carry the pane backgrounds, divider lines and session taskbar measured on a live session at 125% (Teams: rail divider x=88, header dividers y=62 and 142, chat list 245 against thread 255; new Outlook: rail divider x=61, list and reading pane split at x=500, ribbon y=103 to 154; Edge: address box y=49 to 94, favourites at y≈142, page from y=191; Windows Terminal: tab bar divider y=38, scrollbar x=1156 to 1160 on (12,12,12); taskbar y=1121 to 1181), and each records its true pane boxes. The terminal is Cascadia Mono, Windows Terminal's font, rows 1.15 font heights apart (23 px at 20 px, as live); the font is vendored in `evals/fonts/` (SIL OFL, licence beside it) and loaded for the eval process only (`AddFontResourceExW` with `FR_PRIVATE`). Names, IDs, URLs and log lines come from fixed lists and a seeded generator; nothing comes from a real session, and none ever should. Seeds under 100 are for tuning, the eval scores seeds from 100. `evals/render.py` draws them with GDI and ClearType as real apps do, then through JPEG with 4:2:0 chroma, standing in for the RDP codec; `--full` adds clean GDI and PIL.
 
-Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, whether the built-in definitions identify the right app (`app_ok`) and view (`identify_ok`; none on a lock screen, generic on the IDs screen) and with what confidence (`identify_conf`), with a confusion table of misses, and panes: for each true pane the best IoU of a pane found from the pixels (mean, and the share at 0.8 or more). The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
+Per screen it scores CER and WER (edit distance over the truth, lines joined in reading order), bag-of-words F1 (order ignored, so F1 high with CER high means right words, wrong order), lines exact, lookalike misses, tokens of a concise read, whether `find` lands inside the drawn word, whether lock screens and only lock screens read as locked, whether the built-in definitions identify the right app (`app_ok`) and view (`identify_ok`; none on a lock screen, generic on the IDs screen) and with what confidence (`identify_conf`), with a confusion table of misses, and panes: for each true pane the best IoU of a pane found from the pixels (mean, and the share at 0.8 or more). A grid screen is read as the server reads it, row by row (`+ocrgrid` keeps the old Windows OCR grid, outside the totals). The readers axis places each region whose items a screen knows (`Screen.items`, from the generators and the simulated apps' `items()`) on the identified view, reads it as a region read is, and scores list items (precision, recall, fields exact after folding case and spaces) and table cells (by header and the most alike row, so one misread cell costs one cell). The summary averages per app and renderer; `--check` fails when a number is worse than the baseline by more than 0.02 (rates), 10% (tokens) or 1 (lookalike misses). Timings are printed, not gated: shared runners are too noisy for them.
 
 The numbers are deterministic: this laptop (Windows 11) and CI's `windows-latest` runner gave identical summaries for both sets. If they ever drift, run the workflow by hand (`gh workflow run ci.yml`): it regenerates both baselines on the runner and uploads them as an artifact.
 
@@ -173,6 +173,31 @@ Text gaps inside a pane only cut the browser's table into columns, so reading go
 
 The terminal is now the measured one, Cascadia Mono at 20 px, and Windows OCR fails on it as it did live: `PS C:\work\pricing>` reads `PS C:`, timestamps drop, and the grid then misplaces what is left (quick CER .51, from .21 on the old 16 px Consolas screen). Reading its rows with the second engine is the next step.
 
+### Readers (v0.18.0)
+
+`core/readers.py` turns a region's lines into items by its reader; `core/listread.py` does lists. All of them are pure functions of the lines and the region's box (and the boxes of regions nested in it, whose lines are left out), so the server, the evals and a later actions engine read the same way. Choices:
+
+- Lists group rows into items by the step from one row's top to the next, two kinds of step (inside an item, between items) told apart where the jump between them stands out. The blank between rows was the first measure and failed: at 16 px on the Outlook list it ran 9 to 18 px inside an item, with every ascender and descender, against tops 22 or 23 px apart inside and 29 or 30 between.
+- Messages: a header starts one; a centred date alone on a row dates the ones below it; a blank taller than a line between two rows of text is the sender's next message, without a time (`since` gives it the time before it). Clocks are folded for lookalikes (`10:5g`) before they are matched.
+- Tables: columns are cells' left edges within 0.8 of a line height; when the first column's cells sit a whole number of one pitch apart (a calendar's hours, a queue's IDs), rows are that pitch, so an hour OCR missed still has its row, and events drawn below their hour land in it. The header is what sits above the first row, or a first row without digits over rows with them.
+- Items are concise by default (no line refs, no empty or false fields): a message costs about a third fewer tokens than with them.
+
+Readers axis, full set (3 seeds, 3 sizes, 3 renderers; sim: 3 seeds, GDI + codec shown):
+
+| region | gen | sim |
+|---|---|---|
+| teams.thread (items P / R / fields) | .98 / 1.0 / .91 | .97 / .97 / .95 |
+| teams.list | .94 / .91 / .92 | 1.0 / 1.0 / .94 |
+| outlook.list | 1.0 / 1.0 / .97 | 1.0 / 1.0 / .99 |
+| outlook.week (cells R / P) | .50 / .70 | .70 / .92 |
+| browser.page (cells R / P) | .75 / .79 | .84 / .84 |
+
+The misses are OCR's: the calendar's hour labels (10 to 14 px grey) and some day headers at 12 px, lookalike IDs and the bold `ID` header in the queue, a lone `I` in a preview, a sender's first letter. A region the size of the calendar is read at 1.0x, under the quarter-frame rule for upscaling.
+
+### Terminal rows (v0.18.0)
+
+`core/rows.py` (built on its own branch, wired here): a grid region is calibrated once from the pixels (or from apps.toml's pitch, character width and origin when all three are set) and kept per app, view, region, window size and box, once measured on three rows of text or more; each inked row is read as a strip with the second engine (`Source.reread(..., margin=0)`), and the last read is kept so only changed rows are read again. Lines inside the grid replace Windows OCR's; a region read gets those inside it. A source whose `reread` refuses strips (the tests' `FakeSource`) falls back to `text.grid`. Full eval: terminal CER .32 to .35 → .0015 to .0017, lines exact .27 to .33 → .98 to .99, find → 1.0. Costs: calibration 140 to 150 ms, 105 to 147 ms a row, about 2 s for a full screen the first time.
+
 ### Simulated session (v0.17.0)
 
 `SimSource`, seed 100, median of 15 frames each (draw) and 5 reads (Windows OCR, full frame):
@@ -247,10 +272,9 @@ Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`
 
 ## Open
 
-- Terminal rows through the second engine (strips at the grid's pitch, words placed by its character width), where Windows OCR drops text on Cascadia Mono.
 - Edge's tab strip, which runs into the toolbar through the selected tab.
-- Identification on the live session, and calibration of Outlook and the browser there.
-- Readers for `list`, `table` and `form` regions (named in definitions, read as text until then); the grid reader taking calibrated pitch from second-engine rows.
+- Identification on the live session, and calibration of Outlook and the browser there; the readers on live Teams and Outlook (dividers, bubbles and quotes were measured live, calendar and tables only on generated screens).
+- Small grey text in a large region (a calendar's hours, a bold two-letter header) is missed by Windows OCR at 1.0x and costs those table cells; `jharokha measure --grid` still measures with Windows OCR words, not `rows.calibrate`; row grids are tuned on Cascadia Mono, light themes and box drawing untested.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
 
 ## Release

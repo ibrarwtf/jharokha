@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from evals.items import cut, listed
 from evals.screens import (
     CAL_DAY,
     CAL_EVENT,
@@ -28,6 +29,7 @@ from evals.screens import (
     W,
     _name,
     _sentence,
+    week_table,
 )
 from evals.sim.base import Canvas, Mods, SimApp, fit
 
@@ -156,6 +158,28 @@ class Outlook(SimApp):
             x, y = CAL_GRID + CAL_DAY * d, CAL_TOP + CAL_HOUR * h
             c.rect((x + 4, y + 4, CAL_DAY - 8, CAL_HOUR - 8), CAL_EVENT)
             c.text(x + 12, y + 12, fit(title, 18), PX - 1)
+
+    def items(self) -> dict[str, dict[str, Any]]:
+        if self._view == "calendar":
+            if self.stage < 2:
+                return {}
+            hours = [f"{(h - 1) % 12 + 1} {'AM' if h < 12 else 'PM'}" for h in range(8, 18)]
+            days = [
+                f"{n} {self.day0 + d}" for d, n in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri"])
+            ]
+            week = {(d, h): cut(t, 18) for d, h, t in self.events}
+            return {"outlook.week": week_table(hours, days, week)}
+        shown = self.mails[self.top : self.top + self.visible()]
+        mails = [
+            {
+                "title": cut(m.sender, 24),
+                "subtitle": cut(m.subject, 28),
+                "text": cut(m.preview, 30),
+                "time": "",
+            }
+            for m in shown
+        ]
+        return {"outlook.list": listed("mails", mails)}
 
     # Input
 

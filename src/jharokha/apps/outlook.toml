@@ -44,6 +44,7 @@ box = [0.053, 0.131, 0.136, 0.818]
 
 [app.outlook.view.mail.region.list]
 reader = "list"
+kind = "mails"
 at = [0.3, 0.5]
 box = [0.189, 0.131, 0.24, 0.818]
 

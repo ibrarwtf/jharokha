@@ -10,6 +10,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo, Word
+from jharokha.core.screen import ScreenError
 
 SIZE = (640, 400)
 
@@ -66,8 +67,11 @@ class FakeSource:
         x, y, w, h = region
         return [ln for ln in lines if x <= ln.box[0] < x + w and y <= ln.box[1] < y + h]
 
-    def reread(self, frame: Frame, boxes: list[Box]) -> list[str]:
-        """The truth for each line, found by its top-left corner."""
+    def reread(self, frame: Frame, boxes: list[Box], margin: float = 0.5) -> list[str]:
+        """The truth for each line, found by its top-left corner. Row strips (margin 0) are
+        what a source without the second engine refuses, so grids fall back to OCR words."""
+        if margin == 0:
+            raise ScreenError("verify_unavailable", "the fake reads only line boxes")
         self.reread_boxes.extend(boxes)
         truth = {(x, y): t for t, x, y in self.items}
         return [truth[(b[0], b[1])] for b in boxes]

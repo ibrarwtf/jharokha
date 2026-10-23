@@ -15,6 +15,7 @@ from ctypes import wintypes
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -62,6 +63,8 @@ class Screen:
     rects: list[tuple[Box, RGB]] = field(default_factory=list)
     panes: list[Box] = field(default_factory=list)  # the true panes, as drawn
     view: str | None = None  # the app's view it shows, as the built-in definitions name it
+    # What each named region's reader should return (evals.items), by region name.
+    items: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class FontMissing(RuntimeError):

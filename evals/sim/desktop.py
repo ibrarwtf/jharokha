@@ -196,6 +196,7 @@ class Desktop:
             [t.text for t in c.texts],
             rects=c.rects,
             view=app.view,
+            items=app.items(),
         )
 
     # Input

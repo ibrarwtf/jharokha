@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from evals.items import cut, listed
 from evals.screens import (
     DIVIDER,
     GREY,
@@ -125,6 +126,22 @@ class Teams(SimApp):
                 c.text(THREAD_X, COMPOSE_Y - 22 * (len(draft[-3:]) - 1 - k), fit(line, 90), PX)
         else:
             c.text(THREAD_X, COMPOSE_Y, "Type a message", PX, GREY)
+
+    def items(self) -> dict[str, dict[str, Any]]:
+        entries = [
+            {"title": ch.name, "subtitle": cut(" ".join(ch.msgs[-1].lines), 36), "time": ""}
+            for ch in self.chats
+        ]
+        msgs = [
+            {
+                "sender": m.who,
+                "time": m.time,
+                "text": "\n".join(cut(ln, 90) for ln in m.lines),
+                "own": m.who == "You",
+            }
+            for _, m in self.shown()
+        ]
+        return {"teams.list": listed("entries", entries), "teams.thread": listed("messages", msgs)}
 
     # Input
 

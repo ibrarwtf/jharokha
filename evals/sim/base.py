@@ -4,7 +4,7 @@ draws on."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from evals.render import RGB, Text
 from evals.screens import INK
@@ -59,6 +59,10 @@ class SimApp:
 
     def draw(self, c: Canvas) -> None:
         raise NotImplementedError
+
+    def items(self) -> dict[str, dict[str, Any]]:
+        """What the readers of the regions on screen should return (evals.items)."""
+        return {}
 
     def click(self, x: int, y: int, button: str, double: bool) -> None:
         pass

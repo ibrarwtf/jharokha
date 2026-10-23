@@ -284,6 +284,57 @@ async def test_status_names_the_browser_and_reports_its_url_as_untrusted(source)
     assert "regions of browser page:" in r and "browser.page [" in r
 
 
+CHAT_APP = """format = 1
+[app.chat]
+[[app.chat.cue]]
+text = "Chat log"
+weight = 2
+[app.chat.view.main.region.thread]
+reader = "list"
+kind = "messages"
+box = [0, 0.1, 1, 0.9]
+[app.chat.view.main.region.top]
+box = [0, 0, 1, 0.1]
+"""
+
+
+async def test_list_regions_read_as_items_and_since(source):
+    source.items = [
+        ("Chat log", 10, 10),
+        ("Ana Alder 16/10 11:20", 10, 60),
+        ("Is the build green?", 20, 76),
+        ("Ben Brook 16/10 11:45", 10, 110),
+        ("Fixed it", 20, 126),
+    ]
+    catalog = apps.catalog(apps.parse(CHAT_APP))
+    async with Client(build_server(source, catalog=catalog)) as c:
+
+        async def read(**args: Any) -> str:
+            return text(await c.call_tool("jharokha_read_text", args))
+
+        r = await read(region="chat.thread")
+        head, body = r.split("\n", 1)
+        assert "reader=list:messages items=2" in body.split("\n")[0]
+        assert '"sender":"Ana Alder","time":"16/10 11:20","text":"Is the build green?"' in r
+        assert body.split("\n")[1].startswith('<screen_text source="ocr" untrusted="true">')
+        r = await read(region="chat.thread", since="16/10 11:30")
+        assert "items=1" in r and "Ana Alder" not in r and "Fixed it" in r
+        r = await read(region="chat.thread", format="lines")
+        assert "L0 [10,60] Ana Alder 16/10 11:20" in r
+        r = await read(region="chat.top", format="items")
+        assert "reader=text items=1" in r and '"text":"Chat log"' in r
+        r = await read(format="items")
+        assert "regions=2" in r and '"region":"chat.thread","reader":"list:messages"' in r
+        bad = await c.call_tool("jharokha_read_text", {"region": "chat.top", "since": "Mon"})
+        assert bad.is_error and text(bad).startswith("bad_argument:")
+        bad = await c.call_tool(
+            "jharokha_read_text", {"region": "chat.thread", "since": "whenever"}
+        )
+        assert bad.is_error and "cannot read 'whenever'" in text(bad)
+        layout = text(await c.call_tool("jharokha_layout", {}))
+        assert "chat.thread [0,40,640,360] box, reader list:messages" in layout
+
+
 def old_layouts(toml: str) -> apps.Catalog:
     """A catalog with an old layouts file read into it, as the server loads one."""
     return apps.load(None, parse(toml))

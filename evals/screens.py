@@ -17,6 +17,7 @@ import random
 
 from PIL import ImageFont
 
+from evals import items as truth_items
 from evals.render import CASCADIA, RGB, Find, Screen, Text
 from jharokha.core.models import Box
 
@@ -199,12 +200,14 @@ def teams(seed: int, px: int = 14) -> Screen:
         put(12, 90 + 64 * i, label, px - 3, GREY)
     put(100, 90, "Chat", px + 4, INK, True)
     people = [_name(rng) for _ in range(6)]
+    entries, msgs = [], []
     for i, who in enumerate(people):
         y = 160 + 62 * i
         at = put(100, y, who, px, INK, True)
         if i == 2:
             finds.append(Find(who, at))
-        put(100, y + 22, _sentence(rng, 5), px - 1, GREY)
+        last = put(100, y + 22, _sentence(rng, 5), px - 1, GREY)
+        entries.append({"title": who, "subtitle": texts[last].text, "time": ""})
     other = people[0]
     put(456, 90, other, px + 2, INK, True)
     y = 170
@@ -219,6 +222,7 @@ def teams(seed: int, px: int = 14) -> Screen:
         idx = put(456, y + 24, text)
         if i == 3:
             finds.append(Find(ref, idx, text.index(ref)))
+        msgs.append({"sender": who, "time": t, "text": text, "own": who == "You"})
         y += 82
     compose = put(456, TASKBAR_Y - 80, "Type a message", px, GREY)
     finds.append(Find("Type a message", compose))
@@ -255,6 +259,10 @@ def teams(seed: int, px: int = 14) -> Screen:
         rects=rects,
         panes=panes,
         view="chat",
+        items={
+            "teams.list": truth_items.listed("entries", entries),
+            "teams.thread": truth_items.listed("messages", msgs),
+        },
     )
 
 
@@ -283,6 +291,7 @@ def outlook(seed: int, px: int = 14) -> Screen:
     for i, folder in enumerate(["Inbox", "Drafts", "Sent Items", "Archive", "Deleted Items"]):
         put(76, 175 + 34 * i, folder, px)
     subjects = []
+    mails = []
     for i in range(6):
         y = 170 + 74 * i
         who = _name(rng)
@@ -290,7 +299,8 @@ def outlook(seed: int, px: int = 14) -> Screen:
         subject += f" {rng.randint(100, 999)}"
         subjects.append((put(236, y, who, px, INK, True), subject))
         put(236, y + 22, subject, px)
-        put(236, y + 44, _sentence(rng, 3), px - 1, GREY)
+        preview = put(236, y + 44, _sentence(rng, 3), px - 1, GREY)
+        mails.append({"title": who, "subtitle": subject, "text": texts[preview].text, "time": ""})
     first, subj = subjects[0][0], subjects[0][1]
     put(516, 170, subj, px + 4, INK, True)
     put(516, 210, f"{texts[first].text}  Thu {rng.randint(8, 17)}:{rng.randint(10, 59)}", px - 1)
@@ -334,6 +344,7 @@ def outlook(seed: int, px: int = 14) -> Screen:
         rects=rects,
         panes=panes,
         view="mail",
+        items={"outlook.list": truth_items.listed("mails", mails)},
     )
 
 
@@ -370,21 +381,26 @@ def calendar(seed: int, px: int = 14) -> Screen:
     day0 = rng.randint(5, 26)
     put(296, 175, "Today", px)
     put(380, 175, f"October {day0}-{day0 + 4}, 2026", px + 2, INK, True)
+    hours = []
     for k in range(10):
         hour = 8 + k
         label = f"{(hour - 1) % 12 + 1} {'AM' if hour < 12 else 'PM'}"
         put(288, CAL_TOP + 6 + CAL_HOUR * k, label, px - 2, GREY)
+        hours.append(label)
     slots = sorted(rng.sample([(d, h) for d in range(5) for h in range(10)], 6))
     rects: Rects = []
+    days, week = [], {}
     for d, name in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri"]):
         x = CAL_GRID + CAL_DAY * d
-        put(x + 8, 224, f"{name} {day0 + d}", px - 1, GREY)
+        days.append(f"{name} {day0 + d}")
+        put(x + 8, 224, days[-1], px - 1, GREY)
         for sd, h in slots:
             if sd != d:
                 continue
             y = CAL_TOP + CAL_HOUR * h
             rects.append(((x + 4, y + 4, CAL_DAY - 8, CAL_HOUR - 8), CAL_EVENT))
             title = rng.choice([*EVENTS, f"1:1 {_name(rng)}"])
+            week[(d, h)] = title
             at = put(x + 12, y + 12, title, px - 1)
             if not any(f.query == title for f in finds) and len(finds) < 3:
                 finds.append(Find(title, at))
@@ -431,7 +447,16 @@ def calendar(seed: int, px: int = 14) -> Screen:
         rects=rects,
         panes=panes,
         view="calendar",
+        items={"outlook.week": week_table(hours, days, week)},
     )
+
+
+def week_table(hours: list[str], days: list[str], week: dict[tuple[int, int], str]) -> dict:
+    """A work week's truth cells: hours down, days across, events at (day, hour)."""
+    rows = [
+        [label] + [week.get((d, k), "") for d in range(len(days))] for k, label in enumerate(hours)
+    ]
+    return truth_items.table(["", *days], rows)
 
 
 # Edge: the tab strip, the toolbar with the address box from y=49 to 94 and the favourites
@@ -463,8 +488,10 @@ def browser(seed: int, px: int = 14) -> Screen:
     heading = put(40, 215, "Open requests", px + 10, INK, True)
     finds.append(Find("Open requests", heading))
     put(40, 265, _sentence(rng, 10), px)
-    for x, label in zip((40, 190, 560, 780), ("ID", "Title", "Owner", "Status"), strict=True):
+    header = ("ID", "Title", "Owner", "Status")
+    for x, label in zip((40, 190, 560, 780), header, strict=True):
         put(x, 310, label, px, GREY, True)
+    rows = []
     for i in range(6):
         y = 345 + 36 * i
         ref = _id(rng)
@@ -474,6 +501,7 @@ def browser(seed: int, px: int = 14) -> Screen:
         put(190, y, f"{rng.choice(TITLES)} {rng.randint(100, 999)}", px)
         put(560, y, _name(rng), px)
         put(780, y, rng.choice(["Open", "In progress", "Waiting"]), px)
+        rows.append([t.text for t in texts[-4:]])
     bar, clock = _taskbar(rng)
     texts += clock
     truth += [t.text for t in clock]
@@ -498,6 +526,7 @@ def browser(seed: int, px: int = 14) -> Screen:
         rects=rects,
         panes=panes,
         view="page",
+        items={"browser.page": truth_items.table(header, rows)},
     )
 
 
