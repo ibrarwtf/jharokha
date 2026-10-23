@@ -9,7 +9,8 @@ its centre, or a clear miss with the closest texts on screen.
     { below = "Inbox" }                       the nearest text under it (left_of, above too)
     { region = "compose" }                    a region's centre
     { spot = "taskbar.teams" }                a session spot (a taskbar icon)
-    { region = "list", nth = 2 }              the second item of a list region (-1: the last)
+    { region = "list", nth = 2 }              the second item of a region (-1: the last), as
+                                              its reader makes items (core.readers)
     { text = "Open", nth = 2 }                the second match
 
 Pure: no input, no reading; the caller passes what was read."""
@@ -17,11 +18,11 @@ Pure: no input, no reading; the caller passes what was read."""
 from __future__ import annotations
 
 import difflib
-import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from jharokha.core.models import Box, Line, Point, Word, union
+from jharokha.core import readers
+from jharokha.core.models import Box, Line, Point, Word
 from jharokha.core.text import clean, find, fold
 
 KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth")
@@ -65,16 +66,13 @@ class Miss:
 
 
 @dataclass(frozen=True)
-class Item:
-    """An entry of a list: the lines of one chat, mail or message, top to bottom."""
+class RegionInfo:
+    """How a named region reads as items: its reader and list kind (core.apps.Region),
+    and the boxes of the regions nested in it (a compose box), whose lines are not its."""
 
-    lines: tuple[Line, ...]
-    box: Box
-    fields: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def text(self) -> str:
-        return "\n".join(clean(ln.text) for ln in self.lines)
+    reader: str = "text"
+    kind: str | None = None
+    inner: tuple[Box, ...] = ()
 
 
 def locator(t: Mapping[str, object]) -> Locator:
@@ -138,40 +136,6 @@ def row_texts(lines: list[Line]) -> list[str]:
     return ["  ".join(clean(ln.text) for ln in r) for r in rows(lines)]
 
 
-def items(lines: list[Line], start: str | None = None) -> list[Item]:
-    """The entries of a list region, top to bottom. With start (a regex), an entry begins at
-    each row it matches, its named groups become the entry's fields, and rows above the first
-    such row (an entry cut off at the top) are dropped. Without, entries are told apart by the
-    gaps between rows: a gap nearer the widest than the narrowest ends an entry."""
-    rs = rows(lines)
-    if not rs:
-        return []
-    if start:
-        pat = re.compile(start, re.IGNORECASE)
-        out: list[tuple[list[Line], dict[str, str]]] = []
-        for r in rs:
-            text = "  ".join(clean(ln.text) for ln in r)
-            m = pat.search(text)
-            if m:
-                out.append((list(r), {k: v for k, v in m.groupdict().items() if v is not None}))
-            elif out:
-                out[-1][0].extend(r)
-        return [Item(tuple(ls), union(ln.box for ln in ls), f) for ls, f in out]
-    tops = [min(ln.box[1] for ln in r) for r in rs]
-    bottoms = [max(ln.box[1] + ln.box[3] for ln in r) for r in rs]
-    gaps = [tops[i + 1] - bottoms[i] for i in range(len(rs) - 1)]
-    cut = None
-    if gaps and max(gaps) > 1.6 * max(1, min(gaps)):
-        cut = (max(gaps) + min(gaps)) / 2
-    groups: list[list[Line]] = [list(rs[0])]
-    for gap, r in zip(gaps, rs[1:], strict=True):
-        if cut is None or gap > cut:
-            groups.append(list(r))
-        else:
-            groups[-1].extend(r)
-    return [Item(tuple(g), union(ln.box for ln in g)) for g in groups]
-
-
 def _center(b: Box) -> Point:
     return (b[0] + b[2] // 2, b[1] + b[3] // 2)
 
@@ -198,10 +162,12 @@ def locate(
     regions: Mapping[str, Box],
     spots: Mapping[str, Point],
     screen: Box,
+    info: Mapping[str, RegionInfo] | None = None,
 ) -> Hit | Miss:
     """loc on this screen. lines are the whole screen's; regions are the placed named
     regions of the view on screen and the session (full names, `teams.list`, or the short
-    ones the caller resolved); spots the session spots in pixels."""
+    ones the caller resolved), info how each reads as items (text blocks when not given);
+    spots the session spots in pixels."""
     if loc.spot:
         p = spots.get(loc.spot) or spots.get(f"session.{loc.spot}")
         if p is None:
@@ -251,8 +217,14 @@ def locate(
         return hit
     assert loc.region
     if loc.nth is not None:
-        its = items(pool)
-        it = _pick([Hit(i.box, _center(i.box), "", i.text) for i in its], loc.nth)
+        reg = (info or {}).get(loc.region, RegionInfo())
+        its = readers.items(reg.reader, pool, bounds, reg.kind, reg.inner)
+        boxes = [tuple(i.box if hasattr(i, "box") else i["box"]) for i in its]
+        found = [
+            Hit(b, _center(b), "", readers.item_text(i))  # type: ignore[arg-type]
+            for b, i in zip(boxes, its, strict=True)
+        ]
+        it = _pick(found, loc.nth)
         if it is None:
             return Miss(f"region '{loc.region}' shows {len(its)} items, not item {loc.nth}")
         return Hit(it.box, it.center, f"item {loc.nth} of {loc.region}", it.text)

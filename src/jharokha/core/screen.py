@@ -104,13 +104,17 @@ class Screen:
 
     def read(self, window_title: str | None, region: Box | None) -> tuple[Frame, list[Line]]:
         w, frame = self.frame(window_title)
+        return frame, self.lines(frame, region)
+
+    def lines(self, frame: Frame, region: Box | None) -> list[Line]:
+        """The frame's text (or a region's) in reading order, OCR'd once per frame."""
         if region:
             check_region(region, frame)
         lines = self.cache.get(frame, region)
         if lines is None:
             lines = reading_order(self.source.ocr(frame, region), reading_panes(frame, region))
             self.cache.put(frame, region, lines)
-        return frame, lines
+        return lines
 
     def verify(self, frame: Frame, lines: list[Line], which: list[int]) -> dict[int, str]:
         """Second readings of lines[i] for i in which (at most MAX_VERIFY), by index."""

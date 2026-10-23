@@ -1,11 +1,8 @@
 """Actions as data. An action is a named sequence of steps an agent calls with arguments and
-gets a structured result from; anyone can add one in a TOML file. Built-in ones ship in
-jharokha/apps/actions/.
+gets a structured result from; anyone can add one in a TOML file (apps.toml, or the file
+$JHAROKHA_ACTIONS names). Built-in ones ship in jharokha/apps/actions/.
 
     format = 1
-    [policy.teams]
-    newline = "shift+enter"               # what a newline in typed text becomes in this app
-
     [action.teams.draft]                  # the action teams.draft; its app is teams
     summary = "Type a draft into a chat's compose box; never sends."
     max_risk = "reversible"               # a step declared riskier is refused before anything
@@ -25,25 +22,34 @@ press, run and put_file), `expect` (a condition that must hold after it) and `ti
     click     target (a locator, core.locate), button, double
     type      text, newline (enter | shift+enter | forbid), target to click first
     press     keys
-    scroll    region, ticks, until (a condition), max; collect items into a result list
+    scroll    region, ticks, until (a condition), max; collect the region's items into a list
     wait      for = ready | settled, or until (a condition)
-    read      region as items or lines into a result list, since a time; zoom reads it close
+    read      region as items (by the region's reader, core.readers) or lines into a result,
+              since a time (a list region); zoom reads it close
     extract   regex on a region into result fields, or a field of collected items
     repeat    times | each (a list argument) | until, max; steps inside
     run       command in the shell in front, ended by core.shell's marker; exit code;
               clear (Ctrl+L) first
     put_file  path, content_base64; per-chunk confirmation, then the SHA-256 checked
 
-A marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again in the
+Items are what jharokha_read_text format=items gives for the region (a Teams thread's
+messages: sender, time, text); `fields = { who = "sender" }` renames their fields. A
+marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again in the
 rows read up close, then by the second engine, once the screen holds still.
 
-Conditions: text, regex, gone (in region), app, view, ready, before (a time on screen at or
-before this one). Arguments fill `{name}` in step values; in a regex they are escaped. Only
-arguments and repeat variables fill placeholders, never text read off the screen: what is
-on screen goes into the result, and never becomes a step, a click target or typed text.
+Conditions: text, regex, gone (in region), app, view, ready, before (an item of a list
+region at or before this time). Arguments fill `{name}` in step values; in a regex they are
+escaped. Only arguments and repeat variables fill placeholders, never text read off the
+screen: what is on screen goes into the result, and never becomes a step, a click target or
+typed text.
 
-Before every input step the runner checks the app in front is the action's, and refuses
-otherwise; typed text never carries a raw newline, so Enter is only ever a declared key."""
+The guard is core.guard's, as for the input tools, with the same codes: before every input
+step the app in front must be the action's (wrong_app), a key its policy calls irreversible
+makes its step irreversible (and a typed newline is the policy's newline, Shift+Enter in
+Teams), a step riskier than the action's max_risk or the call's allow is refused before
+any input (irreversible), and the Source refuses input while another agent holds the
+window (input_leased) or someone uses this computer (user_active). Typed text never
+carries a raw newline, so Enter is only ever a declared key."""
 
 from __future__ import annotations
 
@@ -54,26 +60,19 @@ import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import datetime
 from functools import cache
 from importlib import resources
 from typing import Any, Literal, Protocol
 
+from jharokha.core import guard, listread, readers
 from jharokha.core import shell as sh
 from jharokha.core.apps import GENERIC
-from jharokha.core.locate import (
-    Hit,
-    Item,
-    Locator,
-    Miss,
-    inside,
-    items,
-    locate,
-    locator,
-    row_texts,
-    rows,
-)
+from jharokha.core.guard import Policy
+from jharokha.core.locate import Hit, Locator, Miss, RegionInfo, inside, locate, locator, row_texts
+from jharokha.core.locate import rows as screen_rows
 from jharokha.core.models import Box, Line, Point, Word
+from jharokha.core.screen import ScreenError
 from jharokha.core.text import find, fold
 
 FORMAT = 1
@@ -86,14 +85,16 @@ COND_KEYS = ("text", "regex", "gone", "region", "app", "view", "ready", "before"
 COMMON = ("do", "risk", "expect", "timeout_s", "label")
 INPUT = ("click", "type", "press", "scroll", "run", "put_file")
 DECLARED = ("click", "type", "press", "run", "put_file")  # risk must be stated
+# Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
+REFUSALS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked")
 PARAMS: dict[str, tuple[str, ...]] = {
     "focus": ("app", "view", "switch", "spot"),
     "click": ("target", "button", "double"),
     "type": ("text", "newline", "target"),
     "press": ("keys",),
-    "scroll": ("region", "ticks", "until", "max", "collect", "item", "fields", "exclude", "since"),
+    "scroll": ("region", "ticks", "until", "max", "collect", "fields", "exclude", "since"),
     "wait": ("for", "until"),
-    "read": ("region", "as", "into", "item", "fields", "exclude", "since", "zoom"),
+    "read": ("region", "as", "into", "fields", "exclude", "since", "zoom"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
     "run": ("command", "shell", "region", "clear"),
@@ -146,7 +147,7 @@ class Action:
     args: dict[str, Arg]
     steps: tuple[Step, ...]
     max_risk: Risk = "irreversible"
-    newline: str = "forbid"
+    newline: str | None = None  # a typed newline: None is the app's policy, else forbidden
     source: str = "built-in"
 
     @property
@@ -250,6 +251,11 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
     for key in ("until",):
         if key in params:
             _check_condition(params[key], f"{where}.{key}")
+    if "fields" in params and not (
+        isinstance(params["fields"], dict)
+        and all(isinstance(v, str) for v in params["fields"].values())
+    ):
+        raise ActionError(f'{where}.fields renames item fields, like {{ who = "sender" }}')
     if kind == "type" and params.get("newline", "forbid") not in NEWLINES:
         raise ActionError(f"{where}.newline must be one of {', '.join(NEWLINES)}")
     if kind in ("run", "put_file") and params.get("shell", "powershell") not in SHELLS:
@@ -299,19 +305,15 @@ def _placeholders(v: Any) -> set[str]:
 
 
 def parse(text: str, source: str = "actions", origin: str = "local") -> dict[str, Action]:
-    """The actions in one file, by id (`teams.draft`)."""
+    """The actions in one file, by id (`teams.draft`). An apps.toml's app definitions and
+    calibration are left to core.apps."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise ActionError(f"{source}: {e}") from e
     if data.get("format") != FORMAT:
         raise ActionError(f"{source}: needs `format = {FORMAT}` at the top")
-    _only(data, ("format", "policy", "action"), source)
-    policy = data.get("policy", {})
-    for app, p in policy.items():
-        _only(p, ("newline",), f"{source}: policy.{app}")
-        if p.get("newline", "forbid") not in NEWLINES:
-            raise ActionError(f"{source}: policy.{app}.newline must be one of {NEWLINES}")
+    _only(data, ("format", "action", "app", "session", "calibration"), source)
     out: dict[str, Action] = {}
     for app, acts in data.get("action", {}).items():
         if not isinstance(acts, dict):
@@ -328,8 +330,8 @@ def parse(text: str, source: str = "actions", origin: str = "local") -> dict[str
             if not isinstance(steps, list) or not steps:
                 raise ActionError(f"{where}: needs [[{where.split(': ')[1]}.step]]")
             parsed = tuple(_step(s, f"{where}.step[{i}]", set(args)) for i, s in enumerate(steps))
-            newline = t.get("newline", policy.get(app, {}).get("newline", "forbid"))
-            if newline not in NEWLINES:
+            newline = t.get("newline")
+            if newline is not None and newline not in NEWLINES:
                 raise ActionError(f"{where}.newline must be one of {', '.join(NEWLINES)}")
             out[f"{app}.{name}"] = Action(
                 f"{app}.{name}",
@@ -367,8 +369,9 @@ def load(*texts: str) -> dict[str, Action]:
 
 @dataclass(frozen=True)
 class Snapshot:
-    """One reading of the screen: its lines, what app and view it is, where that view's
-    named regions (`teams.list`) and the session's (`session.taskbar`) are, and the spots."""
+    """One reading of the screen: its lines, what app and view it is (and how surely),
+    where that view's named regions (`teams.list`) and the session's (`session.taskbar`)
+    are, how each of the view's regions reads as items, and the spots."""
 
     frame_id: int
     size: tuple[int, int]
@@ -379,6 +382,8 @@ class Snapshot:
     regions: dict[str, Box] = field(default_factory=dict)
     spots: dict[str, Point] = field(default_factory=dict)
     locked: bool = False
+    confidence: float = 1.0
+    info: dict[str, RegionInfo] = field(default_factory=dict)
 
 
 class Executor(Protocol):
@@ -514,80 +519,53 @@ def fill(v: Any, env: Mapping[str, Any], regex: bool = False) -> Any:
     return v
 
 
-# Times on screen, for since and before
-
-
-_DATE_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
-_DATE_US = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b")
-_TIME = re.compile(r"\b(\d{1,2}) ?[:.] ?(\d{2})(?:\s*([AaPp])\.?[Mm]\.?)?(?!\d)")
-
-
-def when(s: str) -> tuple[int | None, int | None] | None:
-    """The first date (as an ordinal) and time of day (minutes) in s, or None."""
-    d = None
-    if m := _DATE_ISO.search(s):
-        d = _ordinal(int(m[1]), int(m[2]), int(m[3]))
-    elif m := _DATE_US.search(s):
-        d = _ordinal(int(m[3]), int(m[1]), int(m[2]))
-    t = None
-    if m := _TIME.search(s):
-        h, mi = int(m[1]), int(m[2])
-        if m[3]:
-            h = h % 12 + (12 if m[3].lower() == "p" else 0)
-        if h < 24 and mi < 60:
-            t = h * 60 + mi
-    return None if d is None and t is None else (d, t)
-
-
-def _ordinal(y: int, mo: int, d: int) -> int | None:
-    try:
-        return date(y, mo, d).toordinal()
-    except ValueError:
-        return None
-
-
-def at_or_before(a: tuple[int | None, int | None], b: tuple[int | None, int | None]) -> bool:
-    """a is not after b, on what both say: dates when both have one, then times."""
-    (da, ta), (db, tb) = a, b
-    if da is not None and db is not None and da != db:
-        return da < db
-    if ta is not None and tb is not None:
-        return ta <= tb
-    return da is not None and db is not None
-
-
 # The runner
 
 
 class Runner:
     """Runs one action against an executor. allow caps the risk of any step, below the
-    action's own max_risk: 0.19's session guard passes its limit here."""
+    action's own max_risk: a `do` call's allow. policies are the apps' input policies
+    (core.guard.Policy, from apps.Catalog.policies()), applied as the input tools apply
+    them."""
 
-    def __init__(self, ex: Executor, allow: Risk = "irreversible") -> None:
+    def __init__(
+        self,
+        ex: Executor,
+        allow: Risk = "irreversible",
+        policies: Mapping[str, Policy] | None = None,
+    ) -> None:
         self.ex, self.allow = ex, allow
+        self.policies = dict(policies or {})
 
     def run(self, action: Action, args: Mapping[str, Any], dry_run: bool = False) -> Result:
         res = Result(action.id, dry_run=dry_run)
         try:
             env = check_args(action, args)
         except ActionError as e:
-            res.ok, res.failed = False, {"step": None, "reason": str(e)}
+            res.ok, res.failed = False, {"step": None, "reason": str(e), "code": "bad_argument"}
             return res
         cap = min(action.max_risk, self.allow, key=RISKS.index)
-        for label, s, risk in _risks(action, action.steps, env, ""):
+        policy = self.policies.get(action.app, Policy())
+        for label, s, risk, why in _risks(action, action.steps, env, "", policy):
             if RISKS.index(risk) > RISKS.index(cap):
                 detail = (
-                    f"step {label} ({s.kind}) is {risk}, above what {action.id} may do here "
-                    f"({cap}); nothing was done"
+                    f"step {label} ({s.kind}{why}) is {risk}, above what {action.id} may do "
+                    f"here ({cap}); nothing was sent"
                 )
+                if cap == action.max_risk:
+                    detail += ". The action itself goes no further; nothing can allow it"
+                else:
+                    detail += (
+                        f". Only if the user asked for exactly this, call again with allow='{risk}'"
+                    )
                 res.ok = False
-                res.failed = {"step": label, "reason": detail}
-                res.safety.append({"kind": "refused", "step": label, "detail": detail})
+                res.failed = {"step": label, "reason": detail, "code": "irreversible"}
+                res.safety.append({"kind": "irreversible", "step": label, "detail": detail})
                 return res
         if dry_run:
             res.plan = _plan(action, action.steps, env, "")
             return res
-        self.action, self.res = action, res
+        self.action, self.res, self.cap = action, res, cap
         self._last: str | None = None  # the last app recognised during this run
         self._close: dict[tuple[int, str], list[Line]] = {}  # rows read again, per frame
         try:
@@ -599,8 +577,17 @@ class Runner:
                 res.failed["candidates"] = list(e.candidates)
         except _Refuse as e:
             res.ok = False
-            res.failed = {"step": self._at, "reason": e.reason}
+            res.failed = {"step": self._at, "reason": e.reason, "code": e.kind}
             res.safety.append({"kind": e.kind, "step": self._at, "detail": e.reason})
+        except ScreenError as e:
+            # The Source's own guards (input_leased, user_active) and errors (covered, ...)
+            reason = str(e).removeprefix(f"{e.code}: ")
+            if self.res.steps:
+                reason += f" ({len(self.res.steps)} steps were done before; see steps_done)"
+            res.ok = False
+            res.failed = {"step": self._at, "reason": reason, "code": e.code}
+            if e.code in REFUSALS:
+                res.safety.append({"kind": e.code, "step": self._at, "detail": reason})
         return res
 
     # Steps
@@ -620,15 +607,11 @@ class Runner:
         app, view = p.get("app", self.action.app), p.get("view")
         snap = self._look()
         if snap.locked:
-            raise _Refuse("refused", "the session is locked; nothing was done")
-        switched = snap.app != app
+            raise _Refuse("locked", "the session is locked; nothing was sent")
+        switched = snap.app != app and app != guard.ANY
         if switched:
             if not p.get("switch"):
-                raise _Refuse(
-                    "refused",
-                    f"{app} is not in front ({_on(snap)}); {self.action.id} works only in "
-                    f"{app} and does not switch to it, so nothing was typed or clicked",
-                )
+                self._guard(snap, app)  # refuses: wrong_app, as the input tools do
             spot = p.get("spot", f"taskbar.{app}")
             hit = locate(Locator(spot=spot), [], {}, snap.spots, (0, 0, *snap.size))
             if isinstance(hit, Miss):
@@ -636,6 +619,7 @@ class Runner:
             self.ex.click(*hit.center)
             self.ex.settle()
             snap = self._until({"app": app}, s.timeout_s, f"switching to {app}")
+        self._guard(snap, app)
         if view and snap.view != view:
             raise _Fail(f"{app} shows its {snap.view} view, not {view}")
         if snap.ready is False:
@@ -649,33 +633,61 @@ class Runner:
         return snap
 
     def _guard(self, snap: Snapshot, app: str | None = None) -> None:
-        """Input goes only to the action's app: in front, or unrecognised for a moment
-        (typing over a browser's URL hides its strongest cue) while nothing else has been
-        recognised since it was."""
+        """Input goes only to the action's app (core.guard.check_front): in front, or
+        unrecognised for a moment (typing over a browser's URL hides its strongest cue)
+        while nothing else has been recognised since it was."""
         want = app or self.action.app
         if snap.locked:
-            raise _Refuse("refused", "the session is locked; no input was sent")
-        if snap.app != want and not (snap.app == GENERIC and self._last == want):
-            raise _Refuse(
-                "refused",
-                f"{want} is not in front ({_on(snap)}); no input was sent to it",
-            )
+            raise _Refuse("locked", "the session is locked; nothing was sent")
+        if want == guard.ANY or (snap.app == GENERIC and self._last == want):
+            return
+        try:
+            guard.check_front(want, snap.app, snap.view, snap.confidence)
+        except guard.WrongApp as e:
+            raise _Refuse(*guard.refusal(e)) from None
+
+    def _keys(self, snap: Snapshot, chords: list[str]) -> None:
+        """core.guard.check_keys under the policy of the app in front: a key it calls
+        irreversible needs a call that allows irreversible steps."""
+        policy = self.policies.get(snap.app or "", Policy())
+        allow = guard.ALLOW_IRREVERSIBLE if self.cap == "irreversible" else None
+        try:
+            guard.check_keys(policy, chords, allow, f"{snap.app}.{snap.view}")
+        except guard.Irreversible as e:
+            raise _Refuse(*guard.refusal(e)) from None
+
+    def _press_key(self, snap: Snapshot, keys: str) -> None:
+        try:
+            chord = guard.combo_key(keys)
+        except ValueError as e:
+            raise _Fail(str(e)) from None
+        self._keys(snap, [chord])
+        self.ex.press(keys)
 
     def _target(self, snap: Snapshot, t: dict[str, Any]) -> Hit:
         loc = locator(t)
-        hit = locate(loc, snap.lines, self._regions(snap), snap.spots, (0, 0, *snap.size))
+        screen = (0, 0, *snap.size)
+        regions, info = self._regions(snap), self._info(snap)
+        hit = locate(loc, snap.lines, regions, snap.spots, screen, info)
         if isinstance(hit, Miss):
             raise _Fail(f"{loc.describe()}: {hit.reason}", hit.candidates)
         return hit
 
-    def _regions(self, snap: Snapshot) -> dict[str, Box]:
-        """Named regions, also by their short name for the action's own app."""
-        out = dict(snap.regions)
-        for k, b in snap.regions.items():
+    def _short(self, named: Mapping[str, Any]) -> dict[str, Any]:
+        """named, also by the short name of each of the action's own app's entries."""
+        out = dict(named)
+        for k, b in named.items():
             app, _, short = k.partition(".")
             if app == self.action.app:
                 out.setdefault(short, b)
         return out
+
+    def _regions(self, snap: Snapshot) -> dict[str, Box]:
+        """Named regions, also by their short name for the action's own app."""
+        return self._short(snap.regions)
+
+    def _info(self, snap: Snapshot) -> dict[str, RegionInfo]:
+        return self._short(snap.info)
 
     def _click(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         snap = self._look()
@@ -688,19 +700,24 @@ class Runner:
 
     def _type(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         text = str(p["text"]).replace("\r\n", "\n").replace("\r", "\n")
-        newline = s.params.get("newline", self.action.newline)
         snap = self._look()
         self._guard(snap)
+        newline = _newline(s, self.action, self.policies.get(snap.app or "", Policy()))
         if "target" in p:
             hit = self._target(snap, p["target"])
             self.ex.click(*hit.center)
             self.ex.settle()
-            self._guard(self._look())
+            snap = self._look()
+            self._guard(snap)
         parts = text.split("\n")
         if len(parts) > 1 and newline == "forbid":
             raise _Refuse(
-                "refused", "the text has a newline and this step may not type one; nothing typed"
+                "irreversible",
+                "the text has a newline and this step may not type one (it could be Enter, "
+                "which sends or runs); nothing was typed",
             )
+        if len(parts) > 1:
+            self._keys(snap, [guard.combo_key(newline)])
         for i, part in enumerate(parts):
             if part:
                 self.ex.type(part)
@@ -710,22 +727,24 @@ class Runner:
         return f"{len(text)} characters" + (f", newlines as {newline}" if len(parts) > 1 else "")
 
     def _press(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
-        self._guard(self._look())
-        self.ex.press(str(p["keys"]))
+        snap = self._look()
+        self._guard(snap)
+        self._press_key(snap, str(p["keys"]))
         self.ex.settle()
         return ""
 
     def _scroll(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         ticks, most = int(p.get("ticks", 3)), int(p.get("max", 10))
         until = p.get("until")
-        got: list[Item] = []
+        got: list[Any] = []
         last_id, n = None, 0
         for n in range(most + 1):
             snap = self._look()
             if p.get("collect"):
-                fresh = [i for i in self._items(snap, p) if not _seen(i, got)]
-                got = fresh + got if ticks > 0 else got + fresh
-            if until and _holds(until, snap, self._regions(snap))[0]:
+                its = self._items(snap, p)
+                # Scrolling up (ticks > 0) reads further up: what is read now comes first.
+                got = _merge(its, got) if ticks > 0 else _merge(got, its)
+            if until and _holds(until, snap, self._regions(snap), self._info(snap))[0]:
                 break
             if snap.frame_id == last_id:
                 break  # the last scroll changed nothing: the end of the list
@@ -756,38 +775,28 @@ class Runner:
             lines = [ln for ln in lines if ln not in gone]
         return lines
 
-    def _items(self, snap: Snapshot, p: dict[str, Any]) -> list[Item]:
-        its = items(self._pool(snap, p), p.get("item"))
-        names = p.get("fields")
-        if names and not p.get("item"):
-            its = [
-                Item(
-                    i.lines,
-                    i.box,
-                    {
-                        k: "  ".join(ln.text for ln in r)
-                        for k, r in zip(names, rows(list(i.lines)), strict=False)
-                    },
-                )
-                for i in its
-            ]
-        return its
+    def _items(self, snap: Snapshot, p: dict[str, Any]) -> list[Any]:
+        """The region's items as its reader makes them (core.readers): what
+        jharokha_read_text format=items gives for it."""
+        box = self._box(snap, p["region"])
+        info = self._info(snap).get(p["region"], RegionInfo())
+        inner = list(info.inner)
+        if p.get("exclude"):
+            inner.append(self._box(snap, p["exclude"]))
+        return readers.items(info.reader, self._pool(snap, p), box, info.kind, inner)
 
-    def _store(self, into: str, its: list[Item], p: dict[str, Any]) -> None:
-        since = when(str(p["since"])) if p.get("since") else None
-        if p.get("since") and since is None:
-            raise _Fail(f"since {p['since']!r} is not a date or time")
-        out = []
-        for i in its:
-            if since is not None:
-                w = when(i.fields.get("time", "") or i.text)
-                if w is None or at_or_before(w, since):
-                    continue
-            body = row_texts(list(i.lines))
-            if p.get("item"):
-                body = body[1:]  # the first row is the entry's head, in fields
-            out.append({**i.fields, "text": "\n".join(body)})
-        self.res.items[into] = out
+    def _store(self, into: str, its: list[Any], p: dict[str, Any]) -> None:
+        if p.get("since"):
+            if not all(isinstance(i, listread.Item) for i in its):
+                raise _Fail(f"since needs a list region; {p['region']} is not one")
+            try:
+                its = listread.since(its, str(p["since"]), datetime.now())
+            except ValueError as e:
+                raise _Fail(f"since: {e}") from None
+        rename = {v: k for k, v in (p.get("fields") or {}).items()}
+        self.res.items[into] = [
+            {rename.get(k, k): v for k, v in d.items()} for d in readers.plain(its)
+        ]
 
     def _wait(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         what = p.get("for")
@@ -804,8 +813,7 @@ class Runner:
     def _read(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         snap = self._look()
         if p.get("as", "lines") == "items":
-            its = self._items(snap, p)
-            self._store(p["into"], its, p)
+            self._store(p["into"], self._items(snap, p), p)
             return f"{len(self.res.items[p['into']])} items"
         self.res.lines[p["into"]] = row_texts(self._pool(snap, p))
         return f"{len(self.res.lines[p['into']])} lines"
@@ -844,7 +852,8 @@ class Runner:
             self._steps(s.steps, inner, f"{prefix}{n}.")
             if p.get("until"):
                 snap = self._look()
-                if _holds(fill(s.params["until"], inner), snap, self._regions(snap))[0]:
+                cond = fill(s.params["until"], inner)
+                if _holds(cond, snap, self._regions(snap), self._info(snap))[0]:
                     break
         return f"{n} times"
 
@@ -859,7 +868,7 @@ class Runner:
         key = (snap.frame_id, "reread")
         if key not in self._close:
             strips = []
-            for r in rows(inside(snap.lines, box)):
+            for r in screen_rows(inside(snap.lines, box)):
                 top = min(ln.box[1] for ln in r) - 3
                 bottom = max(ln.box[1] + ln.box[3] for ln in r) + 3
                 strips.append((box[0], max(box[1], top), box[2], bottom - max(box[1], top)))
@@ -874,7 +883,7 @@ class Runner:
         key = (snap.frame_id, "zoom")
         if key in self._close:
             return self._close[key]
-        rs = rows(inside(snap.lines, box))
+        rs = screen_rows(inside(snap.lines, box))
         most = max(1, int(ZOOM_AREA * snap.size[0] * snap.size[1] / max(1, box[2])))
         bands: list[tuple[int, int]] = []
         for r in rs:
@@ -927,7 +936,9 @@ class Runner:
             self.ex.wait(POLL_S * 3)
 
     def _send(self, line: str) -> None:
-        self._guard(self._look())
+        snap = self._look()
+        self._guard(snap)
+        self._keys(snap, ["enter"])
         self.ex.type(line)
         self.ex.press("enter")
 
@@ -935,11 +946,12 @@ class Runner:
         shell = p.get("shell", "powershell")
         command = str(p["command"])
         if "\n" in command or "\r" in command:
-            raise _Refuse("refused", "a command is one line; nothing was typed")
+            raise _Fail("a command is one line; nothing was typed")
         if p.get("clear"):
             # Then a reply whose echo OCR garbled starts at the top, not at older output.
-            self._guard(self._look())
-            self.ex.press("ctrl+l")
+            snap = self._look()
+            self._guard(snap)
+            self._press_key(snap, "ctrl+l")
             self.ex.settle()
         token = sh.new_token()
         line = sh.marked(command, token, shell)
@@ -994,7 +1006,7 @@ class Runner:
         end = self.ex.now() + timeout
         while True:
             snap = self._look()
-            ok, why = _holds(cond, snap, self._regions(snap))
+            ok, why = _holds(cond, snap, self._regions(snap), self._info(snap))
             if ok:
                 return snap
             if self.ex.now() >= end:
@@ -1055,7 +1067,12 @@ def _describe(cond: Mapping[str, Any]) -> str:
     return ", ".join(f"{k}={v!r}" for k, v in cond.items())
 
 
-def _holds(cond: Mapping[str, Any], snap: Snapshot, regions: Mapping[str, Box]) -> tuple[bool, str]:
+def _holds(
+    cond: Mapping[str, Any],
+    snap: Snapshot,
+    regions: Mapping[str, Box],
+    info: Mapping[str, RegionInfo] | None = None,
+) -> tuple[bool, str]:
     if "app" in cond and snap.app != cond["app"]:
         return False, _on(snap)
     if "view" in cond and snap.view != cond["view"]:
@@ -1077,41 +1094,53 @@ def _holds(cond: Mapping[str, Any], snap: Snapshot, regions: Mapping[str, Box]) 
     if "gone" in cond and find(pool, str(cond["gone"])):
         return False, f"'{cond['gone']}' is still on screen"
     if "before" in cond:
-        since = when(str(cond["before"]))
-        if since is None:
-            return False, f"before {cond['before']!r} is not a date or time"
-        seen = [w for r in row_texts(pool) if (w := when(r))]
-        if not any(at_or_before(w, since) for w in seen):
-            return False, "nothing on screen is that old yet"
+        name = cond.get("region")
+        reg = (info or {}).get(name) if name else None
+        if reg is None or reg.reader != "list":
+            return False, "before needs a list region (one whose reader is list)"
+        assert name is not None
+        its = readers.items(reg.reader, pool, regions[name], reg.kind, list(reg.inner))
+        try:
+            if not listread.before(its, str(cond["before"]), datetime.now()):
+                return False, "nothing on screen is that old yet"
+        except ValueError as e:
+            return False, str(e)
     return True, ""
 
 
-def _seen(item: Item, got: list[Item]) -> bool:
-    """item is one already collected, as OCR read it again on another screen."""
-    a = fold(item.text).replace(" ", "")
-    for g in got:
-        if g.fields.get("time") != item.fields.get("time"):
-            continue
-        b = fold(g.text).replace(" ", "")
-        if a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.9:
-            return True
-    return False
+def _merge(older: list[Any], newer: list[Any]) -> list[Any]:
+    """Items read at two scroll positions as one list, each once: older is the read
+    further up. listread.merge for a list's items; for other readers, by their text."""
+    if all(isinstance(i, listread.Item) for i in [*older, *newer]):
+        return listread.merge(older, newer)
+    seen = {fold(readers.item_text(i)).replace(" ", "") for i in older}
+    return older + [i for i in newer if fold(readers.item_text(i)).replace(" ", "") not in seen]
 
 
-def _effective(s: Step, p: dict[str, Any], action: Action) -> Risk:
-    """A step's risk with what its filled values show: typed text with a newline that is
-    Enter is irreversible, whatever was declared."""
+def _newline(s: Step, action: Action, policy: Policy) -> str:
+    """The key a typed newline is: the step's, the action's, the app's policy's (Shift+Enter
+    in Teams), else none (forbid)."""
+    return s.params.get("newline") or action.newline or policy.newline or "forbid"
+
+
+def _effective(s: Step, p: dict[str, Any], action: Action, policy: Policy) -> tuple[Risk, str]:
+    """A step's risk with what its filled values and the app's policy show, and why when
+    that is above what was declared: a key the policy calls irreversible (Enter in Teams),
+    or typed text with a newline that is Enter."""
+    if s.kind == "press" and policy.irreversible(str(p.get("keys", ""))):
+        return "irreversible", f", {p['keys']} is irreversible in {action.app}"
     if s.kind == "type":
         text = str(p.get("text", ""))
-        newline = s.params.get("newline", action.newline)
-        if newline == "enter" and ("\n" in text or "\r" in text):
-            return "irreversible"
-    return s.risk
+        newline = _newline(s, action, policy)
+        if ("\n" in text or "\r" in text) and newline != "forbid":
+            if newline == "enter" or policy.irreversible(newline):
+                return "irreversible", f", a newline typed as {newline}"
+    return s.risk, ""
 
 
 def _risks(
-    action: Action, steps: tuple[Step, ...], env: Mapping[str, Any], prefix: str
-) -> list[tuple[str, Step, Risk]]:
+    action: Action, steps: tuple[Step, ...], env: Mapping[str, Any], prefix: str, policy: Policy
+) -> list[tuple[str, Step, Risk, str]]:
     out = []
     for i, s in enumerate(steps):
         label = f"{prefix}{i + 1}:{s.kind}"
@@ -1119,8 +1148,11 @@ def _risks(
             p = fill(s.params, env)
         except KeyError:
             p = s.params  # a repeat variable, filled per pass
-        out.append((label, s, _effective(s, p, action)))
-        out += _risks(action, s.steps, env, f"{prefix}{i + 1}.")
+        try:
+            out.append((label, s, *_effective(s, p, action, policy)))
+        except ValueError:  # a key that is no key: refused when pressed
+            out.append((label, s, s.risk, ""))
+        out += _risks(action, s.steps, env, f"{prefix}{i + 1}.", policy)
     return out
 
 

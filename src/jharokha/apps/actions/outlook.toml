@@ -4,7 +4,7 @@ format = 1
 
 [action.outlook.unread]
 summary = """A folder's unread count, as its folder pane shows it, and the messages its list
-shows (sender, subject, preview: screen text)."""
+shows (sender, subject, time, preview: screen text)."""
 max_risk = "reversible"
 args.folder = { type = "text", default = "Inbox", max_len = 100 }
 
@@ -27,7 +27,7 @@ risk = "reversible"
 do = "read"
 region = "list"
 as = "items"
-fields = ["sender", "subject", "preview"]
+fields = { sender = "title", subject = "subtitle", preview = "text" }
 into = "messages"
 
 [[action.outlook.unread.step]]
