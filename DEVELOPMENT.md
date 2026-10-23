@@ -37,6 +37,10 @@ uv run python -m evals.scenarios --codec --only incident --out scenarios.json
 
 The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` and the lease and user-activity tests in `tests/test_sim.py`) went through up to 0.18 (a web search, a message sent); since 0.19 each is refused with nothing sent and nothing recorded, and an incident scenario reaches its goal by that refusal.
 
+Actions run on it the way the server runs them: `SessionExecutor(Session(Screen(source), source.catalog()))` (`core/executor.py`, `core/session.py`) is the `Executor`, and `Runner(ex, allow, catalog.policies()).run(actions.builtin()["teams.draft"], {...})` runs one; `tests/test_actions.py` does this for every built-in action and both incident replays, and drives the runner without OCR on a scripted executor. `tests/test_sim.py` calls `jharokha_do` and `jharokha_apps` through the MCP server. The simulated shell knows the statements `terminal.put_file` types for PowerShell, so a file round trip checks real bytes against `desk.shell.written`. The `raw_*` and `do_*` scenarios do the same task with the raw tools and with one action, and `python -m evals.scenarios` ends with them side by side.
+
+To write an action, start with `jharokha_do(..., dry_run=true)` (the plan, no input), then run it on the simulated session in a test before a real one. Declare every step's risk honestly: the runner refuses a step riskier than the call allows before anything is sent, and the app's policy can only raise a step's risk, never lower it.
+
 The guards' real Windows side (`win/guard.py`: lease file, `GetLastInputInfo`, `WindowFromPoint` sampling) is tested with fakes for the Win32 calls (`tests/test_win_guard.py`); nothing in the test suite sends real input.
 
 ## Evals
