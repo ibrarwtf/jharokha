@@ -7,7 +7,10 @@ Per scenario: whether it reached its goal, the tool calls it took, wall time, th
 the tools returned (characters / 4, as the screen evals count them), and the safety events
 the simulation recorded: messages sent, web searches, commands run. The incident replays
 went through up to 0.18 (a web search, a message sent); since 0.19 each is refused, and an
-incident's goal is that refusal with nothing recorded. Not gated in CI yet."""
+incident's goal is that refusal with nothing recorded. Since 0.20 the tasks an action does
+(teams.new_messages, outlook.unread, terminal.put_file, terminal.run, teams.draft,
+browser.goto) run twice, with the raw tools and with jharokha_do, and are compared at the
+end. Not gated in CI yet."""
 
 from __future__ import annotations
 
@@ -302,7 +305,8 @@ async def raw_outlook_unread(a: Agent) -> bool:
     await a.call("jharokha_click", x=at[0], y=at[1], show="none", expect="outlook")
     mails = body(await a.call("jharokha_read_text", region="outlook.list"))
     folders = await a.call("jharokha_read_text", region="outlook.folders")
-    m = re.search(r"Inbox\s+(\d+)", folders)
+    # The count is a line of its own beside the name: `L0 [77,179] Inbox`, `L1 [187,179] 16`.
+    m = re.search(r"Inbox(?:\s+L\d+ \[\d+,\d+\])?\s+(\d+)", folders)
     return _unread_ok(a, m[1] if m else None, [x.get("subtitle", "") for x in mails])
 
 
@@ -399,8 +403,8 @@ async def do_incident_run_into_edge(a: Agent) -> bool:
 
 
 async def do_incident_draft_sends(a: Agent) -> bool:
-    """teams.draft with a newline: Shift+Enter by Teams' policy, so nothing is sent; and
-    pressing Enter in Teams through an action is refused under the default allow."""
+    """The newline incident through an action: teams.draft types it as Shift+Enter, by
+    Teams' policy, so the two lines stay in the draft."""
     chat = a.desk.teams.chat
     r = await do(a, "teams.draft", chat=chat.name, text=DRAFT)
     return r["ok"] and not a.desk.teams.sent and chat.draft == DRAFT.split("\n")
@@ -424,7 +428,7 @@ SCENARIOS = [
     Scenario("terminal_run_date", "terminal", terminal_run_date),
     Scenario("terminal_run_marker", "terminal", terminal_run_marker),
     Scenario("terminal_type_until", "terminal", terminal_type_until),
-    Scenario("browser_goto", "browser", browser_goto),
+    Scenario("browser_goto", "browser", browser_goto, task="browser_goto"),
     Scenario("incident_run_into_edge", "browser", incident_run_into_edge, incident=True),
     Scenario("incident_newline_sends", "teams", incident_newline_sends, incident=True),
     Scenario("incident_teams_ctrl_enter", "teams", incident_teams_ctrl_enter, incident=True),
@@ -443,7 +447,6 @@ SCENARIOS = [
     Scenario("do_terminal_run", "terminal", do_terminal_run, task="terminal_run"),
     Scenario("raw_teams_draft", "teams", raw_teams_draft, task="teams_draft"),
     Scenario("do_teams_draft", "teams", do_teams_draft, task="teams_draft"),
-    Scenario("browser_goto ", "browser", browser_goto, task="browser_goto"),
     Scenario("do_browser_goto", "browser", do_browser_goto, task="browser_goto"),
     Scenario("do_incident_run_into_edge", "browser", do_incident_run_into_edge, incident=True),
     Scenario("do_incident_draft_sends", "teams", do_incident_draft_sends, incident=True),
@@ -478,6 +481,7 @@ async def play(s: Scenario, seed: int = 100, codec: bool = False) -> dict[str, A
         "frames": source.renders,
         "render_ms": round(1000 * source.render_s / max(1, source.renders), 1),
         "incident": s.incident,
+        "task": s.task,
         "refused": agent.codes[-1] if s.incident and agent.codes else None,
         "safety_events": [f"{e.app} {e.kind}: {e.detail}" for e in source.desk.safety()],
     }
@@ -490,6 +494,20 @@ def _incident(r: dict[str, Any]) -> str:
     if not r["ok"]:
         return "  UNSAFE"
     return f"  safe: refused, {r['refused']}" if r["refused"] else "  safe: by the app's policy"
+
+
+def compare(rows: list[dict[str, Any]]) -> None:
+    """Each task done with the raw tools and with jharokha_do, side by side."""
+    tasks = list(dict.fromkeys(r["task"] for r in rows if r.get("task")))
+    if not tasks:
+        return
+    print("  the same tasks, raw tools against actions (ok, calls, wall_s, tokens):")
+    for t in tasks:
+        cells = []
+        for r in (r for r in rows if r.get("task") == t):
+            ok = "ok" if r["ok"] else "FAILED"
+            cells.append(f"{r['scenario']} {ok} {r['calls']} {r['wall_s']:.2f} {r['tokens']}")
+        print(f"    {t:15} " + " | ".join(cells))
 
 
 def main() -> None:
@@ -514,9 +532,10 @@ def main() -> None:
             + (_incident(r) if r["incident"] else "")
         )
         for e in r["safety_events"]:
-            print(f"      {e}")
+            print(f"      {e if len(e) <= 100 else e[:97] + '...'}")
         if "error" in r:
             print(f"      error: {r['error']}")
+    compare(rows)
     plain = [r for r in rows if not r["incident"]]
     incidents = [r for r in rows if r["incident"]]
     unsafe = [r for r in incidents if r["safety_events"]]

@@ -59,7 +59,9 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_click` | Opt-in: click (left / right / middle, optional double) at a client point, normally a `find_text` center. |
 | `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter, or the app's own newline (Shift+Enter in Teams). Sends nothing unless the session is in the foreground; `focus_at` clicks a blank point first. `paste` sends it through the clipboard and Ctrl+V instead: exact and instant for long text, and the local clipboard is put back. `allow="irreversible"` to send a key the app's policy holds back. |
 | `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. Guarded, `focus_at` and `allow` as for type. |
-| `jharokha_run` | Opt-in: a command in the shell that has focus (PowerShell, cmd, bash): types or pastes it, waits for the prompt to come back below it, and returns only what it printed. Refused unless the terminal is in front (`expect` defaults to `terminal`). `clear` clears the screen first; output taller than the screen says its start is missing. |
+| `jharokha_run` | Opt-in: a command in the shell that has focus (`shell`: PowerShell, cmd, bash). It is typed with a suffix that prints an end marker and its status once it has finished, and returns `run_ms`, `exit_code`, `ok` and only what the command printed. `shell="other"` or `paste` (a long or multi-line command) waits for the prompt instead, without an exit code. Refused unless the terminal is in front (`expect` defaults to `terminal`). `clear` clears the screen first; output taller than the screen says its start is missing. |
+| `jharokha_apps` | The apps jharokha knows, their views and regions (reader, focus) and input policies, the session's regions and spots, and the actions with their arguments, risk and description. |
+| `jharokha_do` | An action (below) in one call: `action`, `args`, `allow` (`read`, `reversible` (default) or `irreversible`), `dry_run`. Returns a structured result. Opt-in, except `dry_run=true`, which shows the plan and sends nothing. |
 
 Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or an app's named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
 
@@ -102,7 +104,7 @@ Every input, from the tools or the shell commands, passes these checks first; a 
 
 `--trace PATH` (server or shell) appends one JSON line per input action to PATH: time, action, window, point, keys, the app identified in front, and `result` (`sent`, or the code that refused it). Typed text is recorded as its length and SHA-256, and as text only with `--trace-text`. Off by default; nothing else is written.
 
-`skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
+`skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; prefer an action (`jharokha_do`) to clicks and keys; zoom with a region before trusting an ID.
 
 ## Apps
 
@@ -135,6 +137,50 @@ A region is the pane under a point of the screen, found from the app's own divid
 A grid region (a terminal's body) is read row by row: its character grid is measured from the pixels once (or taken from calibration), each row is read by the second engine, and the spaces between columns are put back from where the ink is, so paths, prompts, numbers and table columns that Windows OCR drops or splits come back whole. Only rows whose pixels changed are read again. Where the second engine cannot read, Windows OCR's words are snapped to the grid instead. The `focus` region is where input tools report changes by default, so a click in the chat list returns the thread it opened, with a count of lines changed elsewhere. A terminal view's `prompt` is a regex for its shell's prompt, for `jharokha_run` (default: PowerShell's, cmd's or bash's).
 
 Calibration is yours, in a git-ignored `apps.toml`: per app and view the regions measured on your screen (they come before panes and boxes), variants such as one per zoom level, chosen by where their anchor text sits, a grid's row pitch and character width, the focus and prompt; regions and spots of the session (taskbar icons). The same file can define new apps or replace built-in ones. `jharokha measure APP --anchor TEXT [--view VIEW] [--zoom=-5..2] [--focus NAME] [--grid NAME]` writes calibration from what is on screen. Start from [`apps.example.toml`](apps.example.toml); the server reads `--apps PATH`, else `$JHAROKHA_APPS`, else `./apps.toml`. An old `layouts.toml` (`--layouts`, `$JHAROKHA_LAYOUTS`, `./layouts.toml`) still works unchanged: its tables are read as calibration of the built-in app of the same name (`teams@-3` is a zoom variant of Teams chat), other anchored tables as apps of their own, and tables without an anchor as session regions under their old names.
+
+## Actions
+
+An action is a named sequence of steps with checks between them, run by `jharokha_do` in one call: it focuses its app, clicks what a locator finds, types, presses, scrolls, waits, reads regions as items, extracts fields, runs a command or writes a file, and returns a structured result instead of screens to read back. Built in (`src/jharokha/apps/actions/`):
+
+| Action | Args | Risk | What it does |
+|---|---|---|---|
+| `teams.open_chat` | `name` | reversible | Brings Teams forward by its taskbar icon and opens the chat. |
+| `teams.new_messages` | `chat`, `since` | reversible | The messages at or after a time, scrolling the thread back until one at or before it is on screen: `{sender, time, text}` each, and `count`. |
+| `teams.draft` | `chat`, `text` | reversible | Types a draft into the chat's compose box (newlines as Shift+Enter) and never sends. |
+| `outlook.unread` | `folder` (Inbox) | reversible | The folder's unread count and the mails its list shows: `{sender, subject, time, preview}`. |
+| `outlook.open` | `subject` | reversible | Opens a mail by subject and returns its reading pane. |
+| `browser.goto` | `url` | irreversible | Goes to a URL through the address bar (Enter there is irreversible, as for `jharokha_press`); refuses anything that is not a URL before any input. |
+| `browser.click_sequence` | `buttons`, `times` | irreversible | Clicks buttons by their text in order, checking each is on screen. |
+| `terminal.run` | `command`, `shell` | irreversible | As `jharokha_run`: output, `exit_code`, `ok`. Only with the terminal already in front. |
+| `terminal.put_file` | `path`, `content_base64`, `shell` | irreversible | Writes a file in the shell in front: base64 typed in chunks of at most 400 characters, each confirmed by index and length, then decoded there and its SHA-256 checked against the one sent (`hash_check`: `exact`, or `folded` when OCR's lookalikes had to be folded). |
+
+The guard is the input tools', with the same codes. Before any input, every step's risk is checked against the action's `max_risk` and the call's `allow`: a step riskier than either is refused and nothing is sent (`irreversible`). A key the app's policy calls irreversible makes its step irreversible whatever it declares, and a typed newline is the app's newline (Shift+Enter in Teams). Before every input step the app in front must be the action's (`wrong_app`); another agent's input (`input_leased`) or yours (`user_active`) stops it. Typed text never carries a raw newline. Only arguments fill a step's placeholders, never text read off the screen: what is on screen goes into the result (untrusted), never into a click target or typed text.
+
+The result, inside the untrusted wrapper: `ok`, `fields`, `items` (records by the region's reader, as `format="items"` reads them), `lines`, `output` and `exit_code`, `failed` (the step, the reason, a `code`, and for a target not found the closest texts on screen), `safety` (refusals) and `steps_done` (each step, its risk and time). A refusal is an error with its code, as from the input tools.
+
+Your own actions go in `apps.toml` beside your calibration (or in the file `$JHAROKHA_ACTIONS` names), and replace a built-in one of the same id. For example, the git log of the shell in front:
+
+```toml
+format = 1
+
+[action.terminal.git_log]
+summary = "The last commits of the repository the shell is in."
+max_risk = "irreversible"                 # it runs a command
+args.n = { type = "number", default = 5 }
+
+[[action.terminal.git_log.step]]
+do = "focus"                              # the terminal must be in front; it does not switch
+
+[[action.terminal.git_log.step]]
+do = "run"
+command = "git log -{n} --oneline"
+region = "body"
+clear = true
+risk = "irreversible"
+timeout_s = 20
+```
+
+Steps: `focus` (`switch = true` brings the app forward by its taskbar spot), `click` (`target`: a locator such as `{ text = "{chat}", region = "list" }`, `{ right_of = "To" }`, `{ region = "list", nth = 2 }`, `{ spot = "taskbar.teams" }`), `type`, `press`, `scroll` (`until` a condition, `collect` the region's items), `wait` (`for = "ready"`, or `until`), `read` (a region as `items` or lines, `since` a time), `extract` (a regex's named groups into fields), `repeat`, `run`, `put_file`. Each step may `expect` a condition afterwards (`text`, `regex`, `gone` in a `region`, `app`, `view`, `ready`, `before` a time) and fails with where it stopped. Arguments are typed and checked (`text`, `number`, `list`, `base64`, `choice`; `pattern`, `max_len`). The format is described in `src/jharokha/core/actions.py`.
 
 ## Limits
 

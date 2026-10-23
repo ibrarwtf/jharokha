@@ -37,6 +37,10 @@ uv run python -m evals.scenarios --codec --only incident --out scenarios.json
 
 The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` and the lease and user-activity tests in `tests/test_sim.py`) went through up to 0.18 (a web search, a message sent); since 0.19 each is refused with nothing sent and nothing recorded, and an incident scenario reaches its goal by that refusal.
 
+Actions run on it the way the server runs them: `SessionExecutor(Session(Screen(source), source.catalog()))` (`core/executor.py`, `core/session.py`) is the `Executor`, and `Runner(ex, allow, catalog.policies()).run(actions.builtin()["teams.draft"], {...})` runs one; `tests/test_actions.py` does this for every built-in action and both incident replays, and drives the runner without OCR on a scripted executor. `tests/test_sim.py` calls `jharokha_do` and `jharokha_apps` through the MCP server. The simulated shell knows the statements `terminal.put_file` types for PowerShell, so a file round trip checks real bytes against `desk.shell.written`. The `raw_*` and `do_*` scenarios do the same task with the raw tools and with one action, and `python -m evals.scenarios` ends with them side by side.
+
+To write an action, start with `jharokha_do(..., dry_run=true)` (the plan, no input), then run it on the simulated session in a test before a real one. Declare every step's risk honestly: the runner refuses a step riskier than the call allows before anything is sent, and the app's policy can only raise a step's risk, never lower it.
+
 The guards' real Windows side (`win/guard.py`: lease file, `GetLastInputInfo`, `WindowFromPoint` sampling) is tested with fakes for the Win32 calls (`tests/test_win_guard.py`); nothing in the test suite sends real input.
 
 ## Evals
@@ -227,6 +231,29 @@ The misses are OCR's: the calendar's hour labels (10 to 14 px grey) and some day
 | incident_newline_sends | kept as a draft (policy) | 1 | 0.52 | 3 | |
 | incident_second_agent | refused, input_leased | 1 | 0.66 | 75 | |
 | incident_user_typing | refused, user_active | 1 | 0.65 | 70 | |
+
+### Actions (v0.20.0)
+
+`core/actions.py` runs a TOML action's steps over an `Executor`; the server's is `core/executor.SessionExecutor` over the same `core/session.Session` its read tools use, so an action reads a screen exactly as `jharokha_read_text` does (grid rows by the second engine included). Choices:
+
+- One guard. The runner's front check is `guard.check_front` (confidence 0.6, `wrong_app` with `guard.refusal`'s message), its key check `guard.check_keys` under the policy of the app in front, and the Source's own lease and user checks raise through it unchanged. The app's policy is the only policy: the actions' format has none of its own (0.20's first draft had `[policy.teams]`), a typed newline is the step's, the action's, else the policy's newline, else forbidden, and a key the policy calls irreversible makes its step irreversible whatever it declares. So `browser.goto` is irreversible, as Enter in Edge is for `jharokha_press`.
+- Risk is checked before any input, against min(the action's `max_risk`, the call's `allow`); `jharokha_do` defaults to `reversible`, so commands, file writes and navigation need `allow="irreversible"`.
+- Items are the region's reader's (`core/readers.py`): the branch's own list grouping in `locate.py` (gaps or a head regex) is gone, `since` and the `before` condition use `listread.since` / `listread.before`, and items collected across scrolls are joined by `listread.merge`. `fields = { new = "old" }` renames a reader's fields (Outlook's `title`, `subtitle` as sender, subject).
+- Frame ids are content: the executor keeps the frame it read while the pixels have not changed (`watch.changed_bbox`), so "the scroll changed nothing" and "the screen holds still" mean the same on a real capture, whose every frame has a new id, as on the simulation.
+- `jharokha_run` types core/shell's end marker and reads the reply through the runner; the prompt is waited for only with `shell="other"` or `paste`. Measured on the simulated session, 6 seeds x 5 commands with `clear=true` (output, an error, `cmd /c exit 3`, a tail): 30 of 30 by marker, median 1.31 s, every exit code and `ok` right; 30 of 30 by prompt, median 1.27 s, no exit code. On the cherry-picked branch the runner read Windows OCR's lines only, and `cmd /c exit 3` failed 14 of 25 runs (OCR dropped `False`, or the whole marker row, on Cascadia rows); reading the grid's rows as the tools do made it 25 of 25.
+
+`python -m evals.scenarios` (GDI), the same task with the raw tools and as one action:
+
+| task | raw tools: calls, s, tokens | action: calls, s, tokens |
+|---|---|---|
+| Teams messages since a time, across scrolling | 9, 2.82, 1274 | 1, 2.63, 542 |
+| Outlook unread count and list, from Edge | 7, 1.59, 648 | 1, 1.49, 403 |
+| a 900-byte file written and its hash checked | 5, 7.02, 143 | 1, 6.72, 120 |
+| a command's output (prompt / marker / action) | 1, 2.10, 53 / 1, 1.58, 58 | 1, 1.86, 127 |
+| a two-line Teams draft in another chat | 3, 1.04, 34 | 1, 1.54, 133 |
+| Edge to a URL | 4, 1.04, 354 | 1, 1.55, 123 |
+
+All 20 scenarios reach their goal; 9 of 9 incidents (two of them through actions: `terminal.run` with Edge in front, `wrong_app`; `teams.draft` with a newline, kept a draft) are refused or kept safe with nothing sent. An action's result carries its `steps_done` (a few dozen tokens), which is why the short tasks cost more tokens than their raw calls; the raw ones also do not check their outcome (the raw put_file confirms no chunk).
 
 ### Simulated session (v0.17.0)
 
