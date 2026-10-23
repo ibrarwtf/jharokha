@@ -33,4 +33,4 @@ async def test_short_run_reports_every_budgeted_metric():
         assert check(metrics, {k: float("inf") for k in budgets[profile]["max"]}) == []
     assert 0 < metrics["rss_idle_mb"] <= metrics["rss_first_read_mb"] <= metrics["rss_peak_mb"]
     assert metrics["read_full.wall_p50_ms"] > metrics["read_cached.wall_p50_ms"]
-    assert metrics["verify.wall_ms_per_line"] > 0 and metrics["watch_idle.polls"] >= 1
+    assert metrics["verify.wall_ms_per_line"] > 0 and metrics["idle.cpu_pct"] >= 0

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import numpy as np
+
 from evals.render import Screen, render
-from jharokha.core.models import Frame, Point, WindowInfo
+from jharokha.core.models import Box, Frame, Point, WindowInfo
 from jharokha.win.source import WindowsSource
 
 TITLE = "Eval Remote Desktop"
@@ -24,12 +26,22 @@ class EvalSource(WindowsSource):
         self._frame: Frame | None = None
         self.advance()
 
-    def advance(self) -> Screen:
+    def advance(self, region: Box | None = None) -> Screen:
+        """The next screen; with region, only that part of it, over the screen before (new
+        messages in a thread, the rest of the app as it was)."""
         self._i += 1
         screen = self._make(self._seeds[self._i % len(self._seeds)])
         f, _ = render(screen, "gdi", codec=True)
-        self._frame = Frame(f.width, f.height, f.bgra, self._i + 1, f.ts)
-        self.screen = screen
+        bgra = f.bgra
+        if region is not None and self._frame is not None:
+            x, y, w, h = region
+            old = np.frombuffer(self._frame.bgra, np.uint8).reshape(f.height, f.width, 4).copy()
+            new = np.frombuffer(f.bgra, np.uint8).reshape(f.height, f.width, 4)
+            old[y : y + h, x : x + w] = new[y : y + h, x : x + w]
+            bgra = old.tobytes()
+        else:
+            self.screen = screen
+        self._frame = Frame(f.width, f.height, bgra, self._i + 1, f.ts)
         return screen
 
     def window(self, window_title: str | None) -> WindowInfo | None:

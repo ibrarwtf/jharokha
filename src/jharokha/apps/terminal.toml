@@ -34,7 +34,7 @@ weight = 0.5
 pane = [0, 0, 1, 0.032]
 weight = 0.5
 
-[app.terminal.policy]  # Enter runs a command: jharokha_run's job, so not refused here
+[app.terminal.policy]  # Enter runs a command: terminal.run's job, so not refused here
 
 [app.terminal.view.shell]
 

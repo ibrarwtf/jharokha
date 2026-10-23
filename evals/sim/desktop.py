@@ -18,7 +18,7 @@ from evals.render import Screen
 from evals.screens import INK, TASKBAR, TASKBAR_Y, H, W, lock
 from evals.sim.base import NONE, Canvas, Mods, SimApp
 
-# Every key name jharokha_press takes (win/input.KEYS), with aliases folded.
+# Every key name jharokha_act's press takes (win/input.KEYS), with aliases folded.
 KEY_NAMES = {
     "enter": "enter",
     "return": "enter",

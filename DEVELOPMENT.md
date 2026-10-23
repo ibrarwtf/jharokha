@@ -24,7 +24,7 @@ uv run jharokha --window-title "Fake Remote" bench
 
 `evals/sim/` is a desktop of simulated apps behind the `Source` protocol, so actions and safety can be tested in CI. `SimSource(Desktop(seed, front="teams"), codec=False)` draws the app in front with `evals/render.py` at 1166x1181, only when its state changed, and reads it with the real Windows OCR and second engine; `source.catalog()` is the built-in catalog plus the taskbar icons as session spots. Pass both to `build_server(source, allow_input=True, catalog=source.catalog())`.
 
-- Input routing (`desktop.py`): a click on a taskbar icon brings that app forward; any other click, the wheel and keys go to the app in front, which handles them by point and by its own keyboard focus (Teams' compose or search box, Edge's address bar or page). Typed `\n` is Enter, as `jharokha_type` sends it; a paste is the text by Ctrl+V and a final Enter, as `paste=true` sends it. A lock screen (`desk.lock(variant)`) swallows all input and logs it.
+- Input routing (`desktop.py`): a click on a taskbar icon brings that app forward; any other click, the wheel and keys go to the app in front, which handles them by point and by its own keyboard focus (Teams' compose or search box, Edge's address bar or page). Typed `\n` is Enter, as `jharokha_act(op="type")` sends it; a paste is the text by Ctrl+V and a final Enter, as `op="paste"` sends it. A lock screen (`desk.lock(variant)`) swallows all input and logs it.
 - Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
 - Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
 - Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
@@ -37,7 +37,7 @@ uv run python -m evals.scenarios --codec --only incident --out scenarios.json
 
 The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` and the lease and user-activity tests in `tests/test_sim.py`) went through up to 0.18 (a web search, a message sent); since 0.19 each is refused with nothing sent and nothing recorded, and an incident scenario reaches its goal by that refusal.
 
-Actions run on it the way the server runs them: `SessionExecutor(Session(Screen(source), source.catalog()))` (`core/executor.py`, `core/session.py`) is the `Executor`, and `Runner(ex, allow, catalog.policies()).run(actions.builtin()["teams.draft"], {...})` runs one; `tests/test_actions.py` does this for every built-in action and both incident replays, and drives the runner without OCR on a scripted executor. `tests/test_sim.py` calls `jharokha_do` and `jharokha_apps` through the MCP server. The simulated shell knows the statements `terminal.put_file` types for PowerShell, so a file round trip checks real bytes against `desk.shell.written`. The `raw_*` and `do_*` scenarios do the same task with the raw tools and with one action, and `python -m evals.scenarios` ends with them side by side.
+Actions run on it the way the server runs them: `SessionExecutor(Session(Screen(source), source.catalog()))` (`core/executor.py`, `core/session.py`) is the `Executor`, and `Runner(ex, allow, catalog.policies()).run(actions.builtin()["teams.draft"], {...})` runs one; `tests/test_actions.py` does this for every built-in action and both incident replays, and drives the runner without OCR on a scripted executor. `tests/test_sim.py` calls `jharokha_do` and `jharokha_apps` through the MCP server. The simulated shell knows the statements `terminal.put_file` types for PowerShell, so a file round trip checks real bytes against `desk.shell.written`. The `raw_*` and `do_*` scenarios do the same task step by step (read, find, act) and with one action, and `python -m evals.scenarios` ends with them side by side; `--out FILE` saves a run and `--compare FILE` puts each scenario beside an earlier one.
 
 To write an action, start with `jharokha_do(..., dry_run=true)` (the plan, no input), then run it on the simulated session in a test before a real one. Declare every step's risk honestly: the runner refuses a step riskier than the call allows before anything is sent, and the app's policy can only raise a step's risk, never lower it.
 
@@ -231,6 +231,53 @@ The misses are OCR's: the calendar's hour labels (10 to 14 px grey) and some day
 | incident_newline_sends | kept as a draft (policy) | 1 | 0.52 | 3 | |
 | incident_second_agent | refused, input_leased | 1 | 0.66 | 75 | |
 | incident_user_typing | refused, user_active | 1 | 0.65 | 70 | |
+
+### Tools (v0.21.0)
+
+0.20 had grown 17 tools, one per need as it came. 0.21 has nine that new apps and actions never add to: `status`, `apps`, `read`, `find`, `wait`, `do`, `learn`, `screenshot`, and with `--allow-input` `act`. Choices:
+
+- What a tool list costs (`tools/list` descriptions and schemas, characters / 4), every session: 7869 tokens with input (15 tools) and 3822 without (10), against 3269 (9) and 2623 (8). The server's instructions are 362 tokens either way: the loop and every error code.
+- `read` took over `read_text`, `layout` (as `format="panes"`), `changes` (as `since="last"`, the lines added and removed since the last read of the same region, or for items the new ones) and `wait_for_text`'s matching (in `wait`). Its default is the app's focus region from the whole screen's read (no second OCR), or the whole screen when no app is known; `region="screen"` reads everything.
+- The background watcher is gone. It polled at 0.94% of a core while idle and cost 570 tokens of descriptions (`watch` 351, `changes` 219), and none of the 29 scenarios used it; `wait` covers waiting for a change and `read(since="last")` what changed since. Between calls the server now uses no CPU at all (`idle.cpu_pct` 0.00).
+- `jharokha_run` is gone, `terminal.run` through `do` replaces it. Its description cost 744 tokens a session; a command through `do` returns about 20 tokens more (78 against 58 on the scenario, after `do` stopped returning `steps_done` on success), so it paid for itself only past about 37 commands a session. The same command takes 1.69 s through `do` against 1.45 s, `terminal.run` clearing the screen first. A shell that prints no end marker is `act(op="type", text="cmd\n", until={"regex": prompt})`.
+- `act` is one input tool with `op` (click, double_click, right_click, type, paste, press, scroll) where four tools each repeated the guard's and the settle's paragraphs (3,187 tokens for scroll, click, type and press; `act` is 646). Its `target` is a point, a text or a locator: what `find` takes, `do`'s locators, plus icons (`core/elements.py`, compact blobs off a pane's background away from OCR'd text: recall 1.0, precision .92, 31 ms median on the detection eval), so a target without text needs no screenshot.
+- `do`'s result leaves out `steps_done` on success (its answer is the fields and items) and a refusal is its reason and the steps done, not the whole result: Teams draft 133 to 32 tokens, Edge to a URL 123 to 33, `terminal.run` refused with Edge in front 288 to 86 (`jharokha_run`'s refusals were 70 to 75).
+- `do` refusals the runner makes itself (`wrong_app`, `irreversible` before any input) are traced as `do` lines, where 0.20 traced only the inputs an action sent.
+- `learn` keeps scans and the proposal in the server's memory; only `step="save"` writes, into the apps.toml the server was started with, and then reloads the catalog (`Catalog.replacing`: the file read again, the other files kept).
+
+A region read identified the app on a fresh OCR of the whole screen, so on a new screen it cost both OCRs. Now `Session.around` keeps the last identity while the pixels have not changed, and when they changed only inside the region it takes the old lines outside it and the region's own inside, and identifies those (a few ms) instead. A named region is placed on the last identity the same way. `python -m evals.resources --repeats 5 --idle-s 10` on the laptop:
+
+| op | 0.20 p50 / p95 ms | 0.21 p50 / p95 ms |
+|---|---|---|
+| read the screen | 85 / 89 | 80 / 81 |
+| read a region, only it changed | (as a new screen) | 98 / 100 |
+| read a region of a new screen | 160 / 167 | 156 / 157 |
+| read the focus region (the default) | | 84 / 100 |
+| read again, nothing changed | 15 / 18 | 6 / 6 |
+| find | 91 / 93 | 79 / 82 |
+| idle between calls, CPU | 0.94% (watcher) | 0.00% |
+
+`python -m evals.scenarios` (GDI), 0.20's tools against 0.21's on the same tasks, calls, wall s, tokens:
+
+| scenario | 0.20 | 0.21 |
+|---|---|---|
+| teams_read_thread | 1, 0.40, 298 | 1, 0.30, 321 |
+| teams_scroll_back | 2, 1.25, 550 | 2, 1.17, 337 |
+| switch_open_mail | 5, 1.27, 401 | 3, 1.12, 164 |
+| outlook_calendar | 4, 1.41, 228 | 4, 1.40, 223 |
+| browser_goto | 4, 1.04, 354 | 3, 1.02, 145 |
+| raw_new_messages | 9, 2.82, 1274 | 8, 2.63, 1363 |
+| raw_outlook_unread | 7, 1.62, 648 | 5, 1.60, 438 |
+| raw_teams_draft | 3, 1.05, 34 | 2, 1.03, 18 |
+| raw_put_file (by commands) | 5, 5.79, 143 | 5, 7.73, 215 |
+| a command (run / do terminal.run) | 1, 1.45, 58 | 1, 1.66, 78 |
+| do_new_messages | 1, 2.72, 542 | 1, 2.64, 456 |
+| do_outlook_unread | 1, 1.51, 403 | 1, 1.50, 302 |
+| do_put_file | 1, 5.57, 120 | 1, 5.50, 67 |
+| do_teams_draft | 1, 1.55, 133 | 1, 1.55, 32 |
+| the 28 in both | 63, 44.9, 6582 | 56, 44.5, 5241 |
+
+Fewer calls where a text or a spot can be clicked without finding it first (`act(target="Inbox")`, `target={"spot": "taskbar.outlook"}`). A thread read as items costs a little more (the header names the region and the identity), a command through `do` 20 tokens more, and the file written by `terminal.run` commands is slower, each one clearing the screen first. 19 of 19 reach their goal, 9 of 9 incidents refused or kept safe with nothing sent. On top of these, every session pays 3269 tokens for the tool list instead of 7869.
 
 ### Actions (v0.20.0)
 

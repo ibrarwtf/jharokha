@@ -216,7 +216,7 @@ def score_readers(
     screen: Screen, config: str, r: Read, ocr: Ocr, catalog: Catalog
 ) -> list[dict[str, Any]]:
     """One row per region the screen knows the items of: placed on the identified view,
-    OCR'd as jharokha_read_text reads a region, read by its reader."""
+    OCR'd as jharokha_read reads a region, read by its reader."""
     out = []
     f, who = r.frame, r.who
     for name, truth in screen.items.items():

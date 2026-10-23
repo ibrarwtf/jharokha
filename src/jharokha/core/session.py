@@ -5,6 +5,7 @@ tools and the actions' executor share one Session, so both read a screen the sam
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from jharokha.core import apps, rows
@@ -14,14 +15,24 @@ from jharokha.core.models import Box, Frame, Line, iou
 from jharokha.core.panes import background, panes
 from jharokha.core.screen import Screen, ScreenError
 from jharokha.core.text import grid
+from jharokha.core.watch import changed_bbox
 
 
 class Where:
     """What is on one frame: the app and view, the panes found from its pixels, and the
-    whole screen's lines as OCR read them."""
+    whole screen's lines as OCR read them (partial: outside a region, those of an earlier
+    read of the unchanged pixels there)."""
 
-    def __init__(self, frame: Frame, ident: Identity, found: list[Box], lines: list[Line]) -> None:
+    def __init__(
+        self,
+        frame: Frame,
+        ident: Identity,
+        found: list[Box],
+        lines: list[Line],
+        partial: bool = False,
+    ) -> None:
         self.frame, self.ident, self.panes, self.lines = frame, ident, found, lines
+        self.partial = partial
 
 
 def inside(lines: list[Line], box: Box) -> list[Line]:
@@ -61,15 +72,39 @@ class Session:
         self._lock = threading.Lock()  # the watcher reads from its own thread
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
-        """The app and view on a frame, from the whole screen's lines."""
+        """The app and view on a frame, from the whole screen's lines. The screen's cache
+        hands back the same lines while the pixels hold still, so those are not identified
+        twice."""
         last = self.last
-        if last is not None and last.frame is frame:
+        if last is not None and (last.frame is frame or (lines is last.lines and not last.partial)):
             return last
+        return self._identify(frame, lines, False)
+
+    def around(
+        self, frame: Frame, box: Box, region: list[Line], whole: Callable[[], list[Line]]
+    ) -> Where:
+        """The app and view for a read of region box: the last identity while the pixels
+        have not changed since it, or changed only inside box, where the region's own lines
+        stand in for the old ones (identifying costs a few ms, the whole screen's OCR about
+        a hundred); else whole() is read and identified."""
+        last = self.last
+        if last is not None:
+            bb = changed_bbox(last.frame, frame)
+            if bb is None:
+                return last
+            x, y, w, h = box
+            if x <= bb[0] and y <= bb[1] and bb[0] + bb[2] <= x + w and bb[1] + bb[3] <= y + h:
+                gone = set(map(id, inside(last.lines, box)))
+                kept = [ln for ln in last.lines if id(ln) not in gone]
+                return self._identify(frame, kept + region, True)
+        return self.where(frame, whole())
+
+    def _identify(self, frame: Frame, lines: list[Line], partial: bool) -> Where:
         found = panes(frame)
         ident = identify(
             self.catalog.apps.values(), lines, found, background(frame), frame.width, frame.height
         )
-        self.last = Where(frame, ident, found, lines)
+        self.last = Where(frame, ident, found, lines, partial)
         return self.last
 
     def place(self, at: Where, app: str, view: str, name: str) -> tuple[Box, str] | None:

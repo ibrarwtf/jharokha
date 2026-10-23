@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 from jharokha.core.actions import RegionInfo, Snapshot
+from jharokha.core.elements import elements
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError
 from jharokha.core.session import Session
@@ -101,6 +102,13 @@ class SessionExecutor:
             return []
         self.reads += 1
         return self.session.screen.lines(frame, (x, y, w, h))
+
+    def icons(self) -> list[Box]:
+        """The text-less elements on the frame now (core.elements), for an icon locator."""
+        frame = self._frame()
+        s = self.session
+        at = s.where(frame, s.screen.lines(frame, None))
+        return elements(frame, at.lines, at.panes)
 
     def reread(self, boxes: list[Box]) -> list[str]:
         try:

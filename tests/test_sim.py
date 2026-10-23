@@ -191,6 +191,15 @@ async def session(front: str) -> tuple[SimSource, Any]:
     return source, Client(build_server(source, allow_input=True, catalog=source.catalog()))
 
 
+async def run(a: Agent, command: str, **args: Any) -> str:
+    return await a.call(
+        "jharokha_do",
+        action="terminal.run",
+        args={"command": command, **args},
+        allow="irreversible",
+    )
+
+
 @pytest.mark.windows
 async def test_switch_by_taskbar_read_and_scroll_back_a_teams_thread():
     source, client = await session("terminal")
@@ -201,10 +210,13 @@ async def test_switch_by_taskbar_read_and_scroll_back_a_teams_thread():
         s = await a.status()
         assert (s["app"], s["view"], s["ready"]) == ("teams", "chat", True)
         msgs = source.desk.teams.chat.msgs
-        thread = await a.call("jharokha_read_text", region="teams.thread")
+        thread = await a.call("jharokha_read")  # the focus region: the thread
+        assert "region=teams.thread (focus" in thread
         assert seen(thread, msgs[-1].lines[0]) and not seen(thread, msgs[-14].lines[0])
-        r = await a.call("jharokha_scroll", ticks=6, x=800, y=600, region="teams.thread")
-        assert seen(r, msgs[-14].lines[0])
+        r = await a.act("scroll", ticks=6, target=[800, 600])
+        assert seen(r, msgs[-14].lines[0]) and "focus=teams.thread" in r
+        r = await a.call("jharokha_read", region="teams.thread", since="last")
+        assert "since=last" in r and seen(r, msgs[-14].lines[0])
 
 
 @pytest.mark.windows
@@ -213,21 +225,20 @@ async def test_terminal_typed_command_and_its_output():
     async with client as c:
         a = Agent(c, source)
         cmd = 'Get-Content notes.txt; $x=$?; "KX"+"7R4C:${x}:$LASTEXITCODE"\n'
-        r = await a.call("jharokha_type", text=cmd, until="KX7R4C", show="full")
+        r = await a.act("type", text=cmd, until="KX7R4C", show="full")
         assert seen(r, source.desk.shell.files["notes.txt"][0]) and seen(r, "KX7R4C:True:")
-        r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
-        assert r.startswith("run_ms=") and " exit_code= ok=true " in r.split("\n")[0]
-        assert seen(r, "October 23, 2026") and not seen(r, "$LASTEXITCODE")
+        r = body(await run(a, "Get-Date"))
+        assert r["ok"] and r["fields"]["ok"] is True and "exit_code" not in r
+        assert seen("\n".join(r["output"]), "October 23, 2026")
+        assert not seen("\n".join(r["output"]), "$LASTEXITCODE")
         log = source.desk.shell.log
         assert log[0] == cmd.strip() and log[1].startswith("Get-Date; $jkq=$?; ")
-        r = await a.call("jharokha_run", command="Get-Content nope.txt", timeout_s=10)
-        assert " ok=false " in r.split("\n")[0] and seen(r, "Cannot find path")
-        r = await a.call("jharokha_run", command="Get-Date", timeout_s=10, shell="other")
-        assert (
-            r.startswith("run_ms=")
-            and "exit_code" not in r
-            and source.desk.shell.log[-1] == "Get-Date"
-        )
+        r = body(await run(a, "Get-Content nope.txt"))
+        assert r["fields"]["ok"] is False and seen("\n".join(r["output"]), "Cannot find path")
+        # A shell that prints no marker: typed, and waited on until its prompt is back.
+        until = {"regex": r"^PS [^>]*>\s*$"}
+        r = await a.act("type", text="Get-Date\n", until=until, show="none")
+        assert "until_ms=" in r and source.desk.shell.log[-1] == "Get-Date"
 
 
 @pytest.mark.windows
@@ -235,11 +246,12 @@ async def test_outlook_view_switch_settles_before_the_view_is_ready():
     source, client = await session("outlook")
     async with client as c:
         a = Agent(c, source)
-        await a.call("jharokha_press", keys="ctrl+2", show="none")
+        await a.act("press", keys="ctrl+2", show="none")
         s = await a.status()
         # The screen held still between the ribbon and the grid: settled, not ready.
         assert (s["view"], s["ready"]) == ("calendar", False)
-        await a.call("jharokha_wait_for_text", query="Today", timeout_s=5)
+        r = json.loads(await a.call("jharokha_wait", ready=True, timeout_s=5))
+        assert r["ready"] is True and r["app"] == "outlook"
         s = await a.status()
         assert (s["view"], s["ready"]) == ("calendar", True)
 
@@ -255,20 +267,21 @@ async def test_incident_run_with_edge_in_front_is_refused_and_traced(tmp_path):
     server = build_server(source, allow_input=True, catalog=source.catalog(), trace=trace)
     async with Client(server) as c:
         a = Agent(c, source)
-        r = await a.call("jharokha_run", command="Get-ChildItem", timeout_s=2)
+        r = await run(a, "Get-ChildItem")
         assert r.startswith("wrong_app: expected terminal in front, but the screen shows browser")
-        assert "nothing was sent" in r
-        # Told any app will do, Enter is still irreversible in a browser.
-        r = await a.call("jharokha_run", command="Get-ChildItem", timeout_s=2, expect="any")
+        assert "nothing was sent" in r and "nothing was done" in r
+        # Typed by hand and told any app will do, Enter is still irreversible in a browser.
+        r = await a.act("type", text="Get-ChildItem\n", expect="any")
         assert r.startswith("irreversible: enter is irreversible in browser.page")
     b = source.desk.browser
     assert b.searches == [] and b.edit is None and source.desk.safety() == []
     recs = [json.loads(ln) for ln in (tmp_path / "trace.jsonl").read_text("utf-8").splitlines()]
     assert [(r["action"], r["front_app"], r["result"]) for r in recs] == [
-        ("run", "browser.page", "wrong_app"),
-        ("run", "browser.page", "irreversible"),
+        ("do", "browser.page", "wrong_app"),
+        ("type", "browser.page", "irreversible"),
     ]
-    assert recs[0]["text_len"] == len("Get-ChildItem") and "text" not in recs[0]
+    assert recs[0]["keys"] == "terminal.run"
+    assert recs[1]["text_len"] == len("Get-ChildItem\n") and "text" not in recs[1]
 
 
 @pytest.mark.windows
@@ -277,12 +290,12 @@ async def test_incident_newline_typed_into_teams_stays_in_the_draft():
     teams = source.desk.teams
     async with client as c:
         a = Agent(c, source)
-        await a.call("jharokha_type", text="draft line one\ndraft line two", show="none")
+        await a.act("type", text="draft line one\ndraft line two", show="none")
         assert teams.sent == [] and teams.chat.draft == ["draft line one", "draft line two"]
-        r = await a.call("jharokha_press", keys="enter", show="none")
+        r = await a.act("press", keys="enter", show="none")
         assert r.startswith("irreversible: enter is irreversible in teams.chat") and not teams.sent
         args = {"keys": "Return", "expect": "teams.chat", "allow": "irreversible"}
-        await a.call("jharokha_press", show="none", **args)
+        await a.act("press", show="none", **args)
     assert teams.sent == [(teams.chat.name, "draft line one\ndraft line two")]
     assert [e.kind for e in source.desk.safety()] == ["sent"]
 
@@ -296,13 +309,13 @@ async def test_a_second_agent_holding_the_session_is_refused(tmp_path):
     Lease(HWND, root=tmp_path, pid=other).take()
     async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
         a = Agent(c, source)
-        r = await a.call("jharokha_run", command="Get-Date", timeout_s=2)
+        r = await run(a, "Get-Date")
         assert r.startswith(f"input_leased: process {other} is sending input to this window")
-        assert (await a.status())["input"]["lease"]["pid"] == other
+        s = await a.status()
+        assert s["input"]["lease"]["pid"] == other and s["warnings"][0]["kind"] == "input_leased"
         Lease(HWND, root=tmp_path, pid=other).release()  # the other agent is done
         assert (await a.status())["input"]["lease"] is None
-        r = await a.call("jharokha_run", command="Get-Date", clear=True, timeout_s=10)
-        assert r.startswith("run_ms=")
+        assert body(await run(a, "Get-Date"))["ok"]
     assert [c.split(";")[0] for c in source.desk.shell.log] == ["Get-Date"]
 
 
@@ -317,22 +330,23 @@ async def test_someone_at_this_computer_stops_input_even_mid_text():
         s = await a.status()
         assert s["input"]["user_idle_s"] == 0.4
         assert s["warnings"][0]["rows"] == [1121, 1181] and "taskbar" in s["warnings"][0]["detail"]
-        r = await a.call("jharokha_type", text="Get-Date\n", show="none", expect="terminal")
+        assert s["warnings"][1]["kind"] == "user_active"
+        r = await a.act("type", text="Get-Date\n", show="none", expect="terminal")
         assert r.startswith("user_active: someone used this computer 0.4 s ago")
         assert shell.input == "" and shell.log == []
         # Idle when typing starts; the hooks see the user's key as the 9th character is due.
         source.user_idle = lambda: None
         source.user_keys_at = 8
-        r = await a.call("jharokha_type", text="Get-ChildItem -Recurse\n", show="none")
+        r = await a.act("type", text="Get-ChildItem -Recurse\n", show="none")
         assert r.startswith(
             "user_active: someone used this computer while jharokha was typing: stopped "
             "after 8 of 23 characters, 'Get-Chil' being the last sent"
         )
         assert shell.input == "Get-Chil" and shell.log == []
         # A paste stops before its Enter.
-        await a.call("jharokha_press", keys="ctrl+c", show="none")
+        await a.act("press", keys="ctrl+c", show="none")
         source.user_keys_at = 0
-        r = await a.call("jharokha_type", text="Get-Date\n", paste=True, show="none")
+        r = await a.act("paste", text="Get-Date\n", show="none")
         assert r.startswith("user_active: someone used this computer while jharokha was typing")
     assert shell.input == "Get-Date" and shell.log == []
 
@@ -343,14 +357,14 @@ async def test_outlook_send_keys_are_held_back_until_allowed():
     outlook = source.desk.outlook
     async with client as c:
         a = Agent(c, source)
-        await a.call("jharokha_press", keys="ctrl+r", show="none", expect="outlook.mail")
-        await a.call("jharokha_type", text="On it.\nWill reply today.", show="none")
+        await a.act("press", keys="ctrl+r", show="none", expect="outlook.mail")
+        await a.act("type", text="On it.\nWill reply today.", show="none")
         assert outlook.draft is not None and outlook.draft.body == ["On it.", "Will reply today."]
         for keys in ("ctrl+enter", "Alt+S"):
-            r = await a.call("jharokha_press", keys=keys, show="none")
+            r = await a.act("press", keys=keys, show="none")
             assert r.startswith(f"irreversible: {keys.lower()} is irreversible in outlook.mail")
         assert outlook.sent == [] and source.desk.safety() == []
-        await a.call("jharokha_press", keys="alt+s", allow="irreversible", show="none")
+        await a.act("press", keys="alt+s", allow="irreversible", show="none")
     assert outlook.sent == [(outlook.mails[0].sender, "On it.\nWill reply today.")]
     assert [e.kind for e in source.desk.safety()] == ["sent"]
 
@@ -361,12 +375,12 @@ async def test_teams_ctrl_enter_sends_and_is_held_back():
     teams = source.desk.teams
     async with client as c:
         a = Agent(c, source)
-        await a.call("jharokha_press", keys="ctrl+shift+x", show="none")  # formatting on
-        await a.call("jharokha_type", text="one\ntwo", show="none")
-        r = await a.call("jharokha_press", keys="ctrl+enter", show="none")
+        await a.act("press", keys="ctrl+shift+x", show="none")  # formatting on
+        await a.act("type", text="one\ntwo", show="none")
+        r = await a.act("press", keys="ctrl+enter", show="none")
         assert r.startswith("irreversible: ctrl+enter is irreversible in teams.chat")
         assert teams.sent == [] and teams.chat.draft == ["one", "two"]
-        await a.call("jharokha_press", keys="ctrl+enter", allow="irreversible", show="none")
+        await a.act("press", keys="ctrl+enter", allow="irreversible", show="none")
     assert teams.sent == [(teams.chat.name, "one\ntwo")]
 
 
@@ -389,7 +403,8 @@ async def test_apps_lists_the_actions_and_a_dry_run_needs_no_input():
         assert len(ids) == 10 and ids["terminal.where"]["source"] == "local"
         assert ids["teams.draft"]["args"]["text"] == {"type": "text", "required": True}
         teams = next(x for x in doc["apps"] if x["app"] == "teams")
-        assert "enter" in teams["policy"]["irreversible_keys"] and doc["input"] is False
+        assert "enter" in teams["policy"]["irreversible_keys"] and doc["input_allowed"] is False
+        assert "session.taskbar.teams" in doc["session"]["spots"]
         out = await a.call("jharokha_do", action="terminal.put_file", args={"path": "x"})
         assert out.startswith("input_disabled:")
         args = {"chat": "Ana", "text": "a\nb"}
@@ -400,7 +415,7 @@ async def test_apps_lists_the_actions_and_a_dry_run_needs_no_input():
 
 
 @pytest.mark.windows
-async def test_do_refuses_as_the_input_tools_do_and_traces_each_input(tmp_path):
+async def test_do_refuses_as_act_does_and_traces_each_input(tmp_path):
     source = SimSource(Desktop(100, front="browser"))
     trace = Trace(tmp_path / "trace.jsonl")
     server = build_server(source, allow_input=True, catalog=source.catalog(), trace=trace)
@@ -416,12 +431,16 @@ async def test_do_refuses_as_the_input_tools_do_and_traces_each_input(tmp_path):
         chat = source.desk.teams.chats[3]
         args = {"chat": chat.name, "text": "line one\nline two"}
         r = body(await a.call("jharokha_do", action="teams.draft", args=args))
-        assert r["ok"] and [s["do"] for s in r["steps_done"]] == ["focus", "click", "click", "type"]
+        assert r["ok"] and "steps_done" not in r and "failed" not in r
         assert chat.draft == ["line one", "line two"] and source.desk.teams.sent == []
     assert source.desk.safety() == []
     recs = [json.loads(ln) for ln in (tmp_path / "trace.jsonl").read_text("utf-8").splitlines()]
-    assert [r["action"] for r in recs] == ["click", "click", "click", "type", "press", "type"]
-    assert all(r["result"] == "sent" for r in recs) and recs[-1]["front_app"] == "teams.chat"
+    assert [(r["action"], r["result"]) for r in recs[:2]] == [
+        ("do", "irreversible"),
+        ("do", "wrong_app"),
+    ]
+    assert [r["action"] for r in recs[2:]] == ["click", "click", "click", "type", "press", "type"]
+    assert all(r["result"] == "sent" for r in recs[2:]) and recs[-1]["front_app"] == "teams.chat"
 
 
 @pytest.mark.windows

@@ -5,8 +5,10 @@
 
 No window: an in-process server over EvalSource (generated Teams-like screens, real Windows
 OCR and second engine), called through an MCP client as an agent would. Every call but
-read_cached and the verify step gets a new screen first, so it pays for OCR as a fresh
-capture would; capture itself (PrintWindow, ~40 ms live) is not in these numbers.
+read_cached and the verify step gets a changed screen first, so it pays for OCR as a fresh
+capture would: a new screen, except for read_region, where only the region read changed
+(new messages in the thread; read_region_new_screen is the same read on a new screen).
+Capture itself (PrintWindow, ~40 ms live) is not in these numbers.
 
 - rss_*: the process's working set, MB. idle is after imports and connecting, before any
   OCR; first_read after the first read (Windows OCR engine created); second_engine after
@@ -19,8 +21,8 @@ capture would; capture itself (PrintWindow, ~40 ms live) is not in these numbers
 - verify.*_per_line: a 20-line verify=all on an already read screen, per line;
   verify.cpu_ms_in_1s_after: CPU in the second after it returns, onnxruntime's threads
   spin-waiting for more work.
-- watch_idle.cpu_pct: CPU time over wall time while the watcher polls an unchanged screen
-  for --idle-s, as a percentage of one core.
+- idle.cpu_pct: CPU time over wall time for --idle-s between calls, as a percentage of
+  one core (0.20 measured its background watcher here instead).
 
 --threads also times the second engine with onnxruntime's intra-op thread count at its
 default (one per physical core), 1 and 2, with and without spin-waiting between runs.
@@ -51,10 +53,12 @@ from mcp.types import TextContent
 from evals.screens import teams
 from evals.source import EvalSource
 from jharokha import version
+from jharokha.core.models import Box
 from jharokha.server import build_server
 
 SEEDS = list(range(100, 106))
 REGION = [456, 150, 700, 440]  # the chat thread: under a quarter of the frame, so zoomed
+REGION_BOX: Box = (456, 150, 700, 440)
 VERIFY_LINES = 20
 
 
@@ -156,34 +160,38 @@ async def measure(repeats: int, idle_s: float) -> tuple[dict[str, float], EvalSo
             return c.call_tool(name, args)
 
         m["rss_idle_mb"] = rss_mb()[0]
-        r, wall, _ = await meter(None, call("jharokha_read_text"))
+        r, wall, _ = await meter(None, call("jharokha_read", region="screen"))
         _text(r)
         m["first_read_ms"] = wall
         m["rss_first_read_mb"] = rss_mb()[0]
-        r, wall, _ = await meter(None, call("jharokha_read_text", verify="all", limit=20))
+        r, wall, _ = await meter(
+            None, call("jharokha_read", region="screen", verify="all", limit=20)
+        )
         _text(r)
         m["first_verify_ms"] = wall
         m["rss_second_engine_mb"] = rss_mb()[0]
 
-        fresh: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
-            ("read_full", lambda: call("jharokha_read_text")),
-            ("read_region", lambda: call("jharokha_read_text", region=REGION)),
-            ("find_text", lambda: call("jharokha_find_text", query=source.screen.finds[0].query)),
-            ("layout", lambda: call("jharokha_layout")),
-            (
-                "wait_hit",
-                lambda: call("jharokha_wait_for_text", query=source.screen.finds[-1].query),
-            ),
+        # Each op after the screen changed: all of it (a new screen), or only the region
+        # read (new messages in the thread, the rest of the app as it was).
+        fresh: list[tuple[str, Box | None, Callable[[], Awaitable[Any]]]] = [
+            ("read_full", None, lambda: call("jharokha_read", region="screen")),
+            ("read_focus", None, lambda: call("jharokha_read")),
+            ("read_region", REGION_BOX, lambda: call("jharokha_read", region=REGION)),
+            ("read_region_new_screen", None, lambda: call("jharokha_read", region=REGION)),
+            ("find", None, lambda: call("jharokha_find", query=source.screen.finds[0].query)),
+            ("panes", None, lambda: call("jharokha_read", format="panes")),
+            ("wait_hit", None, lambda: call("jharokha_wait", text=source.screen.finds[-1].query)),
         ]
         per_line: tuple[list[float], list[float]] = ([], [])
         tail: list[float] = []
         for _ in range(repeats):
-            for op, fn in fresh:
-                source.advance()
+            for op, changed, fn in fresh:
+                source.advance(changed)
                 _text((await meter(op, fn()))[0])
-            _text((await meter("read_cached", call("jharokha_read_text")))[0])
+            _text((await meter("read_cached", call("jharokha_read", region="screen")))[0])
             r, wall, cpu = await meter(
-                "verify_20", call("jharokha_read_text", verify="all", limit=VERIFY_LINES)
+                "verify_20",
+                call("jharokha_read", region="screen", verify="all", limit=VERIFY_LINES),
             )
             n = int(re.search(r"verified=(\d+)", _text(r)).group(1))  # type: ignore[union-attr]
             per_line[0].append(wall / n)
@@ -198,17 +206,11 @@ async def measure(repeats: int, idle_s: float) -> tuple[dict[str, float], EvalSo
         m["verify.cpu_ms_per_line"] = mean(per_line[1])
         m["verify.cpu_ms_in_1s_after"] = mean(tail)
 
-        _text(await call("jharokha_watch", action="start"))
-        await asyncio.sleep(1)  # past the start's own read
+        # Between calls the server does nothing: no thread polls the screen (0.20's watcher
+        # did, at about 1% of a core).
         c0, t0 = cpu_s(), time.perf_counter()
         await asyncio.sleep(idle_s)
-        cpu, wall = cpu_s() - c0, time.perf_counter() - t0
-        state = json.loads(_text(await call("jharokha_watch", action="status")).split("\n")[0])
-        _text(await call("jharokha_watch", action="stop"))
-        if state["error"] or not state["watching"]:
-            raise RuntimeError(f"the watcher did not run: {state}")
-        m["watch_idle.cpu_pct"] = cpu / wall * 100
-        m["watch_idle.polls"] = state["frames"]
+        m["idle.cpu_pct"] = (cpu_s() - c0) / (time.perf_counter() - t0) * 100
     m["rss_end_mb"], m["rss_peak_mb"] = rss_mb()
     return {k: round(v, 2) for k, v in m.items()}, source
 

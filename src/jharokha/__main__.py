@@ -1,9 +1,13 @@
-"""`jharokha` runs the MCP server on stdio; in a shell, `jharokha status|read|find|screenshot|
-bench|measure`, and with --allow-input `click|scroll|type|press`."""
+"""`jharokha` runs the MCP server on stdio. In a shell the same verbs as the tools:
+`jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`, plus
+`bench` and `measure`. Each verb is the server's tool, called in-process, so a shell
+command is guarded and answers exactly as the tool does."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import base64
 import json
 import os
 import sys
@@ -12,15 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from jharokha import version
-from jharokha.core import actions, apps, guard
+from jharokha.core import actions, apps
 from jharokha.core.apps import Catalog
-from jharokha.core.guard import Policy
-from jharokha.core.identify import identify
 from jharokha.core.layout import LayoutError, load
-from jharokha.core.models import Point
-from jharokha.core.panes import background, panes
-from jharokha.core.screen import Screen, ScreenError, check_region, png
-from jharokha.core.text import find, format_concise, looks_locked
+from jharokha.core.screen import Screen, ScreenError
+from jharokha.core.text import format_concise
 from jharokha.core.trace import Trace
 
 # In a shell the user's own Enter started the command: input waits this long for the
@@ -43,7 +43,7 @@ def main() -> None:
     p.add_argument(
         "--allow-input",
         action="store_true",
-        help="also serve (or, in a shell, allow) scroll, click, type and press",
+        help="also serve (or, in a shell, allow) act, and do that sends input",
     )
     p.add_argument(
         "--apps",
@@ -66,54 +66,61 @@ def main() -> None:
     )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
+    sub.add_parser("apps")
     r = sub.add_parser("read")
-    r.add_argument("--region", type=_ints(4), help="x,y,w,h in client pixels")
-    r.add_argument("--limit", type=int, default=200, help="most lines to print")
-    sub.add_parser("find").add_argument("query")
+    r.add_argument("--region", type=_region, help="screen, a named region, P<n>, or x,y,w,h")
+    r.add_argument("--format", choices=["auto", "lines", "items", "detailed", "panes"])
+    r.add_argument("--since", help="'last', or a time for a list's items")
+    r.add_argument("--verify", choices=["none", "flagged", "all"])
+    r.add_argument("--limit", type=int, default=200, help="most lines or items to print")
+    f = sub.add_parser("find")
+    f.add_argument("query", nargs="?")
+    f.add_argument("--region", type=_region)
+    f.add_argument("--regex", action="store_true")
+    f.add_argument("--all", action="store_true")
+    f.add_argument("--locator", type=json.loads, help='JSON, e.g. {"right_of": "To"}')
+    w = sub.add_parser("wait", help="until a text, a regex, a text gone, ready, else settled")
+    w.add_argument("--text")
+    w.add_argument("--regex")
+    w.add_argument("--gone")
+    w.add_argument("--ready", action="store_true")
+    w.add_argument("--region", type=_region)
+    w.add_argument("--timeout", type=float, default=10)
     s = sub.add_parser("screenshot", help="write a PNG of the window or a region")
     s.add_argument("out", help="PNG file to write")
-    s.add_argument("--region", type=_ints(4), help="x,y,w,h in client pixels")
-    s.add_argument("--max-long-edge", type=int, default=1568)
-    after = argparse.ArgumentParser(add_help=False)
-    after.add_argument(
-        "--until", help="afterwards, wait until this text is on screen (up to --timeout)"
+    s.add_argument("--region", type=_region)
+    s.add_argument("--max-long-edge", type=int, default=1024)
+    a = sub.add_parser("act", help="one input: click, type, paste, press, scroll, ...")
+    a.add_argument(
+        "op", choices=["click", "double_click", "right_click", "type", "paste", "press", "scroll"]
     )
-    after.add_argument("--until-regex", action="store_true", help="--until is a regex")
-    after.add_argument("--timeout", type=float, default=10, help="seconds for --until")
-    after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
-    after.add_argument(
-        "--expect",
-        help="send nothing unless this app (or app.view) is in front, e.g. terminal",
+    a.add_argument("target", nargs="?", help="X,Y, a text to find, or a JSON locator")
+    a.add_argument("--text", help="for type and paste (or --stdin)")
+    a.add_argument(
+        "--stdin", action="store_true", help="read the text from stdin, less one final newline"
     )
-    c = sub.add_parser("click", parents=[after], help="click at a client point")
-    c.add_argument("point", nargs="+", help="X Y, or X,Y as --focus-at takes it")
-    c.add_argument("--button", choices=["left", "right", "middle"], default="left")
-    c.add_argument("--double", action="store_true")
-    sc = sub.add_parser("scroll", parents=[after], help="turn the wheel; ticks < 0 scrolls down")
-    sc.add_argument("ticks", type=int, help="ticks; negative scrolls down")
-    sc.add_argument("--at", type=_ints(2), help="x,y to scroll at (default: the centre)")
-    focus = argparse.ArgumentParser(add_help=False)
-    focus.add_argument(
-        "--focus-at",
-        type=_ints(2),
-        help="x,y of a blank point to click first if the session will not come to the front",
-    )
-    focus.add_argument(
+    a.add_argument("--enter", action="store_true", help="end the text with a newline")
+    a.add_argument("--keys", help="for press, e.g. ctrl+c")
+    a.add_argument("--ticks", type=int, default=-3, help="for scroll; negative scrolls down")
+    a.add_argument("--expect", help="send nothing unless this app (or app.view) is in front")
+    a.add_argument("--until", help="afterwards, wait until this text is on screen")
+    a.add_argument("--timeout", type=float, default=10, help="seconds for --until")
+    a.add_argument(
         "--allow",
         choices=["irreversible"],
         help="send a key the app's policy calls irreversible (Enter in Teams or a browser)",
     )
-    t = sub.add_parser("type", parents=[after, focus], help="type text; newlines are Enter")
-    t.add_argument("text", nargs="?", help="text to type (or --stdin)")
-    t.add_argument(
-        "--stdin", action="store_true", help="read the text from stdin, less one final newline"
-    )
-    t.add_argument("--enter", action="store_true", help="press Enter after the text")
-    t.add_argument(
-        "--paste", action="store_true", help="send through the clipboard and Ctrl+V, not keys"
-    )
-    k = sub.add_parser("press", parents=[after, focus], help="a key or chord, e.g. ctrl+c")
-    k.add_argument("keys")
+    a.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
+    d = sub.add_parser("do", help="run an action (see `jharokha apps`)")
+    d.add_argument("action")
+    d.add_argument("--args", type=json.loads, default={}, help='JSON, e.g. {"folder": "Inbox"}')
+    d.add_argument("--allow", choices=["read", "reversible", "irreversible"], default="reversible")
+    d.add_argument("--dry-run", action="store_true")
+    le = sub.add_parser("learn", help="scan the screen and propose an app definition")
+    le.add_argument("--app", required=True, help="the id to learn it as")
+    le.add_argument("--view", default="main")
+    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"P2": "thread"}')
+    le.add_argument("--save", action="store_true", help="write it into apps.toml")
     sub.add_parser("bench")
     m = sub.add_parser(
         "measure",
@@ -137,169 +144,170 @@ def main() -> None:
     args = p.parse_args()
     source = _source()
     trace = Trace(args.trace, include_text=args.trace_text)
+    apps_path = _apps_path(args.apps)[0]
     if args.cmd is None:
         from jharokha.server import build_server
 
         catalog = _catalog(args.apps, args.layouts)
         acts = _actions(args.apps)
-        build_server(source, args.allow_input, catalog, trace, acts).run("stdio")
+        build_server(source, args.allow_input, catalog, trace, acts, apps_path).run("stdio")
         return
     if hasattr(source, "wait_idle_s"):
         source.wait_idle_s = WAIT_IDLE_S
-    screen = Screen(source)
-    try:
-        if args.cmd == "status":
-            print(json.dumps(screen.window(args.window_title).__dict__))
-        elif args.cmd == "read":
-            _, lines = screen.read(args.window_title, args.region)
-            print(format_concise(lines, limit=args.limit))
-        elif args.cmd == "screenshot":
-            _, frame = screen.frame(args.window_title)
-            data, box, scale = png(frame, args.region, args.max_long_edge)
-            Path(args.out).write_bytes(data)
-            print(json.dumps({"out": args.out, "region": list(box), "scale": scale}))
-        elif args.cmd in ("click", "scroll", "type", "press"):
-            if not args.allow_input:
-                sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
-            act(screen, args, _catalog(args.apps, args.layouts), trace)
-        elif args.cmd == "find":
-            _, lines = screen.read(args.window_title, None)
-            print(json.dumps([m.__dict__ for m in find(lines, args.query, all=True)]))
-        elif args.cmd == "bench":
-            bench(screen, args.window_title)
-        elif args.cmd == "measure":
-            from jharokha import measure
+    if args.cmd == "bench":
+        bench(Screen(source), args.window_title)
+        return
+    if args.cmd == "measure":
+        from jharokha import measure
 
+        try:
             measure.run(
-                screen,
+                Screen(source),
                 args.window_title,
                 args.app,
                 args.anchor,
-                _apps_path(args.apps)[0],
+                apps_path,
                 args.zoom,
                 args.names,
                 args.focus,
                 args.grid,
                 args.view,
             )
-    except ScreenError as e:
-        sys.exit(str(e))
+        except ScreenError as e:
+            sys.exit(str(e))
+        return
+    if args.cmd == "act" and not args.allow_input:
+        sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
+    calls = _calls(args)
+    from jharokha.server import build_server
 
-
-def _ints(n: int):  # noqa: ANN202
-    def parse(v: str) -> tuple[int, ...]:
-        parts = v.split(",")
-        if len(parts) != n:
-            raise argparse.ArgumentTypeError(f"expected {n} comma-separated integers, got {v!r}")
-        return tuple(int(x) for x in parts)
-
-    return parse
-
-
-def act(screen: Screen, args: argparse.Namespace, catalog: Catalog, trace: Trace) -> None:
-    """One input action, guarded as the server guards it (expect, the app's policy, and the
-    source's lease and user checks), then (unless --quiet) the screen text after it."""
-    w, frame = screen.frame(args.window_title)
-    point: Point | None = getattr(args, "focus_at", None)
-    if point:
-        check_region((*point, 1, 1), frame)
-    fields: dict[str, Any] = {"point": point}
-    x = y = 0
-    text = ""
-    if args.cmd == "click":
-        try:
-            x, y = _ints(2)(",".join(args.point))
-        except (argparse.ArgumentTypeError, ValueError):
-            sys.exit(f"click: give X Y or X,Y, got {' '.join(args.point)!r}")
-        check_region((x, y, 1, 1), frame)
-        fields = {"point": (x, y), "keys": args.button + (" double" if args.double else "")}
-    elif args.cmd == "scroll":
-        x, y = args.at or (frame.width // 2, frame.height // 2)
-        check_region((x, y, 1, 1), frame)
-        fields = {"point": (x, y), "keys": f"wheel {args.ticks}"}
-    elif args.cmd == "type":
-        # a heredoc ends in a newline of its own; Enter is --enter's job
-        given = sys.stdin.read().removesuffix("\n") if args.stdin else args.text
-        if given is None:
-            sys.exit("type: give the text or --stdin")
-        fields["text"] = text = given + ("\n" if args.enter else "")
-    else:
-        fields["keys"] = args.keys
-    on: list[str | None] = [None]
-    try:
-        policy = _front(screen, args, catalog, on)
-        if args.cmd == "click":
-            screen.source.click(w, x, y, args.button, args.double)
-        elif args.cmd == "scroll":
-            screen.source.scroll(w, x, y, args.ticks)
-        elif args.cmd == "type":
-            steps = guard.text_steps(text, args.paste, policy.newline)
-            _check_keys(policy, guard.chords_of(steps), args.allow, on[0])
-            for kind, s in steps:
-                if kind == "press":
-                    screen.source.press(w, s, point)
-                else:
-                    screen.source.type_text(w, s, point, kind == "paste")
-                point = None
-        else:
-            try:
-                chord = guard.combo_key(args.keys)
-            except ValueError as e:
-                raise ScreenError("bad_key", str(e)) from None
-            _check_keys(policy, [chord], args.allow, on[0])
-            screen.source.press(w, args.keys, point)
-    except ScreenError as e:
-        trace.record(args.cmd, w.title, front_app=on[0], result=e.code, **fields)
-        raise
-    trace.record(args.cmd, w.title, front_app=on[0], result="sent", **fields)
-    screen.settle(args.window_title)
-    start = time.monotonic()
-    while args.until:
-        _, lines = screen.read(args.window_title, None)
-        if find(lines, args.until, regex=args.until_regex):
-            break
-        if time.monotonic() - start >= args.timeout:
-            sys.exit(f"timeout: the input was sent, but '{args.until}' did not appear")
-        time.sleep(0.5)
-    if not args.quiet:
-        _, lines = screen.read(args.window_title, None)
-        print(format_concise(lines))
-
-
-def _front(
-    screen: Screen, args: argparse.Namespace, catalog: Catalog, on: list[str | None]
-) -> Policy:
-    """The app in front checked against --expect, and its input policy; identified only
-    when --expect is given or the action is type or press, which a policy can shape."""
-    expect = args.expect
-    if expect is None and args.cmd not in ("type", "press"):
-        return Policy()
-    if expect is not None and not catalog.knows(expect):
-        raise ScreenError(
-            "bad_argument",
-            f"--expect: no app or view '{expect}'; known: {', '.join(catalog.views())}",
-        )
-    frame, lines = screen.read(args.window_title, None)
-    if looks_locked(lines):
-        raise ScreenError("locked", "The session shows a lock screen. Unlock it and retry.")
-    ident = identify(
-        catalog.apps.values(), lines, panes(frame), background(frame), frame.width, frame.height
+    server = build_server(
+        source,
+        args.allow_input,
+        _catalog(args.apps, args.layouts),
+        trace,
+        _actions(args.apps),
+        apps_path,
     )
-    on[0] = f"{ident.app}.{ident.view}" if ident.app else None
-    if expect is not None:
+    done, error = asyncio.run(_run(server, calls))
+    for text, image in done:
+        if args.cmd == "screenshot":
+            Path(args.out).write_bytes(image)
+            text = json.dumps({"out": args.out} | json.loads(text))
+        print(text)
+    if error:
+        sys.exit(error)
+
+
+def _region(v: str) -> str | list[int]:
+    parts = v.split(",")
+    if len(parts) == 4:
         try:
-            guard.check_front(expect, ident.app, ident.view, ident.confidence)
-        except guard.WrongApp as e:
-            raise ScreenError(*guard.refusal(e)) from None
-    app = catalog.apps.get(ident.app or "")
-    return app.input_policy if app else Policy()
+            return [int(x) for x in parts]
+        except ValueError:
+            pass
+    if len(parts) > 1:
+        raise argparse.ArgumentTypeError(f"a region is x,y,w,h or a name, got {v!r}")
+    return v
 
 
-def _check_keys(policy: Policy, chords: list[str], allow: str | None, app: str | None) -> None:
-    try:
-        guard.check_keys(policy, chords, allow, app or "this app")
-    except guard.Irreversible as e:
-        raise ScreenError(*guard.refusal(e)) from None
+def _target(v: str | None) -> Any:
+    if v is None:
+        return None
+    if v.startswith("{"):
+        return json.loads(v)
+    parts = v.split(",")
+    if len(parts) == 2 and all(x.strip().lstrip("-").isdigit() for x in parts):
+        return [int(x) for x in parts]
+    return v
+
+
+def _calls(args: argparse.Namespace) -> list[tuple[str, dict[str, Any]]]:
+    """The tool calls a shell command stands for."""
+    title = {"window_title": args.window_title} if args.window_title else {}
+
+    def given(**kw: Any) -> dict[str, Any]:
+        return {k: v for k, v in kw.items() if v not in (None, False)} | title
+
+    cmd = args.cmd
+    if cmd in ("status", "apps"):
+        return [(f"jharokha_{cmd}", given())]
+    if cmd == "read":
+        return [
+            (
+                "jharokha_read",
+                given(
+                    region=args.region,
+                    format=args.format,
+                    since=args.since,
+                    verify=args.verify,
+                    limit=args.limit,
+                ),
+            )
+        ]
+    if cmd == "find":
+        if not args.query and not args.locator:
+            sys.exit("find: give a query or --locator")
+        f = given(query=args.query, region=args.region, regex=args.regex, locator=args.locator)
+        return [("jharokha_find", f | {"all": True} if not args.locator else f)]
+    if cmd == "wait":
+        w = given(text=args.text, regex=args.regex, gone=args.gone, ready=args.ready)
+        return [("jharokha_wait", w | given(region=args.region, timeout_s=args.timeout))]
+    if cmd == "screenshot":
+        return [
+            ("jharokha_screenshot", given(region=args.region, max_long_edge=args.max_long_edge))
+        ]
+    if cmd == "do":
+        d = given(action=args.action, args=args.args, allow=args.allow, dry_run=args.dry_run)
+        return [("jharokha_do", d)]
+    if cmd == "learn":
+        steps = [
+            ("jharokha_learn", given(step="scan", app=args.app, view=args.view)),
+            ("jharokha_learn", given(step="propose", names=args.names)),
+        ]
+        return steps + ([("jharokha_learn", given(step="save"))] if args.save else [])
+    # act
+    text = args.text
+    if args.stdin:
+        text = sys.stdin.read().removesuffix("\n")  # a heredoc ends in a newline of its own
+    if text is not None and args.enter:
+        text += "\n"
+    until = {"text": args.until, "timeout_s": args.timeout} if args.until else None
+    a = given(
+        op=args.op,
+        target=_target(args.target),
+        text=text,
+        keys=args.keys,
+        expect=args.expect,
+        until=until,
+        allow=args.allow,
+    )
+    if args.op == "scroll":
+        a["ticks"] = args.ticks
+    if args.quiet:
+        a["show"] = "none"
+    return [("jharokha_act", a)]
+
+
+async def _run(
+    server: Any, calls: list[tuple[str, dict[str, Any]]]
+) -> tuple[list[tuple[str, bytes]], str | None]:
+    """Each call's text and its image, if it returned one, up to the first error's text."""
+    from mcp import Client
+    from mcp.types import ImageContent, TextContent
+
+    out = []
+    async with Client(server) as c:
+        for name, args in calls:
+            r = await c.call_tool(name, args)
+            texts = [x.text for x in r.content if isinstance(x, TextContent)]
+            if r.is_error:
+                return out, "\n".join(texts)
+            image = b"".join(
+                base64.b64decode(x.data) for x in r.content if isinstance(x, ImageContent)
+            )
+            out.append(("\n".join(texts), image))
+    return out, None
 
 
 def _apps_path(flag: str | None) -> tuple[Path, bool]:

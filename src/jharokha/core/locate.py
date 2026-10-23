@@ -12,20 +12,24 @@ its centre, or a clear miss with the closest texts on screen.
     { region = "list", nth = 2 }              the second item of a region (-1: the last), as
                                               its reader makes items (core.readers)
     { text = "Open", nth = 2 }                the second match
+    { icon = true, left_of = "Type a message" }   the nearest text-less element (an icon,
+                                              a button: core.elements) left of it
+    { icon = true, region = "nav", nth = 3 }  the third element in a region, in reading order
 
-Pure: no input, no reading; the caller passes what was read."""
+Pure: no input, no reading; the caller passes what was read (and the elements found, for
+an icon)."""
 
 from __future__ import annotations
 
 import difflib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from jharokha.core import readers
 from jharokha.core.models import Box, Line, Point, Word
 from jharokha.core.text import clean, find, fold
 
-KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth")
+KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth", "icon")
 _SIDES = ("right_of", "left_of", "below", "above")
 _SPOT = 16  # px; the box a spot stands for, about an icon's middle
 
@@ -41,6 +45,7 @@ class Locator:
     above: str | None = None
     spot: str | None = None
     nth: int | None = None  # 1-based; negative counts from the end
+    icon: bool = False  # a text-less element (core.elements) rather than text
 
     def describe(self) -> str:
         parts = []
@@ -97,13 +102,19 @@ def locator(t: Mapping[str, object]) -> Locator:
         if not isinstance(n, int) or isinstance(n, bool) or n == 0:
             raise ValueError("locator nth must be a whole number other than 0")
         kw["nth"] = n
+    if "icon" in t:
+        if not isinstance(t["icon"], bool):
+            raise ValueError("locator icon must be true or false")
+        kw["icon"] = t["icon"]
     loc = Locator(**kw)  # type: ignore[arg-type]
     if sum(getattr(loc, k) is not None for k in _SIDES) > 1:
         raise ValueError("locator takes one of right_of, left_of, below, above")
-    if loc.spot and (loc.text or loc.region or any(getattr(loc, k) for k in _SIDES)):
+    if loc.spot and (loc.text or loc.region or loc.icon or any(getattr(loc, k) for k in _SIDES)):
         raise ValueError("locator spot stands alone")
-    if not (loc.text or loc.region or loc.spot or any(getattr(loc, k) for k in _SIDES)):
-        raise ValueError("locator needs text, regex, region, spot or a side (right_of, ...)")
+    if loc.icon and loc.text:
+        raise ValueError("locator icon has no text; place it with a region or a side")
+    if not (loc.text or loc.region or loc.spot or loc.icon or any(getattr(loc, k) for k in _SIDES)):
+        raise ValueError("locator needs text, regex, region, spot, icon or a side (right_of, ...)")
     return loc
 
 
@@ -163,11 +174,22 @@ def locate(
     spots: Mapping[str, Point],
     screen: Box,
     info: Mapping[str, RegionInfo] | None = None,
+    icons: Sequence[Box] = (),
 ) -> Hit | Miss:
     """loc on this screen. lines are the whole screen's; regions are the placed named
     regions of the view on screen and the session (full names, `teams.list`, or the short
     ones the caller resolved), info how each reads as items (text blocks when not given);
-    spots the session spots in pixels."""
+    spots the session spots in pixels; icons the text-less elements found (core.elements),
+    for an icon locator."""
+    if loc.icon:
+        found = icon_hits(loc, lines, regions, screen, icons)
+        if isinstance(found, Miss):
+            return found
+        hit = _pick(found, loc.nth)
+        if hit is None:
+            where = f" in {loc.region}" if loc.region else ""
+            return Miss(f"{len(found)} icons{where}, not icon {loc.nth or 1}")
+        return hit
     if loc.spot:
         p = spots.get(loc.spot) or spots.get(f"session.{loc.spot}")
         if p is None:
@@ -231,6 +253,59 @@ def locate(
     return Hit(bounds, _center(bounds), f"centre of {loc.region}")
 
 
+def icon_hits(
+    loc: Locator,
+    lines: list[Line],
+    regions: Mapping[str, Box],
+    screen: Box,
+    icons: Sequence[Box],
+) -> list[Hit] | Miss:
+    """Every icon loc can mean, best first: nearest the anchor on its side, else in reading
+    order inside its region (or the screen)."""
+    bounds = screen
+    if loc.region:
+        if loc.region not in regions:
+            known = ", ".join(regions) or "none"
+            return Miss(f"region '{loc.region}' is not on this screen (regions now: {known})")
+        bounds = regions[loc.region]
+    pool = [b for b in icons if _centre_in(b, bounds)]
+    side = next((k for k in _SIDES if getattr(loc, k)), None)
+    if side is None:
+        ordered = sorted(pool, key=lambda b: (b[1] + b[3] // 2, b[0]))
+        return [Hit(b, _center(b), "icon") for b in ordered]
+    anchor_q = getattr(loc, side)
+    texts = inside(lines, bounds) if loc.region else lines
+    anchors = find(texts, anchor_q, all=True)
+    if not anchors:
+        return Miss(f"'{anchor_q}' is not on screen", _candidates(texts, anchor_q))
+    scored = [(d, b) for b in pool if (d := _side(b, anchors[0].box, side)) is not None]
+    how = f"icon {side.replace('_', ' ')} '{anchor_q}'"
+    return [Hit(b, _center(b), how) for _, b in sorted(scored)]
+
+
+def _centre_in(b: Box, bounds: Box) -> bool:
+    x, y, w, h = bounds
+    return x <= b[0] + b[2] / 2 < x + w and y <= b[1] + b[3] / 2 < y + h
+
+
+def _side(b: Box, a: Box, side: str) -> float | None:
+    """How far b is from anchor box a on that side, or None when it is not there: on a's row
+    for left and right, in its column for above and below."""
+    x, y, w, h = b
+    ax, ay, aw, ah = a
+    same_row = y < ay + ah and y + h > ay
+    same_col = x < ax + aw and x + w > ax
+    if side == "right_of" and same_row and x >= ax + aw - 2:
+        return x - (ax + aw)
+    if side == "left_of" and same_row and x + w <= ax + 2:
+        return ax - (x + w)
+    if side == "below" and same_col and y >= ay + ah - 2:
+        return y - (ay + ah)
+    if side == "above" and same_col and y + h <= ay + 2:
+        return ay - (y + h)
+    return None
+
+
 def _beside(lines: list[Line], a: Box, side: str, text: str | None, regex: bool) -> list[Hit]:
     """Words beside anchor box a, nearest first; only those matching text when given."""
     ax, ay, aw, ah = a
@@ -240,17 +315,7 @@ def _beside(lines: list[Line], a: Box, side: str, text: str | None, regex: bool)
             x, y, ww, wh = w.box
             if x >= ax and x + ww <= ax + aw and y >= ay and y + wh <= ay + ah:
                 continue  # the anchor itself
-            same_row = y < ay + ah and y + wh > ay
-            same_col = x < ax + aw and x + ww > ax
-            d = None
-            if side == "right_of" and same_row and x >= ax + aw - 2:
-                d = x - (ax + aw)
-            elif side == "left_of" and same_row and x + ww <= ax + 2:
-                d = ax - (x + ww)
-            elif side == "below" and same_col and y >= ay + ah - 2:
-                d = y - (ay + ah)
-            elif side == "above" and same_col and y + wh <= ay + 2:
-                d = ay - (y + wh)
+            d = _side(w.box, a, side)
             if d is not None:
                 out.append((d, Hit(w.box, _center(w.box), side.replace("_", " "), clean(w.text))))
     out.sort(key=lambda o: o[0])
