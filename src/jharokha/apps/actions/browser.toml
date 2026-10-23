@@ -1,6 +1,6 @@
 # Browser actions, built in. Only a URL is typed into the address bar: anything else would
 # be sent to a search engine on Enter, so goto refuses it before any input. Enter is
-# irreversible in a browser (apps/browser.toml), as for jharokha_press: goto needs a call
+# irreversible in a browser (apps/browser.toml), as for jharokha_act: goto needs a call
 # with allow="irreversible", the same as typing the URL and Enter by hand.
 format = 1
 

@@ -35,7 +35,7 @@ MOVE_SLACK_PX = 4
 
 # Identified this surely, or the front app does not count as the one expected.
 EXPECT_CONFIDENCE = 0.6
-ANY = "any"  # jharokha_run's expect when the shell is in no app definition
+ANY = "any"  # expect when the app is in no definition
 MODIFIERS = ("ctrl", "alt", "shift", "win")
 _ALIASES = {"return": "enter", "escape": "esc", "control": "ctrl", "del": "delete"}
 ALLOW_IRREVERSIBLE = "irreversible"
@@ -97,7 +97,7 @@ def refusal(e: WrongApp | Irreversible | InputLeased | UserActive) -> tuple[str,
     if isinstance(e, WrongApp):
         return "wrong_app", (
             f"{e}; nothing was sent. Bring {e.want} to the front (its icon on the session's "
-            "taskbar; jharokha_layout lists them as spots), confirm with jharokha_status, and "
+            "taskbar; jharokha_apps lists them as spots), confirm with jharokha_status, and "
             "retry. Do not send it to the app in front instead."
         )
     if isinstance(e, Irreversible):

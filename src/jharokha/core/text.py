@@ -353,7 +353,7 @@ def _page(lines: list[Line], offset: int, limit: int) -> tuple[list[Line], str]:
     if end < len(lines):
         note = (
             f"\n[truncated: lines {offset}-{end - 1} of {len(lines)}; "
-            f"pass offset={end}, a region, or use jharokha_find_text]"
+            f"pass offset={end}, a region, or use jharokha_find]"
         )
     return page, note
 

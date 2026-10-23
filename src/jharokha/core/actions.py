@@ -32,7 +32,7 @@ press, run and put_file), `expect` (a condition that must hold after it) and `ti
               clear (Ctrl+L) first
     put_file  path, content_base64; per-chunk confirmation, then the SHA-256 checked
 
-Items are what jharokha_read_text format=items gives for the region (a Teams thread's
+Items are what jharokha_read format=items gives for the region (a Teams thread's
 messages: sender, time, text); `fields = { who = "sender" }` renames their fields. A
 marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again in the
 rows read up close, then by the second engine, once the screen holds still.
@@ -430,7 +430,9 @@ class Result:
     plan: list[dict[str, Any]] | None = None
     dry_run: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, brief: bool = False) -> dict[str, Any]:
+        """brief leaves out steps_done when the action succeeded: what it found is the
+        answer, and how it got there costs a few dozen tokens a step."""
         out: dict[str, Any] = {"action": self.action, "ok": self.ok}
         for k in ("fields", "items", "lines", "output", "exit_code", "failed", "safety", "plan"):
             v = getattr(self, k)
@@ -438,6 +440,8 @@ class Result:
                 out[k] = v
         if self.dry_run:
             out["dry_run"] = True
+        if brief and self.ok and not self.dry_run:
+            return out
         out["steps_done"] = [
             {"step": s.label, "do": s.kind, "risk": s.risk, "ms": s.ms}
             | ({"note": s.note} if s.note else {})
@@ -668,7 +672,10 @@ class Runner:
         loc = locator(t)
         screen = (0, 0, *snap.size)
         regions, info = self._regions(snap), self._info(snap)
-        hit = locate(loc, snap.lines, regions, snap.spots, screen, info)
+        # Text-less elements are found from the pixels only when a step asks for an icon.
+        icons = getattr(self.ex, "icons", None)
+        found = icons() if loc.icon and icons else []
+        hit = locate(loc, snap.lines, regions, snap.spots, screen, info, found)
         if isinstance(hit, Miss):
             raise _Fail(f"{loc.describe()}: {hit.reason}", hit.candidates)
         return hit
@@ -777,7 +784,7 @@ class Runner:
 
     def _items(self, snap: Snapshot, p: dict[str, Any]) -> list[Any]:
         """The region's items as its reader makes them (core.readers): what
-        jharokha_read_text format=items gives for it."""
+        jharokha_read format=items gives for it."""
         box = self._box(snap, p["region"])
         info = self._info(snap).get(p["region"], RegionInfo())
         inner = list(info.inner)

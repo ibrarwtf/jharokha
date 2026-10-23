@@ -32,7 +32,7 @@ class Layout:
     focus: str | None = None
     # A region that is a character grid (a terminal's body), read row by row on it.
     grid: str | None = None
-    # A regex for a shell's prompt at the start of a line, for jharokha_run.
+    # A regex for a shell's prompt at the start of a line.
     prompt: str | None = None
 
     @property

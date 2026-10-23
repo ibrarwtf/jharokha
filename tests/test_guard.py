@@ -215,7 +215,7 @@ def test_trace_appends_jsonl_without_the_text_by_default(tmp_path):
 
 def test_trace_includes_text_only_when_asked(tmp_path):
     t = Trace(tmp_path / "t.jsonl", include_text=True, clock=lambda: FIXED)
-    rec = t.record("run", "Session", text="dir", keys=None)
+    rec = t.record("type", "Session", text="dir", keys=None)
     assert rec is not None and rec["text"] == "dir" and rec["text_len"] == 3
 
 

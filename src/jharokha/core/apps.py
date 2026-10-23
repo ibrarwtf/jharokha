@@ -102,7 +102,7 @@ class Region:
 
     @property
     def label(self) -> str:
-        """The reader as jharokha_layout names it: list:messages, table, ..."""
+        """The reader as jharokha_apps names it: list:messages, table, ..."""
         return f"{self.reader}:{self.kind or 'entries'}" if self.reader == "list" else self.reader
 
 
@@ -170,13 +170,14 @@ class Calibration:
 
 @dataclass
 class Doc:
-    """What one file holds."""
+    """What one file holds; name is where it came from (parse's source)."""
 
     apps: dict[str, App] = field(default_factory=dict)
     session: dict[str, Region] = field(default_factory=dict)  # "session.taskbar"
     calibration: dict[tuple[str, str], Calibration] = field(default_factory=dict)
     session_cal: dict[str, Fraction] = field(default_factory=dict)
     spots: dict[str, Point2] = field(default_factory=dict)
+    name: str = ""
 
 
 # Parsing
@@ -427,7 +428,7 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
     if data.get("format") != FORMAT:
         raise AppError(f"{source}: needs `format = {FORMAT}` at the top")
     _only(data, ("format", "app", "session", "calibration", "action"), source)
-    doc = Doc()
+    doc = Doc(name=source)
     for aid, t in _tables(data.get("app", {}), f"{source}: app").items():
         doc.apps[aid] = _app(aid, t, f"{source}: app.{aid}", origin)
     session = data.get("session", {})
@@ -505,6 +506,13 @@ class Catalog:
     session: dict[str, Region]
     session_cal: dict[str, Fraction]
     spots: dict[str, Point2]
+    docs: tuple[Doc, ...] = ()  # the files merged after the built-ins, in order
+
+    def replacing(self, doc: Doc) -> Catalog:
+        """This catalog with the file of doc's name read again as doc (or added last): what
+        a learned app saved to apps.toml loads as, without the other files being read."""
+        kept = [d for d in self.docs if d.name != doc.name]
+        return catalog(*kept, doc)
 
     def knows(self, target: str) -> bool:
         """target is an app id or 'app.view', as input tools' expect takes it."""
@@ -684,7 +692,7 @@ def catalog(*docs: Doc) -> Catalog:
         if aid not in apps:
             raise AppError(f"calibration.{aid}.{vid}: no app '{aid}' is defined")
         apps[aid] = _calibrated(apps[aid], vid, c)
-    return Catalog(apps, cal, session, session_cal, spots)
+    return Catalog(apps, cal, session, session_cal, spots, tuple(docs))
 
 
 def load(path: Path | None = None, layouts: Mapping[str, Layout] | None = None) -> Catalog:

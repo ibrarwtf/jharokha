@@ -1,7 +1,8 @@
 # App definitions and calibration for jharokha. Copy to apps.toml (git-ignored) and keep
 # what you need: the server reads --apps PATH, else $JHAROKHA_APPS, else ./apps.toml.
 # The values here are synthetic, an example of the shape only; measure your own with
-# `jharokha measure APP --anchor TEXT` and see `jharokha_layout`.
+# `jharokha measure APP --anchor TEXT`, or learn an app with jharokha_learn, and see
+# jharokha_read(format="panes").
 #
 # Built in (src/jharokha/apps/): terminal (shell), teams (chat), outlook (mail, calendar),
 # browser (page) and generic. Everything below adds to them or replaces them. Positions are
@@ -35,7 +36,7 @@ regions = { nav = [0, 0, 0.06, 0.95], list = [0.06, 0.09, 0.25, 0.86], thread = 
 
 # A terminal's body read as a character grid, with the grid measured: row pitch and
 # character width in pixels, and the first cell's top-left inside the region. prompt is a
-# regex for the shell's prompt at the start of a line, for jharokha_run.
+# regex for the shell's prompt at the start of a line.
 [calibration.terminal.shell]
 prompt = '^PS [^>]*>'
 regions = { tabs = [0, 0, 1, 0.03], body = [0, 0.03, 1, 0.92] }
