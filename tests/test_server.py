@@ -466,7 +466,7 @@ async def test_status_says_when_calibration_no_longer_fits(source):
     assert s["app"] == "browser" and s["warnings"] == []
     s = await status("[0.031, 0.42]")  # measured lower down: the window was zoomed since
     assert s["app"] == "browser" and s["warnings"][0]["kind"] == "calibration_stale"
-    assert "measure again" in s["warnings"][0]["detail"]
+    assert "step='variant'" in s["warnings"][0]["detail"]
 
 
 async def test_version_of_the_running_code_in_status_and_instructions(source):

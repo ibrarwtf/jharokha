@@ -2,11 +2,13 @@
 no code: scan the screen, propose a definition in the `format = 1` schema of core.apps with
 its calibration, let a person or an agent name things, verify on more frames, then save.
 
-    s = scan(frame, lines)                       # panes, roles, readers, anchors
-    p = propose(s, "tickets", "queue")           # an App, its calibration, TOML text
+    s = scan(frame, lines)                       # panes, roles, readers, anchors, icons
+    p = propose(s, "tickets", "queue", {2: "list"}, icons={0: "reply"})  # App, TOML text
     v = verify(p.app, "queue", [scan(f, ls) for f, ls in more])
     p = refine(p, v)                             # drop anchors that moved, set ready
-    text = save(old_apps_toml, p)                # what apps.toml should hold now
+    cal = variants(p.app, "queue", zoomed)       # one calibration variant per zoom or size
+    text = save(old_apps_toml, p)                # what apps.toml should hold now; refuses
+                                                 # anchors that look like content
 
 Anchors are the text an app draws itself: short labels in its bars, rails and headers.
 Content (sentences, names in a list, times, dates, numbers, IDs, URLs) changes from one
@@ -30,11 +32,14 @@ from jharokha.core import apps
 from jharokha.core.apps import RGB, App, Calibration, Cue, Grid, Region, Variant, View
 from jharokha.core.elements import elements as find_elements
 from jharokha.core.identify import Identity, identify
-from jharokha.core.layout import Fraction, to_fraction
+from jharokha.core.layout import Fraction, choose, to_fraction
+from jharokha.core.layout import to_box as layout_box
+from jharokha.core.locate import spot_icon, spot_px
 from jharokha.core.models import Box, Frame, Line, iou, union
 from jharokha.core.panes import background as screen_background
 from jharokha.core.panes import panes as find_panes
 from jharokha.core.text import fold, grid_metrics, wrap_untrusted
+from jharokha.core.watch import diff_lines
 
 ROLES = ("toolbar", "nav", "header", "footer", "sidebar", "list", "table", "content")
 SHORT = 0.15  # of the height: a pane this short is a bar (title, ribbon, tabs, toolbar)
@@ -47,6 +52,7 @@ MAX_WORDS = 4
 ISOLATED = 2.5  # line heights of blank space that set a line apart at a pane's edge
 STABLE = 0.05  # fraction of the client area an anchor may move between scans
 MIN_CONFIDENCE = 0.6
+MAX_ICONS = 40  # listed in a scan's description
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,21 @@ class Anchor:
 
 
 @dataclass(frozen=True)
+class Icon:
+    """A text-less element (core.elements) in one of the scan's panes, which a person, an
+    agent or its tooltip can name: I<index> to propose."""
+
+    index: int
+    box: Box
+    pane: int
+    near: str | None = None  # the closest text beside it, to tell icons apart by
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return (self.box[0] + self.box[2] // 2, self.box[1] + self.box[3] // 2)
+
+
+@dataclass(frozen=True)
 class Scan:
     width: int
     height: int
@@ -86,6 +107,7 @@ class Scan:
     ready: str | None  # an anchor alone at the focus pane's foot (a compose box)
     prompt: str | None  # a shell prompt seen at the start of a grid's rows, as a regex
     session: tuple[Box, ...] = ()  # the session's own panes (taskbar), left out
+    icons: tuple[Icon, ...] = ()  # the elements inside panes, top to bottom
 
 
 # Scanning
@@ -132,6 +154,11 @@ def scan(frame: Frame, lines: Sequence[Line], session: Iterable[Region] | None =
         foot = _isolated(list(infos[focus].lines))[1]
         ready = next((a.text for a in anchors if foot is not None and a.box == foot.box), None)
     prompt = next((p for i in infos if i.reader == "grid" and (p := _prompt(list(i.lines)))), None)
+    icons = []
+    for e in found:
+        pane = next((p for p in infos if _centre_in(e, p.box)), None)
+        if pane is not None:
+            icons.append(Icon(len(icons), e, pane.index, _near(e, list(pane.lines))))
     return Scan(
         w,
         h,
@@ -145,13 +172,31 @@ def scan(frame: Frame, lines: Sequence[Line], session: Iterable[Region] | None =
         ready,
         prompt,
         tuple(sess),
+        tuple(icons),
     )
+
+
+NEAR_PX = 120  # how far a text may be from an icon and still be what tells it apart
+
+
+def _near(box: Box, lines: list[Line]) -> str | None:
+    """The text closest beside box, a row counting double: a label left or right of an icon
+    names it better than one above."""
+    best: tuple[float, str] | None = None
+    for ln in lines:
+        b = ln.box
+        dx = max(0, b[0] - (box[0] + box[2]), box[0] - (b[0] + b[2]))
+        dy = max(0, b[1] - (box[1] + box[3]), box[1] - (b[1] + b[3]))
+        d = dx + 2 * dy
+        if d <= NEAR_PX and (best is None or d < best[0]):
+            best = (d, ln.text.strip())
+    return best[1] if best else None
 
 
 def describe(s: Scan) -> str:
     """The scan as an agent reads it before naming things: each pane with its index, role,
-    reader, box and a sample of its text, then the anchors. Screen text is untrusted and is
-    wrapped as such."""
+    reader, box and a sample of its text, then the anchors, then the icons (I<n>, its pane,
+    its centre, the text beside it). Screen text is untrusted and is wrapped as such."""
     out = [f"{s.width}x{s.height}, background {list(s.background)}"]
     for p in s.panes:
         mark = " focus" if p.index == s.focus else ""
@@ -163,6 +208,13 @@ def describe(s: Scan) -> str:
     out.append("anchors: " + " | ".join(f"{a.text} (P{a.pane})" for a in s.anchors))
     if s.ready:
         out.append(f"ready: {s.ready}")
+    if s.icons:
+        shown = [
+            f"I{i.index} P{i.pane} {list(i.center)}" + (f' "{i.near}"' if i.near else "")
+            for i in s.icons[:MAX_ICONS]
+        ]
+        more = f" (and {len(s.icons) - MAX_ICONS} more)" if len(s.icons) > MAX_ICONS else ""
+        out.append("icons: " + " | ".join(shown) + more)
     return wrap_untrusted("\n".join(out))
 
 
@@ -533,10 +585,13 @@ class Proposal:
     calibration: Calibration | None
     regions: dict[str, int] = field(default_factory=dict)  # region -> scan pane index
     anchors: tuple[str, ...] = ()
+    # Calibration of a view already defined (a built-in app at the user's zoom levels): the
+    # definition stays as it is and only the calibration is saved.
+    calibration_only: bool = False
 
     @property
     def definition(self) -> str:
-        return definition_toml(self.app)
+        return "" if self.calibration_only else definition_toml(self.app)
 
     @property
     def calibration_text(self) -> str:
@@ -550,7 +605,7 @@ class Proposal:
         parts = [f"format = {apps.FORMAT}", self.definition]
         if self.calibration_text:
             parts.append(self.calibration_text)
-        return "\n\n".join(p.rstrip() for p in parts) + "\n"
+        return "\n\n".join(p.rstrip() for p in parts if p) + "\n"
 
 
 def stable_anchors(scans: Sequence[Scan]) -> list[Anchor]:
@@ -582,12 +637,15 @@ def propose(
     names: Mapping[int, str] | None = None,
     known: App | None = None,
     name: str | None = None,
+    icons: Mapping[int, str] | None = None,
 ) -> Proposal:
     """A definition for what the scans show, as app_id's view view_id. More than one scan
     (the same view after a scroll or another item opened) keeps only the anchors all show
     in one place. names maps scan pane indexes to region names; the rest are named by role
-    (toolbar, nav, header, footer, sidebar, list, table, content). known: the app when this
-    is a new view of it; its app-wide cues the new view does not show move to its views."""
+    (toolbar, nav, header, footer, sidebar, list, table, content). icons maps the first
+    scan's icon indexes to names: the app's spots ({spot = "<app>.<name>"}). known: the app
+    when this is a new view of it; its app-wide cues the new view does not show move to its
+    views."""
     ss = [scans] if isinstance(scans, Scan) else list(scans)
     s = ss[0]
     for k, v in (("app", app_id), ("view", view_id)):
@@ -598,6 +656,16 @@ def propose(
         if not 0 <= i < len(s.panes):
             raise apps.AppError(f"names: no pane P{i} (P0 to P{len(s.panes) - 1})")
     w, h = s.width, s.height
+    spots: dict[str, apps.Spot] = {}
+    for i, spot in (icons or {}).items():
+        if not 0 <= i < len(s.icons):
+            raise apps.AppError(f"names: no icon I{i} (the scan has {len(s.icons)})")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", spot):
+            raise apps.AppError(f"names: icon name '{spot}' must be letters, digits, - or _")
+        if spot in spots:
+            raise apps.AppError(f"names: two icons are named '{spot}'")
+        (cx, cy), box = s.icons[i].center, s.icons[i].box
+        spots[spot] = tuple(round(v, 4) for v in (cx / w, cy / h, box[2] / w, box[3] / h))
 
     regions: dict[str, Region] = {}
     index: dict[str, int] = {}
@@ -631,9 +699,12 @@ def propose(
     view = View(view_id, tuple(view_cues), ready, prompt, regions)
 
     if known is None:
-        app = App(app_id, name or app_id, tuple(app_cues), {view_id: view}, source="learned")
+        app = App(
+            app_id, name or app_id, tuple(app_cues), {view_id: view}, source="learned", spots=spots
+        )
     else:
         app = _add_view(known, view, app_cues, s)
+        app = replace(app, spots={**known.spots, **spots})
 
     cal = None
     grids = {}
@@ -751,6 +822,8 @@ def definition_toml(app: App) -> str:
     `format = 1` line, so it can be appended to a file that has one)."""
     a = f"app.{_key(app.id)}"
     out = [f"[{a}]", f"name = {_value(app.name)}"]
+    if app.spots:
+        out.append(f"spots = {_value(dict(app.spots))}")
     for c in app.cues:
         out += ["", f"[[{a}.cue]]", *_cue_lines(c)]
     for k in ("policy", "action"):
@@ -802,6 +875,7 @@ class Verification:
     problems: tuple[str, ...]
     unstable: tuple[str, ...]  # anchors missing or moved on some frame
     ready: str | None  # the anchor that appeared last, when the frames came in that order
+    lost_spots: tuple[str, ...] = ()  # spots with no icon there on some frame
 
     @property
     def ok(self) -> bool:
@@ -835,7 +909,7 @@ def verify(
     pool.append(app)
     v = app.views[view]
     cues = [c for c in app.cues + v.cues if c.text and c.at]
-    checks, problems = [], []
+    checks, problems, lost = [], [], []
     for n, s in enumerate(scans):
         whole = not loading or n == len(scans) - 1
         who = identify(pool, list(s.lines), list(s.raw), s.background, s.width, s.height)
@@ -858,6 +932,10 @@ def verify(
                 problems.append(f"frame {n}: region {r.name} found no pane, used its box")
         where = {c.text[0]: _distance(c, s) for c in cues}
         checks.append(Check(who, placed, where))
+        for name, spot in app.spots.items():
+            if whole and spot_icon(spot_px(spot, s.width, s.height), s.elements) is None:
+                problems.append(f"frame {n}: no icon of its size at spot '{name}'")
+                lost.append(name)
     unstable = []
     for c in cues:
         t = c.text[0]
@@ -871,7 +949,13 @@ def verify(
                 f"anchor '{t}' missing or moved on {here.count(False)} of {len(here)} frames"
             )
     ready = _last_to_appear(cues, checks) if loading else None
-    return Verification(tuple(checks), tuple(problems), tuple(dict.fromkeys(unstable)), ready)
+    return Verification(
+        tuple(checks),
+        tuple(problems),
+        tuple(dict.fromkeys(unstable)),
+        ready,
+        tuple(dict.fromkeys(lost)),
+    )
 
 
 def _distance(c: Cue, s: Scan) -> float | None:
@@ -903,7 +987,8 @@ def _last_to_appear(cues: list[Cue], checks: list[Check]) -> str | None:
 
 
 def refine(p: Proposal, v: Verification) -> Proposal:
-    """p without the anchors verify found unstable, and with the ready cue it found."""
+    """p without the anchors verify found unstable and the spots it found no icon at, and
+    with the ready cue it found."""
     drop = set(v.unstable)
 
     def keep(cues: tuple[Cue, ...]) -> tuple[Cue, ...]:
@@ -912,7 +997,8 @@ def refine(p: Proposal, v: Verification) -> Proposal:
     view = p.app.views[p.view]
     ready = v.ready or (view.ready if view.ready not in drop else None)
     views = {**p.app.views, p.view: replace(view, cues=keep(view.cues), ready=ready)}
-    app = replace(p.app, cues=keep(p.app.cues), views=views)
+    spots = {k: x for k, x in p.app.spots.items() if k not in v.lost_spots}
+    app = replace(p.app, cues=keep(p.app.cues), views=views, spots=spots)
     return replace(p, app=app, anchors=tuple(a for a in p.anchors if a not in drop))
 
 
@@ -927,9 +1013,8 @@ def variants(
     app: App, view: str, scans: Sequence[Scan], names: Sequence[str] | None = None
 ) -> Calibration:
     """Calibration with one variant per scan (zoom levels, window sizes), told apart by
-    where the anchor sits, as `jharokha measure --zoom` writes: each with its regions as
-    placed on that scan and its grids measured there. The anchor is the strongest text cue
-    every scan shows."""
+    where the anchor sits: each with its regions as placed on that scan and its grids
+    measured there. The anchor is the strongest text cue every scan shows."""
     v = app.views[view]
     cues = sorted(
         (c for c in app.cues + v.cues if c.text), key=lambda c: -c.weight
@@ -949,16 +1034,100 @@ def variants(
         regions: dict[str, Fraction] = {}
         grids: dict[str, Grid] = {}
         for r in v.regions.values():
-            got = apps.place(r, list(s.raw), s.width, s.height)
+            got = _zoomed(r, s)
             if got is None:
                 continue
-            regions[r.name] = _frac(got[0], s.width, s.height)
-            if r.reader == "grid" and (m := grid_metrics(list(s.lines), got[0])):
+            regions[r.name] = _frac(got, s.width, s.height)
+            if r.reader == "grid" and (m := grid_metrics(list(s.lines), got)):
                 grids[r.name] = Grid(round(m[0], 1), round(m[1], 2), m[2])
         name = names[i] if names else str(i)
         at = (round(spots[i][0], 4), round(spots[i][1], 4))
         out.append(Variant(name, anchor, at, regions, grids))
     return Calibration(tuple(out))
+
+
+ZOOMED_FIT = 0.3  # IoU with the region's box a pane at another zoom still needs
+
+
+def _zoomed(r: Region, s: Scan) -> Box | None:
+    """Where region r is on a scan at another zoom or size: the pane under its point, which
+    a zoom moves only a little, unless that pane is far off its box (then place's rule)."""
+    if r.at and (b := apps.pane_at(list(s.raw), r.at, r.to, s.width, s.height)):
+        fallback = layout_box(r.box, s.width, s.height) if r.box else None
+        if fallback is None or iou(b, fallback) >= ZOOMED_FIT:
+            return b
+    got = apps.place(r, list(s.raw), s.width, s.height)
+    return got[0] if got else None
+
+
+def matching(cal: Calibration, s: Scan) -> Variant | None:
+    """The variant of cal that scan s is, by where its anchor sits (layout.choose)."""
+    found: dict[str, Box | None] = {}
+    for v in cal.variants:
+        if v.anchor and v.anchor not in found:
+            key = fold(v.anchor).replace(" ", "")
+            found[v.anchor] = next(
+                (ln.box for ln in s.lines if key in fold(ln.text).replace(" ", "")), None
+            )
+    return choose(cal.variants, found, s.width, s.height)
+
+
+MAX_ZOOM = 5  # key presses either way from the app's default zoom
+
+
+def zoom_steps(spec: str) -> list[int]:
+    """'-3..2' -> [0, 1, 2, -1, -2, -3]: the default zoom first, then in, then out, so one
+    key press goes between neighbours. ValueError for anything else."""
+    m = re.fullmatch(r"\s*(-?\d+)\s*\.\.\s*\+?(\d+)\s*", spec)
+    if not m or int(m.group(1)) > 0 or -int(m.group(1)) > MAX_ZOOM or int(m.group(2)) > MAX_ZOOM:
+        raise ValueError(f"steps is LOW..HIGH around 0, at most {MAX_ZOOM} each way: '-3..2'")
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return [0, *range(1, hi + 1), *range(-1, lo - 1, -1)]
+
+
+# Naming icons by their tooltips
+
+TIP_PX = 250  # how far from an icon its tooltip may appear
+_COVERED_PX = 6  # a line that starts where one was is that line, partly covered
+
+
+def tooltip(before: Sequence[Line], after: Sequence[Line], icon: Box) -> str | None:
+    """The text that appeared near icon between two reads of the same place, with the
+    pointer away and then resting on it: its tooltip. A line a tooltip covers part of reads
+    shorter where it was and is not the tooltip."""
+    added, removed = diff_lines(list(before), list(after))
+    new = [
+        ln
+        for ln in added
+        if not any(
+            abs(ln.box[0] - r.box[0]) <= _COVERED_PX and abs(ln.box[1] - r.box[1]) <= _COVERED_PX
+            for r in removed
+        )
+    ]
+    cx, cy = icon[0] + icon[2] / 2, icon[1] + icon[3] / 2
+
+    def dist(ln: Line) -> float:
+        return abs(ln.box[0] + ln.box[2] / 2 - cx) + abs(ln.box[1] + ln.box[3] / 2 - cy)
+
+    near = sorted((ln for ln in new if dist(ln) <= TIP_PX), key=dist)
+    if not near:
+        return None
+    first = near[0]
+    # A tooltip of two lines: the next line right under the first.
+    parts = [first] + [
+        ln
+        for ln in near[1:]
+        if 0 < ln.box[1] - first.box[1] <= 1.6 * first.box[3] and abs(ln.box[0] - first.box[0]) <= 8
+    ][:1]
+    text = " ".join(ln.text.strip() for ln in parts)
+    return text[:80] or None
+
+
+def icon_name(tip: str) -> str | None:
+    """A spot name from a tooltip: its first three words, lower case, joined by _ ('Assign
+    to me (Ctrl+M)' -> 'assign_to_me'). None when nothing is left."""
+    words = re.findall(r"[a-z0-9]+", re.sub(r"\(.*?\)", " ", tip).lower())[:3]
+    return "_".join(words) or None
 
 
 def _find(texts: tuple[str, ...], s: Scan) -> tuple[float, float] | None:
@@ -986,11 +1155,54 @@ def replace_app(text: str, app_id: str, tables: str) -> str:
     return body + "\n\n" + tables.rstrip() + "\n"
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
+_PHONE = re.compile(r"\+?\d[\d ()./-]{6,}\d")
+MAX_ANCHOR_WORDS = 6
+MAX_ANCHOR_CHARS = 48
+
+
+def content_like(text: str) -> str | None:
+    """Why text looks like content rather than a label an app draws, or None: a sentence,
+    an email address, a phone number, many digits. An anchor like that names a person, a
+    message or a record, and would carry it into apps.toml."""
+    t = text.strip()
+    if _EMAIL.search(t):
+        return "an email address"
+    if _PHONE.search(t):
+        return "a phone number"
+    if sum(c.isdigit() for c in t) >= 4:
+        return "many digits"
+    if len(t.split()) > MAX_ANCHOR_WORDS or len(t) > MAX_ANCHOR_CHARS:
+        return "a sentence"
+    return None
+
+
+def content_anchors(p: Proposal) -> list[tuple[str, str]]:
+    """The texts p would save as anchors (cues, the ready text, calibration anchors) that
+    look like content, and why."""
+    view = p.app.views[p.view]
+    texts = [t for c in (*p.app.cues, *view.cues) for t in c.text]
+    texts += [view.ready] if view.ready else []
+    texts += [v.anchor for v in (p.calibration.variants if p.calibration else ()) if v.anchor]
+    out = []
+    for t in dict.fromkeys(texts):
+        if why := content_like(t):
+            out.append((t, why))
+    return out
+
+
 def save(text: str, p: Proposal) -> str:
-    """What apps.toml should hold with p in it: p's app replacing any of the same id, its
-    view's calibration replacing any before. The caller writes it; it is checked to parse
-    and load first."""
-    out = replace_app(text, p.app.id, p.definition)
+    """What apps.toml should hold with p in it: p's app replacing any of the same id (its
+    definition stays when p calibrates a view already defined), its view's calibration
+    replacing any before. AppError when an anchor looks like content (content_anchors). The
+    caller writes it; it is checked to parse and load first."""
+    if bad := content_anchors(p):
+        listed = "; ".join(f"'{t}' ({why})" for t, why in bad)
+        raise apps.AppError(
+            f"anchors that look like content, not labels the app draws: {listed}. Scan "
+            "another screen of the view and propose again, so they drop out"
+        )
+    out = text if p.calibration_only else replace_app(text, p.app.id, p.definition)
     if p.calibration_text:
         out = apps.replace_calibration(out, p.app.id, p.view, p.calibration_text)
     apps.catalog(apps.parse(out, "apps.toml"))

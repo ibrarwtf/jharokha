@@ -195,7 +195,7 @@ def _metrics(words: list[Word]) -> tuple[float, float, float, float]:
 
 
 def grid_metrics(lines: list[Line], box: Box) -> tuple[float, float, tuple[int, int]] | None:
-    """What `jharokha measure` writes for a grid region: row pitch and character width in
+    """What learning writes for a grid region's calibration: row pitch and character width in
     pixels, and the first cell's top-left relative to the region. None without text."""
     words = [w for ln in _within(lines, box) for w in (ln.words or (Word(ln.text, ln.box),))]
     if len(words) < 2:

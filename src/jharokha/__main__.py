@@ -1,7 +1,8 @@
 """`jharokha` runs the MCP server on stdio. In a shell the same verbs as the tools:
 `jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`, plus
-`bench` and `measure`. Each verb is the server's tool, called in-process, so a shell
-command is guarded and answers exactly as the tool does."""
+`bench` (and `measure`, deprecated: an alias of `learn ... --save`). Each verb is the
+server's tool, called in-process, so a shell command is guarded and answers exactly as the
+tool does."""
 
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from jharokha import version
 from jharokha.core import actions, apps
 from jharokha.core.apps import Catalog
 from jharokha.core.layout import LayoutError, load
-from jharokha.core.screen import Screen, ScreenError
+from jharokha.core.screen import Screen
 from jharokha.core.text import format_concise
 from jharokha.core.trace import Trace
 
@@ -116,32 +117,37 @@ def main() -> None:
     d.add_argument("--args", type=json.loads, default={}, help='JSON, e.g. {"folder": "Inbox"}')
     d.add_argument("--allow", choices=["read", "reversible", "irreversible"], default="reversible")
     d.add_argument("--dry-run", action="store_true")
-    le = sub.add_parser("learn", help="scan the screen and propose an app definition")
-    le.add_argument("--app", required=True, help="the id to learn it as")
-    le.add_argument("--view", default="main")
-    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"P2": "thread"}')
+    le = sub.add_parser(
+        "learn",
+        help="propose an app definition from the screen, or calibrate a known app's view",
+    )
+    le.add_argument("--app", required=True, help="the id to learn it as, or a known app")
+    le.add_argument("--view", help="the view (default: main, or a known app's first)")
+    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"P2": "thread", "I0": "send"}')
+    le.add_argument("--name-icons", action="store_true", help="read the icons' tooltips")
+    le.add_argument(
+        "--zoom",
+        help="calibrate zoom steps LOW..HIGH, e.g. --zoom=-3..2: presses Ctrl+0, Ctrl+= and "
+        "Ctrl+- in the session, then restores the zoom (needs --allow-input)",
+    )
+    le.add_argument("--variant", help="keep the screen now as the calibration variant NAME")
     le.add_argument("--save", action="store_true", help="write it into apps.toml")
     sub.add_parser("bench")
-    m = sub.add_parser(
-        "measure",
-        help="write an app view's calibration to apps.toml from what is on screen",
-    )
-    m.add_argument("app", help="app id, e.g. teams; a new id starts an app of your own")
-    m.add_argument("--view", help="the app's view (default: its first, e.g. teams chat)")
-    m.add_argument("--anchor", required=True, help="text always on screen in that app")
-    m.add_argument(
-        "--zoom",
-        help="also measure zoom steps LOW..HIGH, e.g. --zoom=-5..2: presses Ctrl+0, Ctrl+= "
-        "and Ctrl+- in the session, then restores the zoom",
-    )
-    m.add_argument("--names", help="comma-separated names for the regions found, in order")
-    m.add_argument(
-        "--focus", help="the region input tools report changes in, e.g. thread (default: kept)"
-    )
-    m.add_argument(
-        "--grid", help="a region that is a terminal's character grid, e.g. body (default: kept)"
-    )
+    m = sub.add_parser("measure", help="deprecated: `learn --app APP [--zoom Z] --save`")
+    m.add_argument("app")
+    m.add_argument("--view")
+    m.add_argument("--anchor", help="ignored: learn picks the anchor itself")
+    m.add_argument("--zoom")
     args = p.parse_args()
+    if args.cmd == "measure":
+        # A thin alias for a release or two: the same calibration, written by learn.
+        hint = f"jharokha{' --allow-input' if args.zoom else ''} learn --app {args.app}"
+        hint += (f" --view {args.view}" if args.view else "") + (
+            f" --zoom={args.zoom}" if args.zoom else ""
+        )
+        print(f"`jharokha measure` is deprecated; running `{hint} --save`", file=sys.stderr)
+        args.cmd, args.save, args.names = "learn", True, None
+        args.name_icons, args.variant = False, None
     source = _source()
     trace = Trace(args.trace, include_text=args.trace_text)
     apps_path = _apps_path(args.apps)[0]
@@ -157,38 +163,13 @@ def main() -> None:
     if args.cmd == "bench":
         bench(Screen(source), args.window_title)
         return
-    if args.cmd == "measure":
-        from jharokha import measure
-
-        try:
-            measure.run(
-                Screen(source),
-                args.window_title,
-                args.app,
-                args.anchor,
-                apps_path,
-                args.zoom,
-                args.names,
-                args.focus,
-                args.grid,
-                args.view,
-            )
-        except ScreenError as e:
-            sys.exit(str(e))
-        return
     if args.cmd == "act" and not args.allow_input:
         sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
-    calls = _calls(args)
+    catalog = _catalog(args.apps, args.layouts)
+    calls = _calls(args, catalog)
     from jharokha.server import build_server
 
-    server = build_server(
-        source,
-        args.allow_input,
-        _catalog(args.apps, args.layouts),
-        trace,
-        _actions(args.apps),
-        apps_path,
-    )
+    server = build_server(source, args.allow_input, catalog, trace, _actions(args.apps), apps_path)
     done, error = asyncio.run(_run(server, calls))
     for text, image in done:
         if args.cmd == "screenshot":
@@ -222,7 +203,7 @@ def _target(v: str | None) -> Any:
     return v
 
 
-def _calls(args: argparse.Namespace) -> list[tuple[str, dict[str, Any]]]:
+def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[str, Any]]]:
     """The tool calls a shell command stands for."""
     title = {"window_title": args.window_title} if args.window_title else {}
 
@@ -261,11 +242,7 @@ def _calls(args: argparse.Namespace) -> list[tuple[str, dict[str, Any]]]:
         d = given(action=args.action, args=args.args, allow=args.allow, dry_run=args.dry_run)
         return [("jharokha_do", d)]
     if cmd == "learn":
-        steps = [
-            ("jharokha_learn", given(step="scan", app=args.app, view=args.view)),
-            ("jharokha_learn", given(step="propose", names=args.names)),
-        ]
-        return steps + ([("jharokha_learn", given(step="save"))] if args.save else [])
+        return _learn_calls(args, catalog, given)
     # act
     text = args.text
     if args.stdin:
@@ -287,6 +264,31 @@ def _calls(args: argparse.Namespace) -> list[tuple[str, dict[str, Any]]]:
     if args.quiet:
         a["show"] = "none"
     return [("jharokha_act", a)]
+
+
+def _learn_calls(
+    args: argparse.Namespace, catalog: Catalog, given: Any
+) -> list[tuple[str, dict[str, Any]]]:
+    """A view jharokha knows, without --names, is calibrated (its zoom steps, or the screen
+    now as a variant) and its definition left alone; anything else is scanned and proposed.
+    The save shows the change to apps.toml, and writes it with --save: typed by the user."""
+    if (args.zoom or args.name_icons) and not args.allow_input:
+        sys.exit("input_disabled: --zoom and --name-icons send input; add --allow-input.")
+    known = catalog.apps.get(args.app)
+    calibrate = known is not None and not args.names and (args.view in (None, *known.views))
+    tool = "jharokha_learn"
+    target = given(app=args.app, view=args.view)
+    calls: list[tuple[str, dict[str, Any]]] = []
+    if not calibrate:
+        calls.append((tool, given(step="scan") | target))
+        if args.name_icons:
+            calls.append((tool, given(step="name_icons")))
+        calls.append((tool, given(step="propose", names=args.names)))
+    if args.zoom:
+        calls.append((tool, given(step="zoom", steps=args.zoom) | target))
+    if args.variant or (calibrate and not args.zoom):
+        calls.append((tool, given(step="variant", variant=args.variant) | target))
+    return calls + [(tool, given(step="save", confirm=args.save))]
 
 
 async def _run(
@@ -319,18 +321,19 @@ def _catalog(apps_flag: str | None, layouts_flag: str | None) -> Catalog:
     """Built-in apps, the old layouts file if there is one, then apps.toml."""
     given = layouts_flag or os.environ.get("JHAROKHA_LAYOUTS")
     lpath = Path(given or "layouts.toml")
-    apath, apps_given = _apps_path(apps_flag)
+    apath, _ = _apps_path(apps_flag)
     try:
         layouts = load(lpath) if given or lpath.exists() else None
-        return apps.load(apath if apps_given or apath.exists() else None, layouts)
+        # A file not there yet is one jharokha_learn has still to write.
+        return apps.load(apath if apath.exists() else None, layouts)
     except (OSError, LayoutError, apps.AppError) as e:
         sys.exit(f"apps: {e}")
 
 
 def _actions(apps_flag: str | None) -> dict[str, actions.Action]:
     """Built-in actions, then those in apps.toml, then those in $JHAROKHA_ACTIONS."""
-    apath, apps_given = _apps_path(apps_flag)
-    paths = [apath] if apps_given or apath.exists() else []
+    apath, _ = _apps_path(apps_flag)
+    paths = [apath] if apath.exists() else []
     if extra := os.environ.get("JHAROKHA_ACTIONS"):
         paths.append(Path(extra))
     out = dict(actions.builtin())
