@@ -24,6 +24,13 @@ _LOCK_HINTS = (
     "ctrl + alt + delete",
     "ctrl+alt+delete to unlock",
     "pc is locked",
+    "sign-in options",
+    "i forgot my password",
+    "i forgot my pin",
+)
+_CLOCK = re.compile(r"^\d{1,2}:\d{2}$")
+_LONG_DATE = re.compile(
+    r"^(monday|tuesday|wednesday|thursday|friday|saturday|sunday), \w+ \d{1,2}$", re.IGNORECASE
 )
 
 
@@ -412,5 +419,14 @@ def find(lines: list[Line], query: str, regex: bool = False, all: bool = False) 
 
 
 def looks_locked(lines: list[Line]) -> bool:
+    """A lock or sign-in screen: one of its phrases, or the little such a screen shows (a
+    password or PIN box, or only a clock and the date) and nothing else."""
     text = " ".join(ln.text for ln in lines).lower()
-    return any(h in text for h in _LOCK_HINTS)
+    if any(h in text for h in _LOCK_HINTS):
+        return True
+    if len(lines) > 6:
+        return False
+    texts = [clean(ln.text).strip() for ln in lines]
+    if any(t.lower() in ("password", "pin") for t in texts):
+        return True
+    return any(_CLOCK.match(t) for t in texts) and any(_LONG_DATE.match(t) for t in texts)

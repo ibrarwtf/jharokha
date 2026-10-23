@@ -31,7 +31,7 @@
  "terminal.gdi+codec.lines_exact": 0.1176,
  "terminal.gdi+codec.lookalike": 49,
  "terminal.gdi+codec.tokens": 317,
- "all.lock_ok": 0.5556,
+ "all.lock_ok": 1,
  "all.app_ok": 1,
  "all.find_hit": 0.8333
 }

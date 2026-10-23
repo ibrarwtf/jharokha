@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.14.1
+
+- Lock and sign-in screens read as `locked`: the Windows 11 sign-in screen (a name, a password or PIN box, "Sign-in options", "I forgot my PIN"), the locked-account screen and the clock-only lock screen. A live session on the sign-in screen used to report `normal`. A screen counts as one only by these phrases, or by showing little else than a password box or a clock and the date. Evals: lock screens read right 1.0, up from .56 (quick) and .90 (full), with no other screen read as locked.
+
 ## v0.14.0
 
 - Evals (`uv run python -m evals --quick | --full`), replacing `tests/eval_ocr.py`. Generated screens shaped like the work: a PowerShell terminal (git log, directory tables, `sls` hits, log tails, JSON, a wrapped URL), a Teams-like chat, an Outlook-like mailbox, five lock and sign-in screens, lookalike IDs; synthetic names and data from a seeded generator, scored on seeds not used for tuning. Drawn with GDI and ClearType like real apps, then through a codec-like JPEG pass.

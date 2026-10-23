@@ -172,6 +172,15 @@ def test_command_output_between_its_line_and_the_next_prompt():
 def test_locked_detection():
     assert text.looks_locked(lines_for([("Press Ctrl+Alt+Del to unlock", 0, 0)]))
     assert not text.looks_locked(lines_for([("hello", 0, 0)]))
+    # The Windows 11 sign-in screen a live session showed as "normal".
+    signin = [("Ana Alder", 0, 0), ("password", 0, 20), ("Sign-in options", 0, 40)]
+    assert text.looks_locked(lines_for(signin))
+    assert text.looks_locked(lines_for([("Ana Alder", 0, 0), ("Locked", 0, 20), ("PIN", 0, 40)]))
+    assert text.looks_locked(lines_for([("13:42", 0, 0), ("Friday, October 23", 0, 30)]))
+    # A busy screen that mentions a password or shows a time is not a lock screen.
+    busy = [(f"line {i}", 0, 20 * i) for i in range(8)] + [("Password", 0, 200)]
+    assert not text.looks_locked(lines_for(busy))
+    assert not text.looks_locked(lines_for([("13:42", 0, 0), ("build done", 0, 30)]))
 
 
 def test_cache_ignores_cursor_sized_changes_only():
