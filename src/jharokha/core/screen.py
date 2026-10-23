@@ -18,7 +18,7 @@ from jharokha.core.watch import changed_bbox
 class ScreenError(Exception):
     """code is one of: not_windows, window_not_found, minimized, locked, no_frames,
     ocr_unavailable, region_out_of_bounds, timeout, covered, not_foreground, bad_key,
-    verify_unavailable."""
+    verify_unavailable, clipboard_busy."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
@@ -33,7 +33,9 @@ class Source(Protocol):
     def reread(self, frame: Frame, boxes: list[Box]) -> list[str]: ...
     def scroll(self, w: WindowInfo, x: int, y: int, ticks: int) -> None: ...
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None: ...
-    def type_text(self, w: WindowInfo, text: str, focus_at: Point | None = None) -> None: ...
+    def type_text(
+        self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
+    ) -> None: ...
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None: ...
 
 

@@ -78,9 +78,11 @@ class FakeSource:
     def click(self, w: WindowInfo, x: int, y: int, button: str, double: bool) -> None:
         self.items.append((f"clicked {button}{' x2' if double else ''} at {x},{y}", 10, 200))
 
-    def type_text(self, w: WindowInfo, text: str, focus_at: Point | None = None) -> None:
+    def type_text(
+        self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
+    ) -> None:
         at = f" after a click at {focus_at[0]},{focus_at[1]}" if focus_at else ""
-        self.items.append((f"typed {text}{at}", 10, 230))
+        self.items.append((f"{'pasted' if paste else 'typed'} {text}{at}", 10, 230))
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self.items.append((f"pressed {combo}", 10, 260))

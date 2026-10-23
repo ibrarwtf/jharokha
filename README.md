@@ -59,7 +59,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_changes` | Lines added and removed since a sequence number while watching, or a one-shot diff against your last read when not. |
 | `jharokha_scroll` | Opt-in, only with `--allow-input`: turn the mouse wheel at a client point and return what changed. |
 | `jharokha_click` | Opt-in: click (left / right / middle, optional double) at a client point, normally a `find_text` center. |
-| `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter. Sends nothing unless the session is in the foreground; `focus_at` clicks a blank point first. |
+| `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter. Sends nothing unless the session is in the foreground; `focus_at` clicks a blank point first. `paste` sends it through the clipboard and Ctrl+V instead: exact and instant for long text, and the local clipboard is put back. |
 | `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. Guarded and `focus_at` as for type. |
 
 Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or a named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
@@ -76,7 +76,7 @@ Terminal, all with `--window-title`:
 jharokha status | read [--region x,y,w,h] | find <query> | screenshot OUT.png [--region ...] | bench
 jharokha --allow-input click X Y [--button right] [--double]
 jharokha --allow-input scroll TICKS [--at X,Y]
-jharokha --allow-input type TEXT | --stdin [--enter] [--focus-at X,Y]
+jharokha --allow-input type TEXT | --stdin [--enter] [--paste] [--focus-at X,Y]
 jharokha --allow-input press COMBO [--focus-at X,Y]
 ```
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.0
+
+- `paste` on `jharokha_type` (`type --paste` in the shell): the text goes through the clipboard and Ctrl+V instead of key by key, so a long script or file arrives exactly and at once, and keys pressed on this machine meanwhile cannot mix in. A final newline is sent as Enter after the paste. The local clipboard's text is put back afterwards. Needs clipboard sharing into the session; a terminal may ask to confirm a multi-line paste. Live: two lines with quotes and `$` pasted and entered in 1.9 s, clipboard restored.
+- The `type` description now says text is sent as given: backslash escapes are not decoded.
+
 ## v0.9.0
 
 - Input tools (`scroll`, `click`, `type`, `press`) wait until the screen stops changing instead of a fixed 0.4 s: at least 0.4 s, then 0.3 s without a change, at most 3 s. A click in a chat list no longer returns the chat before it.

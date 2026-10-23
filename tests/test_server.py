@@ -129,6 +129,8 @@ async def test_until_waits_for_text_after_input(source):
     async with Client(build_server(source, allow_input=True)) as c:
         r = await c.call_tool("jharokha_type", {"text": "dir", "until": "typed dir"})
         assert "until_ms=" in text(r)
+        r = await c.call_tool("jharokha_type", {"text": "long script", "paste": True})
+        assert "pasted long script" in text(r)
         r = await c.call_tool(
             "jharokha_press", {"keys": "enter", "until": "never shown", "timeout_s": 0.5}
         )

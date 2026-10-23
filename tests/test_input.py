@@ -62,6 +62,30 @@ def test_typing_stops_when_focus_leaves_mid_text(inp, monkeypatch):
     assert len(inp.sent) == 2  # only "a" went, as one down and one up
 
 
+@pytest.fixture
+def clip(inp, monkeypatch):
+    """The local clipboard as a list of what was set, starting with the user's text."""
+    board = ["user's text"]
+    monkeypatch.setattr(inp, "_clipboard", lambda: board[-1])
+    monkeypatch.setattr(inp, "_set_clipboard", board.append)
+    return board
+
+
+def test_paste_sets_the_clipboard_presses_ctrl_v_then_enter_and_restores(inp, clip, monkeypatch):
+    monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
+    inp.paste_text(SESSION, "line 1\nline 2\n")
+    assert clip == ["user's text", "line 1\r\nline 2", "user's text"]
+    vks = [i.u.ki.wScan for i in inp.sent]  # FakeUser32 maps scan code = vk
+    assert vks == [inp.KEYS["ctrl"], ord("V"), ord("V"), inp.KEYS["ctrl"]] + [inp.KEYS["enter"]] * 2
+
+
+def test_paste_restores_the_clipboard_when_nothing_was_sent(inp, clip, monkeypatch):
+    monkeypatch.setattr(inp, "user32", FakeUser32([OTHER]))
+    with pytest.raises(inp.NotForeground):
+        inp.paste_text(SESSION, "secret")
+    assert inp.sent == [] and clip[-1] == "user's text"
+
+
 def test_press_is_guarded_too(inp, monkeypatch):
     monkeypatch.setattr(inp, "user32", FakeUser32([OTHER]))
     with pytest.raises(inp.NotForeground):
