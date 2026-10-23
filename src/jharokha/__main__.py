@@ -11,7 +11,9 @@ import time
 from pathlib import Path
 
 from jharokha import version
-from jharokha.core.layout import Layout, LayoutError, load
+from jharokha.core import apps
+from jharokha.core.apps import Catalog
+from jharokha.core.layout import LayoutError, load
 from jharokha.core.models import Point
 from jharokha.core.screen import Screen, ScreenError, check_region, png
 from jharokha.core.text import find, format_concise
@@ -35,8 +37,13 @@ def main() -> None:
         help="also serve (or, in a shell, allow) scroll, click, type and press",
     )
     p.add_argument(
+        "--apps",
+        help="app definitions and calibration (default: $JHAROKHA_APPS, else ./apps.toml)",
+    )
+    p.add_argument(
         "--layouts",
-        help="TOML file of named regions (default: $JHAROKHA_LAYOUTS, else ./layouts.toml)",
+        help="old layouts file, read as calibration (default: $JHAROKHA_LAYOUTS, "
+        "else ./layouts.toml)",
     )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
@@ -82,9 +89,10 @@ def main() -> None:
     sub.add_parser("bench")
     m = sub.add_parser(
         "measure",
-        help="write an app's named regions to the layouts file from what is on screen",
+        help="write an app view's calibration to apps.toml from what is on screen",
     )
-    m.add_argument("app", help="layout name, e.g. teams")
+    m.add_argument("app", help="app id, e.g. teams; a new id starts an app of your own")
+    m.add_argument("--view", help="the app's view (default: its first, e.g. teams chat)")
     m.add_argument("--anchor", required=True, help="text always on screen in that app")
     m.add_argument(
         "--zoom",
@@ -103,8 +111,8 @@ def main() -> None:
     if args.cmd is None:
         from jharokha.server import build_server
 
-        layouts = _layouts(args.layouts)
-        build_server(source, allow_input=args.allow_input, layouts=layouts).run("stdio")
+        catalog = _catalog(args.apps, args.layouts)
+        build_server(source, allow_input=args.allow_input, catalog=catalog).run("stdio")
         return
     screen = Screen(source)
     try:
@@ -130,17 +138,17 @@ def main() -> None:
         elif args.cmd == "measure":
             from jharokha import measure
 
-            path = Path(args.layouts or os.environ.get("JHAROKHA_LAYOUTS") or "layouts.toml")
             measure.run(
                 screen,
                 args.window_title,
                 args.app,
                 args.anchor,
-                path,
+                _apps_path(args.apps)[0],
                 args.zoom,
                 args.names,
                 args.focus,
                 args.grid,
+                args.view,
             )
     except ScreenError as e:
         sys.exit(str(e))
@@ -195,15 +203,21 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
         print(format_concise(lines))
 
 
-def _layouts(flag: str | None) -> dict[str, Layout]:
-    given = flag or os.environ.get("JHAROKHA_LAYOUTS")
-    path = Path(given or "layouts.toml")
-    if not given and not path.exists():
-        return {}
+def _apps_path(flag: str | None) -> tuple[Path, bool]:
+    given = flag or os.environ.get("JHAROKHA_APPS")
+    return Path(given or "apps.toml"), bool(given)
+
+
+def _catalog(apps_flag: str | None, layouts_flag: str | None) -> Catalog:
+    """Built-in apps, the old layouts file if there is one, then apps.toml."""
+    given = layouts_flag or os.environ.get("JHAROKHA_LAYOUTS")
+    lpath = Path(given or "layouts.toml")
+    apath, apps_given = _apps_path(apps_flag)
     try:
-        return load(path)
-    except (OSError, LayoutError) as e:
-        sys.exit(f"layouts: {e}")
+        layouts = load(lpath) if given or lpath.exists() else None
+        return apps.load(apath if apps_given or apath.exists() else None, layouts)
+    except (OSError, LayoutError, apps.AppError) as e:
+        sys.exit(f"apps: {e}")
 
 
 def bench(screen: Screen, window_title: str | None) -> None:

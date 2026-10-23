@@ -42,6 +42,19 @@ def panes(frame: Frame, bounds: Box | None = None) -> list[Box]:
     return [(x + bx, y + by, w, h) for x, y, w, h in found]
 
 
+def background(frame: Frame) -> tuple[int, int, int]:
+    """The most common colour (RGB) on a sparse grid of pixels: what most of the screen is
+    painted with, such as a terminal's (12, 12, 12)."""
+    a = np.frombuffer(frame.bgra, np.uint8).reshape(frame.height, frame.width, 4)
+    s = a[::8, ::8, :3].reshape(-1, 3).astype(np.int32)
+    # The codec moves a flat colour by a level or two; count colours in steps of 4.
+    packed = ((s[:, 2] >> 2) << 12) | ((s[:, 1] >> 2) << 6) | (s[:, 0] >> 2)
+    values, counts = np.unique(packed, return_counts=True)
+    top = packed == values[int(counts.argmax())]
+    r, g, b = (int(np.median(s[top, i])) for i in (2, 1, 0))
+    return r, g, b
+
+
 def reading_panes(frame: Frame, region: Box | None = None) -> list[Box] | None:
     """The panes to read the frame (or a region of it) in: the whole frame's panes, cut to
     the region so a region reads as it does on the full screen. None when the frame shows

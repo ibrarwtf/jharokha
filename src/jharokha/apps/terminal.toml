@@ -1,0 +1,33 @@
+# Windows Terminal with PowerShell (or cmd), built in. Positions are fractions of the client
+# area, measured on a maximised session window: a tab strip above a divider at y=38, then
+# the body on (12, 12, 12) with a scrollbar at its right edge and rows about 23 px apart.
+format = 1
+
+[app.terminal]
+name = "Windows Terminal"
+
+[[app.terminal.cue]]  # the tab's title
+text = ["PowerShell", "Command Prompt"]
+weight = 2
+
+[[app.terminal.cue]]  # a PowerShell or cmd prompt at the start of a line
+regex = '^(PS [A-Za-z]:\\|[A-Za-z]:\\[^>]*>)'
+weight = 2
+
+[[app.terminal.cue]]
+background = [12, 12, 12]
+weight = 2
+
+[app.terminal.policy]  # reserved: risk, from 0.19
+
+[app.terminal.view.shell]
+
+[app.terminal.view.shell.region.tabs]
+at = [0.5, 0.015]
+box = [0, 0, 1, 0.032]
+
+[app.terminal.view.shell.region.body]
+reader = "grid"
+at = [0.5, 0.5]
+box = [0, 0.033, 1, 0.916]
+focus = true

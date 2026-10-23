@@ -1,14 +1,17 @@
-"""Named regions from a layouts file: per app, boxes as fractions of the client area, so one
-file fits any window size. An optional anchor (text that must be on screen) keeps a Teams
-layout from being used on an Outlook screen."""
+"""The layouts file of v0.6 to v0.15: per app, boxes as fractions of the client area, so one
+file fits any window size, with an optional anchor (text that must be on screen). It is
+read as calibration of the app model (core.apps.from_layouts). Also the geometry both
+share: zoom variants chosen by where their anchor is, fractions to pixels, and regions
+measured off one screen."""
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, TypeVar
 
 from jharokha.core.models import Box, Line
 from jharokha.core.text import panels
@@ -37,12 +40,22 @@ class Layout:
         return self.name.split("@")[0]
 
 
+class Anchored(Protocol):
+    @property
+    def anchor(self) -> str | None: ...
+    @property
+    def anchor_at(self) -> tuple[float, float] | None: ...
+
+
+A = TypeVar("A", bound=Anchored)
+
+
 def choose(
-    group: list[Layout], found: dict[str, Box | None], width: int, height: int
-) -> Layout | None:
+    group: Sequence[A], found: Mapping[str, Box | None], width: int, height: int
+) -> A | None:
     """The variant whose anchor is on screen and nearest to where it was measured; a
     variant without an anchor always applies."""
-    best: tuple[float, Layout] | None = None
+    best: tuple[float, A] | None = None
     for lay in group:
         box = found.get(lay.anchor) if lay.anchor else None
         if lay.anchor and box is None:
@@ -180,38 +193,3 @@ def _bands(lines: list[Line], y0: int, y1: int) -> list[tuple[int, int]]:
 def to_fraction(box: Box, width: int, height: int) -> Fraction:
     x, y, w, h = box
     return (x / width, y / height, w / width, h / height)
-
-
-def table(
-    name: str,
-    anchor: str,
-    regions: dict[str, Fraction],
-    at: tuple[float, float] | None,
-    profile: dict[str, str] | None = None,
-) -> str:
-    """One TOML table, in the format parse() reads. profile holds focus and grid."""
-
-    def nums(v: tuple[float, ...]) -> str:
-        return "[" + ", ".join(f"{f:.4f}".rstrip("0").rstrip(".") or "0" for f in v) + "]"
-
-    out = [f'["{name}"]' if "@" in name else f"[{name}]", f"anchor = {json.dumps(anchor)}"]
-    if at:
-        out.append(f"anchor_at = {nums(at)}")
-    out += [f"{k} = {json.dumps(v)}" for k, v in (profile or {}).items()]
-    out += [f"{k} = {nums(f)}" for k, f in regions.items()]
-    return "\n".join(out) + "\n"
-
-
-_HEADER = re.compile(r'^\[\s*"?([^"\]]+?)"?\s*\]\s*$')
-
-
-def replace_app(text: str, app: str, tables: str) -> str:
-    """text with every table of app (app and app@...) dropped and tables appended."""
-    keep, drop = [], False
-    for line in text.splitlines():
-        if m := _HEADER.match(line.strip()):
-            drop = m.group(1).split("@")[0] == app
-        if not drop:
-            keep.append(line)
-    body = "\n".join(keep).rstrip()
-    return (body + "\n\n" if body else "") + tables

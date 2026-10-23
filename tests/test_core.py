@@ -268,8 +268,7 @@ def test_reading_order_reads_pane_by_pane_and_rows_inside():
 
 
 def test_layouts_parse_validate_and_scale():
-    example = pathlib.Path(__file__).resolve().parents[1] / "layouts.example.toml"
-    layouts = layout.load(example)
+    layouts = layout.parse('[teams]\nanchor = "Chat"\nthread = [0.24, 0, 0.76, 1]\n')
     assert layouts["teams"].anchor == "Chat" and "thread" in layouts["teams"].regions
     assert layout.to_box(layouts["teams"].regions["thread"], 1000, 500) == (240, 0, 760, 500)
     for bad in ("[a]\nr = [0, 0, 2, 1]", "[a]\nr = [0.5, 0, 0.6, 1]", "[a]\nr = [0, 0]", "a = 1"):
@@ -315,7 +314,7 @@ def test_right_aligned_own_messages_stay_in_the_thread():
     assert len(text.panels(lines, (0, 0, 640, 400))) == 1
 
 
-def test_measure_finds_columns_and_bands_and_writes_toml():
+def test_measure_finds_columns_and_bands():
     rail = [("A", 5, 20 + 28 * i) for i in range(13)]
     side = [(f"chat {i}", 60, 20 + 28 * i) for i in range(13)]
     wide = [("Header title", 200, 10), ("Tabs here", 200, 30)]
@@ -326,10 +325,14 @@ def test_measure_finds_columns_and_bands_and_writes_toml():
     assert list(regions) == ["col1", "col2", "top", "body", "bottom1", "bottom2"]
     assert regions["col1"][0] == 0 and regions["col2"][0] < regions["top"][0]
     assert regions["top"][1] == 0 and regions["body"][1] < 120 <= regions["body"][1] + 40
-    fr = {k: layout.to_fraction(b, 640, 400) for k, b in regions.items()}
-    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02), {"focus": "body", "grid": "body"})
-    text_ = layout.replace_app('[other]\nr = [0, 0, 1, 1]\n["app@0"]\nanchor = "x"\n', "app", t)
-    parsed = layout.parse(text_)
-    assert set(parsed) == {"other", "app@-1"} and parsed["app@-1"].anchor_at == (0.3, 0.02)
-    assert parsed["app@-1"].focus == parsed["app@-1"].grid == "body"
-    assert layout.to_box(parsed["app@-1"].regions["body"], 640, 400) == regions["body"]
+
+
+def test_grid_takes_calibrated_pitch_width_and_origin():
+    # Two rows of a 10 px grid whose words OCR placed a few pixels off.
+    lines = [
+        Line("ab", (13, 6, 20, 12), (Word("ab", (13, 6, 20, 12)),)),
+        Line("cd", (43, 27, 20, 12), (Word("cd", (43, 27, 20, 12)),)),
+    ]
+    out = text.grid(lines, (0, 0, 200, 100), pitch=20, char_width=10, origin=(10, 2))
+    assert [ln.text for ln in out] == ["ab", "   cd"]
+    assert text.grid_metrics(lines, (0, 0, 200, 100)) == (21.0, 10.0, (13, 2))

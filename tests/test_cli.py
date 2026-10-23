@@ -51,6 +51,28 @@ def test_read_region_and_bad_region(monkeypatch, source, capsys):
         run(monkeypatch, source, "read", "--region", "0,0,400")
 
 
+def test_measure_writes_calibration_to_apps_toml(monkeypatch, source, tmp_path, capsys):
+    from jharokha.core import apps
+
+    path = tmp_path / "apps.toml"
+    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build")
+    cat = apps.load(path)
+    assert cat.apps["mine"].views["main"].cues[0].text == ("Build",)
+    regions = cat.calibration[("mine", "main")].variants[0].regions
+    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build",
+        "--focus", next(iter(regions)))  # fmt: skip
+    # Remeasuring replaces the view's calibration and keeps the focus set before.
+    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("format = 1") and text.count("[calibration.mine.main]") == 1
+    assert text.count("written by") == 1
+    assert apps.load(path).calibration[("mine", "main")].focus == next(iter(regions))
+    # A built-in app is calibrated in its first view.
+    run(monkeypatch, source, "--apps", str(path), "measure", "terminal", "--anchor", "Build")
+    assert ("terminal", "shell") in apps.load(path).calibration
+    assert "wrote" in capsys.readouterr().out
+
+
 def test_screenshot_writes_a_png(monkeypatch, source, tmp_path):
     out = tmp_path / "s.png"
     run(monkeypatch, source, "screenshot", str(out))
