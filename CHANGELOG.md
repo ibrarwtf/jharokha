@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.16.1
+
+- The second engine runs on 2 onnxruntime threads that do not spin. On a 4-core i5 laptop a line costs about 65 ms of CPU instead of 110, at about the same wall time (27 to 36 ms), and the threads no longer burn ~300 ms of CPU in the second after every read.
+
 ## v0.16.0
 
 - Apps are data. An app definition (TOML, `format = 1`) names an app, the cues it is recognised by (text in any of several spellings, a regex, the screen's background colour, a pane about where the app draws one, each weighted and optionally placed), and its views; a view adds its own cues, a `ready` text that shows it has finished loading, and its regions, each with a reader (`text`, `grid`; `list`, `table` and `form` are reserved and read as text for now) and one `focus`. A region is the pane found from the pixels under a point (`at`, widened with `to` to the pane under a second point), so it follows the window size and the app's zoom; a `box` of fractions is the fallback for parts with no edges of their own and the check on the pane (a pane overlapping it by less than 0.6 IoU is not taken). `policy` and `action` tables are reserved for later versions.

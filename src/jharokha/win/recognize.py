@@ -32,6 +32,11 @@ class Recognizer:
             # The arena keeps the peak of the widest strip ever read; without it memory
             # goes back after each read.
             opts.enable_cpu_mem_arena = False
+            # Measured on a 4-core i5 laptop: 2 threads read a line as fast as the default 4
+            # at half the CPU, and without spinning the threads stop burning ~300 ms of CPU
+            # in the second after every read.
+            opts.intra_op_num_threads = 2
+            opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
             self._session: Any = ort.InferenceSession(
                 str(MODEL), sess_options=opts, providers=["CPUExecutionProvider"]
             )
