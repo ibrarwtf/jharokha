@@ -97,14 +97,11 @@ Live session, one OCR frame each, panels found: with the first rule (columns whe
 
 ## Open
 
-- TODO: publish to PyPI with Trusted Publishing (name `jharokha`, fallback `jharokha-mcp`) and add the tag-triggered publish workflow, so install becomes `uvx jharokha`.
-- Claude Desktop extension (`.mcpb`, `uv` type): does it install without a system Python? Test before shipping one.
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.
-- Recommend a fixed session resolution in the README for stable coordinates?
 
 ## Release
 
-By hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — summary`, tag `vX.Y.Z`, push. PyPI publishing is added at the first PyPI release.
+By hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — summary`, tag `vX.Y.Z`, push.
 
 ## Secrets
 
