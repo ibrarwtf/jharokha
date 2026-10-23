@@ -32,6 +32,20 @@ def test_type_from_stdin_with_focus_and_enter(monkeypatch, source, capsys):
     assert "Build succeeded" in capsys.readouterr().out
 
 
+def test_input_commands_are_guarded_and_traced(monkeypatch, source, tmp_path):
+    import json
+
+    path = tmp_path / "t.jsonl"
+    with pytest.raises(SystemExit, match="wrong_app: expected teams in front"):
+        run(monkeypatch, source, "--allow-input", "--trace", str(path), "--trace-text",
+            "type", "hi", "--expect", "teams")  # fmt: skip
+    assert not any(t.startswith("typed") for t, _, _ in source.items)
+    run(monkeypatch, source, "--allow-input", "--trace", str(path), "press", "esc", "--quiet")
+    recs = [json.loads(line) for line in path.read_text("utf-8").splitlines()]
+    assert [(r["action"], r["result"]) for r in recs] == [("type", "wrong_app"), ("press", "sent")]
+    assert recs[0]["text"] == "hi" and recs[1]["front_app"] == "generic.screen"
+
+
 def test_click_out_of_bounds_and_quiet(monkeypatch, source, capsys):
     with pytest.raises(SystemExit, match="region_out_of_bounds"):
         run(monkeypatch, source, "--allow-input", "click", "20", "9999")

@@ -28,13 +28,16 @@ uv run jharokha --window-title "Fake Remote" bench
 - Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
 - Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
 - Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
+- Input guards, as `WindowsSource` applies them and with the same `core/guard.py` decisions: `SimSource(lease_root=DIR)` gives the window a real lease file in DIR (a second agent is another `Lease(HWND, root=DIR, pid=<a live pid not ours>)` that took it), `user_idle=` stands in for the last-input clock (seconds, or None for no input but ours; asked before every input and between chunks of typed text), `covered=` for what covers the window. The server's checks (`expect`, the app's policy) run unchanged on it.
 
 ```
 uv run python -m evals.scenarios            # scripted scenarios: success, calls, wall time, tokens, safety events
 uv run python -m evals.scenarios --codec --only incident --out scenarios.json
 ```
 
-The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` in `tests/test_sim.py`) show the harm happening today and are marked known unsafe; session safety (0.19) and the actions engine (0.20) are to turn them into refusals.
+The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` and the lease and user-activity tests in `tests/test_sim.py`) went through up to 0.18 (a web search, a message sent); since 0.19 each is refused with nothing sent and nothing recorded, and an incident scenario reaches its goal by that refusal.
+
+The guards' real Windows side (`win/guard.py`: lease file, `GetLastInputInfo`, `WindowFromPoint` sampling) is tested with fakes for the Win32 calls (`tests/test_win_guard.py`); nothing in the test suite sends real input.
 
 ## Evals
 

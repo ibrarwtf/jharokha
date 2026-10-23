@@ -9,14 +9,23 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from jharokha import version
-from jharokha.core import apps
+from jharokha.core import apps, guard
 from jharokha.core.apps import Catalog
+from jharokha.core.guard import Policy
+from jharokha.core.identify import identify
 from jharokha.core.layout import LayoutError, load
 from jharokha.core.models import Point
+from jharokha.core.panes import background, panes
 from jharokha.core.screen import Screen, ScreenError, check_region, png
-from jharokha.core.text import find, format_concise
+from jharokha.core.text import find, format_concise, looks_locked
+from jharokha.core.trace import Trace
+
+# In a shell the user's own Enter started the command: input waits this long for the
+# keyboard and mouse to go idle (3 s) before it is refused as user_active.
+WAIT_IDLE_S = 10.0
 
 
 def _source():  # noqa: ANN202
@@ -45,6 +54,16 @@ def main() -> None:
         help="old layouts file, read as calibration (default: $JHAROKHA_LAYOUTS, "
         "else ./layouts.toml)",
     )
+    p.add_argument(
+        "--trace",
+        metavar="PATH",
+        help="append a JSON line per input action (sent or refused) to PATH; off by default",
+    )
+    p.add_argument(
+        "--trace-text",
+        action="store_true",
+        help="with --trace, record typed text itself (default: its length and SHA-256)",
+    )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     r = sub.add_parser("read")
@@ -62,6 +81,10 @@ def main() -> None:
     after.add_argument("--until-regex", action="store_true", help="--until is a regex")
     after.add_argument("--timeout", type=float, default=10, help="seconds for --until")
     after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
+    after.add_argument(
+        "--expect",
+        help="send nothing unless this app (or app.view) is in front, e.g. terminal",
+    )
     c = sub.add_parser("click", parents=[after], help="click at a client point")
     c.add_argument("point", nargs="+", help="X Y, or X,Y as --focus-at takes it")
     c.add_argument("--button", choices=["left", "right", "middle"], default="left")
@@ -74,6 +97,11 @@ def main() -> None:
         "--focus-at",
         type=_ints(2),
         help="x,y of a blank point to click first if the session will not come to the front",
+    )
+    focus.add_argument(
+        "--allow",
+        choices=["irreversible"],
+        help="send a key the app's policy calls irreversible (Enter in Teams or a browser)",
     )
     t = sub.add_parser("type", parents=[after, focus], help="type text; newlines are Enter")
     t.add_argument("text", nargs="?", help="text to type (or --stdin)")
@@ -108,12 +136,15 @@ def main() -> None:
     )
     args = p.parse_args()
     source = _source()
+    trace = Trace(args.trace, include_text=args.trace_text)
     if args.cmd is None:
         from jharokha.server import build_server
 
         catalog = _catalog(args.apps, args.layouts)
-        build_server(source, allow_input=args.allow_input, catalog=catalog).run("stdio")
+        build_server(source, args.allow_input, catalog, trace).run("stdio")
         return
+    if hasattr(source, "wait_idle_s"):
+        source.wait_idle_s = WAIT_IDLE_S
     screen = Screen(source)
     try:
         if args.cmd == "status":
@@ -129,7 +160,7 @@ def main() -> None:
         elif args.cmd in ("click", "scroll", "type", "press"):
             if not args.allow_input:
                 sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
-            act(screen, args)
+            act(screen, args, _catalog(args.apps, args.layouts), trace)
         elif args.cmd == "find":
             _, lines = screen.read(args.window_title, None)
             print(json.dumps([m.__dict__ for m in find(lines, args.query, all=True)]))
@@ -164,31 +195,62 @@ def _ints(n: int):  # noqa: ANN202
     return parse
 
 
-def act(screen: Screen, args: argparse.Namespace) -> None:
-    """One input action, then (unless --quiet) the screen text after it, as the server does."""
+def act(screen: Screen, args: argparse.Namespace, catalog: Catalog, trace: Trace) -> None:
+    """One input action, guarded as the server guards it (expect, the app's policy, and the
+    source's lease and user checks), then (unless --quiet) the screen text after it."""
     w, frame = screen.frame(args.window_title)
     point: Point | None = getattr(args, "focus_at", None)
     if point:
         check_region((*point, 1, 1), frame)
+    fields: dict[str, Any] = {"point": point}
+    x = y = 0
+    text = ""
     if args.cmd == "click":
         try:
             x, y = _ints(2)(",".join(args.point))
         except (argparse.ArgumentTypeError, ValueError):
             sys.exit(f"click: give X Y or X,Y, got {' '.join(args.point)!r}")
         check_region((x, y, 1, 1), frame)
-        screen.source.click(w, x, y, args.button, args.double)
+        fields = {"point": (x, y), "keys": args.button + (" double" if args.double else "")}
     elif args.cmd == "scroll":
         x, y = args.at or (frame.width // 2, frame.height // 2)
         check_region((x, y, 1, 1), frame)
-        screen.source.scroll(w, x, y, args.ticks)
+        fields = {"point": (x, y), "keys": f"wheel {args.ticks}"}
     elif args.cmd == "type":
         # a heredoc ends in a newline of its own; Enter is --enter's job
-        text = sys.stdin.read().removesuffix("\n") if args.stdin else args.text
-        if text is None:
+        given = sys.stdin.read().removesuffix("\n") if args.stdin else args.text
+        if given is None:
             sys.exit("type: give the text or --stdin")
-        screen.source.type_text(w, text + ("\n" if args.enter else ""), point, args.paste)
+        fields["text"] = text = given + ("\n" if args.enter else "")
     else:
-        screen.source.press(w, args.keys, point)
+        fields["keys"] = args.keys
+    on: list[str | None] = [None]
+    try:
+        policy = _front(screen, args, catalog, on)
+        if args.cmd == "click":
+            screen.source.click(w, x, y, args.button, args.double)
+        elif args.cmd == "scroll":
+            screen.source.scroll(w, x, y, args.ticks)
+        elif args.cmd == "type":
+            steps = guard.text_steps(text, args.paste, policy.newline)
+            _check_keys(policy, guard.chords_of(steps), args.allow, on[0])
+            for kind, s in steps:
+                if kind == "press":
+                    screen.source.press(w, s, point)
+                else:
+                    screen.source.type_text(w, s, point, kind == "paste")
+                point = None
+        else:
+            try:
+                chord = guard.combo_key(args.keys)
+            except ValueError as e:
+                raise ScreenError("bad_key", str(e)) from None
+            _check_keys(policy, [chord], args.allow, on[0])
+            screen.source.press(w, args.keys, point)
+    except ScreenError as e:
+        trace.record(args.cmd, w.title, front_app=on[0], result=e.code, **fields)
+        raise
+    trace.record(args.cmd, w.title, front_app=on[0], result="sent", **fields)
     screen.settle(args.window_title)
     start = time.monotonic()
     while args.until:
@@ -201,6 +263,42 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
     if not args.quiet:
         _, lines = screen.read(args.window_title, None)
         print(format_concise(lines))
+
+
+def _front(
+    screen: Screen, args: argparse.Namespace, catalog: Catalog, on: list[str | None]
+) -> Policy:
+    """The app in front checked against --expect, and its input policy; identified only
+    when --expect is given or the action is type or press, which a policy can shape."""
+    expect = args.expect
+    if expect is None and args.cmd not in ("type", "press"):
+        return Policy()
+    if expect is not None and not catalog.knows(expect):
+        raise ScreenError(
+            "bad_argument",
+            f"--expect: no app or view '{expect}'; known: {', '.join(catalog.views())}",
+        )
+    frame, lines = screen.read(args.window_title, None)
+    if looks_locked(lines):
+        raise ScreenError("locked", "The session shows a lock screen. Unlock it and retry.")
+    ident = identify(
+        catalog.apps.values(), lines, panes(frame), background(frame), frame.width, frame.height
+    )
+    on[0] = f"{ident.app}.{ident.view}" if ident.app else None
+    if expect is not None:
+        try:
+            guard.check_front(expect, ident.app, ident.view, ident.confidence)
+        except guard.WrongApp as e:
+            raise ScreenError(*guard.refusal(e)) from None
+    app = catalog.apps.get(ident.app or "")
+    return app.input_policy if app else Policy()
+
+
+def _check_keys(policy: Policy, chords: list[str], allow: str | None, app: str | None) -> None:
+    try:
+        guard.check_keys(policy, chords, allow, app or "this app")
+    except guard.Irreversible as e:
+        raise ScreenError(*guard.refusal(e)) from None
 
 
 def _apps_path(flag: str | None) -> tuple[Path, bool]:

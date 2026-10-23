@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 from PIL import Image, ImageDraw
@@ -45,6 +46,7 @@ class FakeSource:
     frame_id: int = 0
     misreads: dict[str, str] = field(default_factory=dict)  # what the first OCR gets wrong
     reread_boxes: list[Box] = field(default_factory=list)
+    warnings: list[dict] = field(default_factory=list)
 
     def window(self, window_title: str | None) -> WindowInfo | None:
         if not self.present or (window_title and window_title.lower() not in self.title.lower()):
@@ -90,6 +92,9 @@ class FakeSource:
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self.items.append((f"pressed {combo}", 10, 260))
+
+    def guard_state(self, w: WindowInfo) -> dict[str, Any]:
+        return {"warnings": list(self.warnings), "input": {"lease": None, "user_idle_s": 42.0}}
 
 
 @pytest.fixture

@@ -99,3 +99,50 @@ def test_press_is_guarded_too(inp, monkeypatch):
     with pytest.raises(inp.NotForeground):
         inp.press(SESSION, "enter")
     assert inp.sent == []
+
+
+def test_typing_stops_when_the_user_types_between_chunks(inp, monkeypatch):
+    from jharokha.core.guard import TYPE_CHUNK, TypingInterrupted, UserActive
+
+    monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
+    checks = []
+
+    def between() -> None:
+        checks.append(len(inp.sent))
+        if len(checks) == 2:
+            raise UserActive(0.1, 3)
+
+    text = "a" * (3 * TYPE_CHUNK)
+    with pytest.raises(TypingInterrupted, match=f"after {2 * TYPE_CHUNK} of {len(text)}"):
+        inp.type_text(SESSION, text, between=between)
+    assert checks == [2 * TYPE_CHUNK, 4 * TYPE_CHUNK]  # a down and an up per character
+    assert len(inp.sent) == 4 * TYPE_CHUNK
+
+
+def test_paste_checks_for_the_user_before_its_enter(inp, clip, monkeypatch):
+    from jharokha.core.guard import UserActive
+
+    monkeypatch.setattr(inp, "user32", FakeUser32([SESSION]))
+
+    def busy() -> None:
+        raise UserActive(0.2, 3)
+
+    with pytest.raises(UserActive, match="the rest was not sent"):
+        inp.paste_text(SESSION, "Get-Date\n", between=busy)
+    assert len(inp.sent) == 4 and clip[-1] == "user's text"  # Ctrl+V, no Enter
+
+
+def test_every_send_is_noted_as_our_own_input(monkeypatch):
+    from jharokha.win import input
+
+    calls: list[str] = []
+
+    class Sender:
+        def SendInput(self, n, arr, size) -> int:  # noqa: N802, ANN001
+            calls.append("send")
+            return n
+
+    monkeypatch.setattr(input, "user32", Sender())
+    monkeypatch.setattr(input, "record_own_input", lambda: calls.append("own"))
+    input._send(input._mouse(0))
+    assert calls == ["send", "own"]

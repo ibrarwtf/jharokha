@@ -14,7 +14,7 @@ jharokha lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) w
 - **Watches for you:** waits for text to appear, and logs what changed while the agent was busy.
 - **Gets IDs right:** an optional second OCR engine re-reads lines where 0/O and 1/l get confused.
 - **Knows where it is:** recognises the app and view on screen (Windows Terminal, Teams, Outlook mail and calendar, a browser) with a confidence, and names their parts (a Teams thread, the compose box) for any window size and zoom. Apps are data: add your own in a TOML file.
-- **Safe by default:** read-only unless you opt in; input only reaches the session window while it's in front; screen text is treated as untrusted data.
+- **Safe by default:** read-only unless you opt in. Input only reaches the session window while it's in front, only the app it was meant for (`expect`), never an app's irreversible keys unless asked (Enter in Teams sends; a newline there is Shift+Enter), never while another agent or you at the keyboard are using the session, and can be traced to a file. Screen text is treated as untrusted data.
 - **Private:** nothing on disk, no network, no telemetry.
 
 Windows 10 2004+ / 11 only. Needs an OCR language pack (installed with any Windows display language).
@@ -47,7 +47,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 
 | Tool | Purpose |
 |---|---|
-| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also where you are: `app`, `view`, `confidence`, `runner_up`, `ready`, a browser's `url` (as untrusted text); and this server's `version`. |
+| `jharokha_status` | Is there a session window, and is it readable (normal / minimized / locked / no_frames)? Also where you are: `app`, `view`, `confidence`, `runner_up`, `ready`, a browser's `url` (as untrusted text); `warnings` (this computer's taskbar or another window over the session, a part off screen); with input, `input` (another agent's lease, seconds since you last used the keyboard or mouse); and this server's `version`. |
 | `jharokha_read_text` | The screen as text in reading order, `concise` (`L3 [24,111] Build succeeded`) or `detailed` (boxes, lookalike flags). A named region of a list, table or form comes back as items (`format`): messages, mails, table rows. `since` keeps a list's items from a time on. Paged. |
 | `jharokha_find_text` | One thing on screen: `{ref, text, box, center}`. Case-insensitive, tolerant of OCR lookalikes, or `regex`. |
 | `jharokha_layout` | Where you are and how the screen is divided: the app and view, detected panels (`P0`, `P1`, ...) with their boxes and first line, and the view's named regions with their boxes, readers and focus. |
@@ -55,11 +55,11 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_wait_for_text` | Wait up to 30 s for text to appear or (`gone`) disappear. |
 | `jharokha_watch` | Start / stop / status of a background watcher that logs every text change with a timestamp. OCR only when pixels change; stops itself after 10 idle minutes. |
 | `jharokha_changes` | Lines added and removed since a sequence number while watching, or a one-shot diff against your last read when not. |
-| `jharokha_scroll` | Opt-in, only with `--allow-input`: turn the mouse wheel at a client point and return what changed. |
+| `jharokha_scroll` | Opt-in, only with `--allow-input`: turn the mouse wheel at a client point and return what changed. Every input tool takes `expect` (below). |
 | `jharokha_click` | Opt-in: click (left / right / middle, optional double) at a client point, normally a `find_text` center. |
-| `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter. Sends nothing unless the session is in the foreground; `focus_at` clicks a blank point first. `paste` sends it through the clipboard and Ctrl+V instead: exact and instant for long text, and the local clipboard is put back. |
-| `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. Guarded and `focus_at` as for type. |
-| `jharokha_run` | Opt-in: a command in the shell that has focus (PowerShell, cmd, bash): types or pastes it, waits for the prompt to come back below it, and returns only what it printed. `clear` clears the screen first; output taller than the screen says its start is missing. |
+| `jharokha_type` | Opt-in: type text into whatever has focus in the session; newlines are Enter, or the app's own newline (Shift+Enter in Teams). Sends nothing unless the session is in the foreground; `focus_at` clicks a blank point first. `paste` sends it through the clipboard and Ctrl+V instead: exact and instant for long text, and the local clipboard is put back. `allow="irreversible"` to send a key the app's policy holds back. |
+| `jharokha_press` | Opt-in: a key or chord such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `f5`. Guarded, `focus_at` and `allow` as for type. |
+| `jharokha_run` | Opt-in: a command in the shell that has focus (PowerShell, cmd, bash): types or pastes it, waits for the prompt to come back below it, and returns only what it printed. Refused unless the terminal is in front (`expect` defaults to `terminal`). `clear` clears the screen first; output taller than the screen says its start is missing. |
 
 Pass `window_title` (a substring) when more than one session is open. Pass `region` to read a part of the screen: `[x, y, width, height]` in client pixels, a detected panel such as `"P1"`, or an app's named region such as `"teams.thread"`. Small regions are upscaled so small text resolves.
 
@@ -73,11 +73,12 @@ Terminal, all with `--window-title`:
 jharokha status | read [--region x,y,w,h] | find <query> | screenshot OUT.png [--region ...] | bench
 jharokha --allow-input click X Y [--button right] [--double]
 jharokha --allow-input scroll TICKS [--at X,Y]
-jharokha --allow-input type TEXT | --stdin [--enter] [--paste] [--focus-at X,Y]
-jharokha --allow-input press COMBO [--focus-at X,Y]
+jharokha --allow-input type TEXT | --stdin [--enter] [--paste] [--focus-at X,Y] [--allow irreversible]
+jharokha --allow-input press COMBO [--focus-at X,Y] [--allow irreversible]
+jharokha --allow-input --trace PATH [--trace-text] ...    # any input command, or the server
 ```
 
-Input commands refuse to run without `--allow-input`, wait until the screen stops changing (or `--until TEXT` is on screen, up to `--timeout S`) and print the screen text (`--quiet` to skip). `type --stdin` takes the text verbatim, so a shell command for the session needs no second round of quoting:
+Input commands take `--expect APP` and are guarded as the tools are (below); in a shell they wait up to 10 s for your keyboard and mouse to be idle, since your own Enter started them. They refuse to run without `--allow-input`, wait until the screen stops changing (or `--until TEXT` is on screen, up to `--timeout S`) and print the screen text (`--quiet` to skip). `type --stdin` takes the text verbatim, so a shell command for the session needs no second round of quoting:
 
 ```
 jharokha --allow-input type --stdin --enter --focus-at 600,1000 <<'EOF'
@@ -87,11 +88,25 @@ EOF
 
 Input is off by default. Start the server with `--allow-input` (add it to the `args` of the registration) to also get scroll, click, type and press. Every input tool waits until the screen stops changing, or with `until` until a text appears (a prompt, a marker the command prints), then returns per `show`: `changed`, the default, only the lines added (`+ L4 [x,y] text`, refs into the new screen) and removed since just before the input, or the whole screen when most of it changed; `full`; or `none`. `region` limits that read, so a click in a chat list can return just the thread. The RDP client only takes input while it is the active window, so each action brings it to the front and parks the real cursor where needed for a fraction of a second, then gives both back. A click in a remote session is real and cannot be undone by this server: read first, act, read again. Keys are sent only while the session holds the foreground, checked before each key: if Windows will not bring it forward, `type` and `press` fail with `not_foreground` and send nothing, and a focus change mid-text stops the rest. `focus_at` (`--focus-at`) clicks a blank point in the session first, which activates it where `SetForegroundWindow` is refused. The Windows key and other shortcuts the client reserves (Alt+Tab, Ctrl+Alt+Del) go to the local machine unless the session is full screen; use the session's own taskbar or search button instead.
 
+## Input safety
+
+Every input, from the tools or the shell commands, passes these checks first; a refusal sends nothing and its message says what to do next.
+
+| Check | Refusal | What it prevents |
+|---|---|---|
+| `expect` (an app or `app.view`: `terminal`, `teams.chat`): the screen is identified, and that app must be in front at confidence 0.6 or more. `jharokha_run` expects `terminal` unless told otherwise (`expect="any"` for a shell no definition knows). | `wrong_app` | A terminal command typed into Edge's address bar and searched for on the web. |
+| The front app's policy, from its definition (`[app.x.policy]`): `newline` is the chord a typed newline becomes; `irreversible_keys` are refused unless the call passes `allow="irreversible"`. Built in: Teams sends newlines as Shift+Enter and holds back Enter (it sends the message); a browser holds back Enter (it navigates, submits, or searches the web). Applies to `type`, `press` and `run` whatever they pass. | `irreversible` | A two-line draft in Teams sent as soon as its first line ended. |
+| A lease per session window: the first jharokha process to send input holds it while it keeps sending, and another process is refused until it has sent nothing for 60 s or has exited. The lease is a small file under `%TEMP%\jharokha` holding a pid and a time, named by a hash of the window handle. | `input_leased` | Two agent sessions typing into the same session. |
+| Your keyboard and mouse on this computer: input is refused when you used them in the last 3 s, and long text is typed in chunks of 8 characters with the check again between them, so it stops if you start typing in the middle (the error says how much went). jharokha's own input is told apart from yours. | `user_active` | Your keystrokes mixing into an agent's. |
+| A click point covered by another window or this computer's taskbar is refused; `jharokha_status` lists such parts as `warnings` before you try. | `covered` | Clicks lost under the local taskbar, which can sit over the session's own. |
+
+`--trace PATH` (server or shell) appends one JSON line per input action to PATH: time, action, window, point, keys, the app identified in front, and `result` (`sent`, or the code that refused it). Typed text is recorded as its length and SHA-256, and as text only with `--trace-text`. Off by default; nothing else is written.
+
 `skills/jharokha/SKILL.md` tells an agent how to use the tools: read, act, read again; zoom with a region before trusting an ID.
 
 ## Apps
 
-An app is data: a TOML definition (`format = 1`) of the cues it is recognised by and its views, each view with its own cues, a `ready` text that shows it has finished loading, and named regions. Built in, with generic UI text only:
+An app is data: a TOML definition (`format = 1`) of the cues it is recognised by and its views, each view with its own cues, a `ready` text that shows it has finished loading, and named regions; and its input `policy` (see Input safety). Built in, with generic UI text only:
 
 | App | Views and regions |
 |---|---|

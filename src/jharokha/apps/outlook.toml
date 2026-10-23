@@ -15,7 +15,7 @@ weight = 0.5
 pane = [0, 0.088, 1, 0.042]
 weight = 0.5
 
-[app.outlook.policy]  # reserved: risk, from 0.19
+[app.outlook.policy]  # none yet: Enter in a mail adds a line
 
 [app.outlook.view.mail]
 ready = "Inbox"
