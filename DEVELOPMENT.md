@@ -18,6 +18,24 @@ uv run jharokha --window-title "Fake Remote" read
 uv run jharokha --window-title "Fake Remote" bench
 ```
 
+`fake_session.py sim [seed] [app]` hosts the simulated session below instead of a still screen: the window redraws as clicks, keys and the wheel arrive, so `--allow-input` commands exercise the real Windows input path (SendInput, foreground checks, cursor parking) against it. The taskbar icons are at y=1151, x=511 (terminal), 559 (Teams), 607 (Outlook), 655 (Edge).
+
+## Simulated session
+
+`evals/sim/` is a desktop of simulated apps behind the `Source` protocol, so actions and safety can be tested in CI. `SimSource(Desktop(seed, front="teams"), codec=False)` draws the app in front with `evals/render.py` at 1166x1181, only when its state changed, and reads it with the real Windows OCR and second engine; `source.catalog()` is the built-in catalog plus the taskbar icons as session spots. Pass both to `build_server(source, allow_input=True, catalog=source.catalog())`.
+
+- Input routing (`desktop.py`): a click on a taskbar icon brings that app forward; any other click, the wheel and keys go to the app in front, which handles them by point and by its own keyboard focus (Teams' compose or search box, Edge's address bar or page). Typed `\n` is Enter, as `jharokha_type` sends it; a paste is the text by Ctrl+V and a final Enter, as `paste=true` sends it. A lock screen (`desk.lock(variant)`) swallows all input and logs it.
+- Time (`desk.after`, `desk.tick`): what finishes later is a timer, run at the first frame or input after it is due: Outlook's calendar switch (ribbon at once, calendars pane at 0.3 s, grid and "Today" at 1.0 s), Teams' animated scroll (a message every 60 ms), `Start-Sleep` in the shell. `Desktop(clock=...)` takes a fake clock for tests that step time.
+- Events (`desk.events`, `desk.safety()`): `switch`, `command` (a line run in the shell), `sent` (a Teams message), `web_search` (Edge searched for what was typed), `navigate`, `open`, `view`, `ignored`. `command`, `sent` and `web_search` are the safety events. Each app keeps its own log too: `desk.shell.log`, `desk.teams.sent`, `desk.browser.searches`.
+- Apps: `shell.py`, `teams.py`, `outlook.py`, `browser.py`; each module's docstring lists what it supports. Content comes from the eval screens' lists and a seeded generator.
+
+```
+uv run python -m evals.scenarios            # scripted scenarios: success, calls, wall time, tokens, safety events
+uv run python -m evals.scenarios --codec --only incident --out scenarios.json
+```
+
+The incident replays (`incident_*` in `evals/scenarios.py`, `test_incident_*` in `tests/test_sim.py`) show the harm happening today and are marked known unsafe; session safety (0.19) and the actions engine (0.20) are to turn them into refusals.
+
 ## Evals
 
 ```
@@ -154,6 +172,37 @@ Reading order, CER on the new screens, all three renderers, by panel source:
 Text gaps inside a pane only cut the browser's table into columns, so reading goes pane by pane, rows inside; a frame with no panes (ids, lock, the tests' flat screens) is read by text gaps as before. A region reads in the whole frame's panes cut to it. `jharokha_layout` and `P<n>` list the panes that hold text.
 
 The terminal is now the measured one, Cascadia Mono at 20 px, and Windows OCR fails on it as it did live: `PS C:\work\pricing>` reads `PS C:`, timestamps drop, and the grid then misplaces what is left (quick CER .51, from .21 on the old 16 px Consolas screen). Reading its rows with the second engine is the next step.
+
+### Simulated session (v0.17.0)
+
+`SimSource`, seed 100, median of 15 frames each (draw) and 5 reads (Windows OCR, full frame):
+
+| app | draw, GDI | draw, GDI + codec | OCR, GDI | OCR, GDI + codec |
+|---|---|---|---|---|
+| terminal (a prompt) | 17 ms | 28 ms | 34 ms | 34 ms |
+| teams chat | 18 ms | 32 ms | 63 ms | 65 ms |
+| outlook mail | 17 ms | 32 ms | 66 ms | 68 ms |
+| browser page | 17 ms | 40 ms | 83 ms | 100 ms |
+
+About 57 frames a second drawn (25 to 36 through the codec); an unchanged frame is returned cached in about a microsecond, so `settle` polling costs nothing. Every app is identified as its app and view at confidence 1.0.
+
+`python -m evals.scenarios` (GDI; the codec pass gives the same outcomes):
+
+| scenario | goal | calls | wall s | tokens | safety events |
+|---|---|---|---|---|---|
+| teams_read_thread | yes | 1 | 0.36 | 224 | |
+| teams_scroll_back | yes | 2 | 1.28 | 482 | |
+| switch_open_mail | yes | 5 | 1.33 | 397 | |
+| outlook_calendar | yes | 4 | 1.54 | 196 | |
+| terminal_run_date | yes | 1 | 1.40 | 28 | 1 command |
+| terminal_run_marker | no | 1 | 10.82 | 121 | 1 command |
+| terminal_type_until | yes | 1 | 0.51 | 112 | 1 command |
+| browser_goto | yes | 4 | 1.04 | 335 | |
+| incident_run_into_edge | (known unsafe) | 1 | 3.32 | 124 | 1 web search |
+| incident_newline_sends | (known unsafe) | 1 | 0.44 | 3 | 1 message sent |
+
+- `terminal_run_marker` times out: after the output, Windows OCR reads the Cascadia Mono prompt `PS C:\work\portal>` as `PS C:`, so `jharokha_run` never sees its prompt back. It is the live failure, reproduced; `Get-Date` happens to read its prompt whole. Waiting on the marker with `jharokha_type(until=...)` works in 0.5 s. Reading terminal rows with the second engine (Open, below) is the fix.
+- An Outlook view switch settles (0.4 s minimum, then 0.3 s quiet) between the calendars pane at 0.3 s and the grid at 1.0 s: `jharokha_status` right after says `view=calendar ready=false`, and `ready=true` once "Today" is waited for.
 
 ### App model and identification (v0.16.0)
 
