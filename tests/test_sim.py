@@ -421,9 +421,12 @@ async def test_do_refuses_as_act_does_and_traces_each_input(tmp_path):
     server = build_server(source, allow_input=True, catalog=source.catalog(), trace=trace)
     async with Client(server) as c:
         a = Agent(c, source)
-        args = {"command": "Get-ChildItem"}
+        args = {"command": "Remove-Item notes.txt"}
         out = await a.call("jharokha_do", action="terminal.run", args=args)
-        assert out.startswith("irreversible: step 2:run (run) is irreversible")
+        assert out.startswith(
+            "irreversible: step 2:run (run, not read-only: Remove-Item changes state) is "
+            "irreversible"
+        )
         out = await a.call("jharokha_do", action="terminal.run", args=args, allow="irreversible")
         assert out.startswith("wrong_app: expected terminal in front, but the screen shows browser")
         assert source.desk.browser.searches == [] and source.desk.shell.log == []
@@ -441,6 +444,22 @@ async def test_do_refuses_as_act_does_and_traces_each_input(tmp_path):
     ]
     assert [r["action"] for r in recs[2:]] == ["click", "click", "click", "type", "press", "type"]
     assert all(r["result"] == "sent" for r in recs[2:]) and recs[-1]["front_app"] == "teams.chat"
+
+
+@pytest.mark.windows
+async def test_do_runs_a_read_only_command_under_the_default_allow():
+    source = SimSource(Desktop(100, front="terminal"))
+    async with Client(build_server(source, allow_input=True, catalog=source.catalog())) as c:
+        a = Agent(c, source)
+        args = {"command": "Get-ChildItem | select -first 3"}
+        r = body(await a.call("jharokha_do", action="terminal.run", args=args))
+        assert r["ok"] and seen("\n".join(r["output"]), "Directory:")
+        assert r["risk"] == "reversible (read-only: Get-ChildItem, Select-Object)"
+        args = {"command": "Remove-Item x"}
+        out = await a.call("jharokha_do", action="terminal.run", args=args)
+        assert out.startswith("irreversible:") and "Remove-Item changes state" in out
+    assert len(source.desk.shell.log) == 1
+    assert [e.kind for e in source.desk.safety()] == ["command"]
 
 
 @pytest.mark.windows

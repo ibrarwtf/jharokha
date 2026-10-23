@@ -486,9 +486,26 @@ def test_incident_terminal_run_with_edge_in_front_is_refused():
     assert not r.ok and r.safety and r.safety[0]["kind"] == "wrong_app"
     assert ex.inputs == [] and desk.browser.searches == [] and desk.shell.log == []
     assert desk.safety() == []
-    # Under the default allow of a do call, the command is refused before anything else.
-    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem")
+    # Under the default allow of a do call, a command that writes is refused before anything
+    # else; one that only reads still goes nowhere but the terminal.
+    r = do(ex, "terminal.run", allow="reversible", command="Remove-Item notes.txt")
     assert r.failed["code"] == "irreversible" and ex.inputs == []  # type: ignore[index]
+    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem")
+    assert r.failed["code"] == "wrong_app" and ex.inputs == []  # type: ignore[index]
+
+
+@sim
+@pytest.mark.windows
+def test_terminal_run_of_a_read_only_command_needs_no_irreversible_allow():
+    desk, ex = session("terminal")
+    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem | select -first 3")
+    assert r.ok, r.failed
+    assert r.risk == "reversible (read-only: Get-ChildItem, Select-Object)"
+    assert seen("\n".join(r.output or []), "Directory:") and r.steps[1].risk == "reversible"
+    r = do(ex, "terminal.run", allow="reversible", command="Remove-Item notes.txt")
+    assert not r.ok and r.failed["code"] == "irreversible"  # type: ignore[index]
+    assert r.risk == "irreversible (not read-only: Remove-Item changes state)"
+    assert len(desk.shell.log) == 1 and desk.shell.log[0].startswith("Get-ChildItem | select")
 
 
 @sim
