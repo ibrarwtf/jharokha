@@ -9,8 +9,9 @@ for rereads. Input changes the simulation's state; nothing reaches a real window
 Input is guarded as WindowsSource guards it, with the same decisions: lease_root gives the
 window a real lease file there (another Lease on the same root and HWND, under another live
 pid, is a second agent), user_idle stands in for this laptop's last-input clock (seconds,
-or None for no input but ours; asked before each input and between chunks of typed text),
-and covered for what covers the window (core.guard.covered_parts)."""
+or None for no input but ours; asked before each input), user_keys_at for the hooks that
+watch while text is sent (the user presses a key while that many characters have gone;
+once), and covered for what covers the window (core.guard.covered_parts)."""
 
 from __future__ import annotations
 
@@ -27,7 +28,6 @@ from evals.sim.desktop import Desktop
 from jharokha.core import apps
 from jharokha.core.apps import Catalog
 from jharokha.core.guard import (
-    TYPE_CHUNK,
     USER_IDLE_S,
     InputLeased,
     TypingInterrupted,
@@ -81,6 +81,7 @@ class SimSource:
         self.present, self.minimized = True, False
         self.lease_root = lease_root
         self.user_idle = user_idle or (lambda: None)
+        self.user_keys_at: int | None = None
         self.covered: list[dict] = []
         self.renders = 0  # frames drawn
         self.render_s = 0.0  # time spent drawing them
@@ -163,15 +164,16 @@ class SimSource:
     ) -> None:
         with self._lock:
             self._guard()
+            # As win/input sends: stopped before the next character (a paste before its
+            # final Enter) once the hooks have seen the user's key.
+            n, self.user_keys_at = self.user_keys_at, None
             if paste:
-                self.desk.paste(text, focus_at)
+                n = len(text) - 1 if n is not None and text.endswith("\n") else None
+            if n is None or n >= len(text):
+                (self.desk.paste if paste else self.desk.type_text)(text, focus_at)
                 return
-            # In chunks with the user's activity checked between them, as win/input types.
-            for i in range(0, len(text), TYPE_CHUNK):
-                if i and (idle := self.user_idle()) is not None and idle < USER_IDLE_S:
-                    e = TypingInterrupted(idle, USER_IDLE_S, i, text)
-                    raise ScreenError(*refusal(e))
-                self.desk.type_text(text[i : i + TYPE_CHUNK], focus_at if i == 0 else None)
+            (self.desk.paste if paste else self.desk.type_text)(text[:n], focus_at)
+            raise ScreenError(*refusal(TypingInterrupted(0.0, USER_IDLE_S, n, text)))
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         with self._lock:

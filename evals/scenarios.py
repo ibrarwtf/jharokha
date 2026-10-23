@@ -178,6 +178,32 @@ async def incident_newline_sends(a: Agent) -> bool:
     return not teams.sent and teams.chat.draft == ["draft line one", "draft line two"]
 
 
+async def incident_outlook_send(a: Agent) -> bool:
+    """A reply drafted in Outlook, then the keys that send it: Ctrl+Enter and Alt+S are
+    irreversible there, so the draft stays a draft until the call says allow='irreversible'."""
+    await a.call("jharokha_press", keys="ctrl+r", show="none", expect="outlook.mail")
+    await a.call("jharokha_type", text="Thanks, looking into it.\nMore soon.", show="none")
+    codes = []
+    for keys in ("ctrl+enter", "alt+s"):
+        out = await a.call("jharokha_press", keys=keys, show="none", expect="outlook")
+        codes.append(out.partition(":")[0])
+    o = a.desk.outlook
+    drafted = o.draft is not None and o.draft.body == ["Thanks, looking into it.", "More soon."]
+    return codes == ["irreversible", "irreversible"] and drafted and not o.sent
+
+
+async def incident_teams_ctrl_enter(a: Agent) -> bool:
+    """Ctrl+Enter sends in Teams as Enter does, also with formatting on: held back too."""
+    await a.call("jharokha_type", text="draft line one", show="none")
+    out = await a.call("jharokha_press", keys="ctrl+enter", show="none")
+    teams = a.desk.teams
+    return (
+        out.startswith("irreversible:")
+        and not teams.sent
+        and teams.chat.draft == ["draft line one"]
+    )
+
+
 async def incident_second_agent(a: Agent) -> bool:
     """Another agent's process (a second Lease on the same window, under a live pid that is
     not ours) is sending to the session: ours is refused instead of typing into its work."""
@@ -195,6 +221,14 @@ async def incident_user_typing(a: Agent) -> bool:
     ours, so nothing is sent."""
     a.source.user_idle = lambda: 0.5
     out = await a.call("jharokha_run", command="Get-Date", timeout_s=3)
+    return out.startswith("user_active:") and not a.desk.shell.log
+
+
+async def incident_user_types_mid_text(a: Agent) -> bool:
+    """The user starts typing while a command is being typed: the hooks see their first
+    key and the rest, Enter included, is not sent."""
+    a.source.user_keys_at = 8
+    out = await a.call("jharokha_type", text="Get-ChildItem -Recurse\n", show="none")
     return out.startswith("user_active:") and not a.desk.shell.log
 
 
@@ -356,7 +390,10 @@ async def do_browser_goto(a: Agent) -> bool:
 async def do_incident_run_into_edge(a: Agent) -> bool:
     """terminal.run with Edge in front, even allowed to run a command: refused, wrong_app."""
     out = await a.call(
-        "jharokha_do", action="terminal.run", args={"command": "Get-ChildItem"}, allow="irreversible"
+        "jharokha_do",
+        action="terminal.run",
+        args={"command": "Get-ChildItem"},
+        allow="irreversible",
     )
     return out.startswith("wrong_app:") and not a.desk.browser.searches and not a.desk.shell.log
 
@@ -390,8 +427,11 @@ SCENARIOS = [
     Scenario("browser_goto", "browser", browser_goto),
     Scenario("incident_run_into_edge", "browser", incident_run_into_edge, incident=True),
     Scenario("incident_newline_sends", "teams", incident_newline_sends, incident=True),
+    Scenario("incident_teams_ctrl_enter", "teams", incident_teams_ctrl_enter, incident=True),
+    Scenario("incident_outlook_send", "outlook", incident_outlook_send, incident=True),
     Scenario("incident_second_agent", "terminal", incident_second_agent, incident=True, lease=True),
     Scenario("incident_user_typing", "terminal", incident_user_typing, incident=True),
+    Scenario("incident_user_mid_text", "terminal", incident_user_types_mid_text, incident=True),
     Scenario("raw_new_messages", "teams", raw_new_messages, task="new_messages"),
     Scenario("do_new_messages", "teams", do_new_messages, task="new_messages"),
     Scenario("raw_outlook_unread", "browser", raw_outlook_unread, task="outlook_unread"),

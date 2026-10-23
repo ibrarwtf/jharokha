@@ -6,17 +6,33 @@ format = 1
 [app.terminal]
 name = "Windows Terminal"
 
-[[app.terminal.cue]]  # the tab's title
-text = ["PowerShell", "Command Prompt"]
-weight = 2
+# A fresh terminal shows little text: the tab's title, small, and a prompt, one short line
+# OCR often misses on the dark body. Either is enough, so one cue takes both, and with the
+# dark body a terminal with only its title or only its prompt identifies above 0.8. With
+# neither, the pixels alone stay under 0.6: a dark screen is not taken for a terminal.
 
-[[app.terminal.cue]]  # a PowerShell or cmd prompt at the start of a line
-regex = '^(PS [A-Za-z]:\\|[A-Za-z]:\\[^>]*>)'
-weight = 2
+[[app.terminal.cue]]  # the title as an anchor that calibration can place regions from
+text = ["PowerShell", "Command Prompt", "Ubuntu"]
+weight = 0.5
+
+# The terminal's own text: a tab title (with the spellings OCR leaves of it: `owerShelI`,
+# `:ommand Prompt`, `Jbuntu`) or a prompt at the start of a line: PowerShell's, cmd's, or
+# user@host:path$ (OCR may space the colon, drop a drive letter or read ~ as N).
+[[app.terminal.cue]]
+regex = 'owerShel|ommand ?Prompt|buntu|\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$)'
+weight = 3
 
 [[app.terminal.cue]]
 background = [12, 12, 12]
-weight = 2
+weight = 3
+
+[[app.terminal.cue]]  # the body
+pane = [0, 0.033, 1, 0.916]
+weight = 0.5
+
+[[app.terminal.cue]]  # the tab strip
+pane = [0, 0, 1, 0.032]
+weight = 0.5
 
 [app.terminal.policy]  # Enter runs a command: jharokha_run's job, so not refused here
 

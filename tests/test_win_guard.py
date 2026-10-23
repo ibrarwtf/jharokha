@@ -135,6 +135,53 @@ def test_status_sees_another_holder_without_taking_the_lease(g, tmp_path):
     assert g.Lease(9, root=tmp_path, pid=2).other() is None
 
 
+class NextHook:
+    """CallNextHookEx, recording what it passed on."""
+
+    def __init__(self) -> None:
+        self.passed: list[tuple[int, int]] = []
+
+    def CallNextHookEx(self, hook, code, wparam, lparam) -> int:  # noqa: N802, ANN001
+        self.passed.append((code, wparam))
+        return 7
+
+
+def test_hook_procs_decide_from_the_event_and_always_pass_it_on(g, monkeypatch):
+    import ctypes
+
+    from jharokha.core.guard import LLKHF_INJECTED, WM_MOUSEMOVE, Activity
+
+    nxt = NextHook()
+    monkeypatch.setattr(g, "user32", nxt)
+    w = g.UserWatch(Activity((100, 100), clock=lambda: 5.0))
+    key = g._KBDLLHOOKSTRUCT(vkCode=0x41, flags=LLKHF_INJECTED)
+    assert w._keyboard(0, 0x100, ctypes.addressof(key)) == 7
+    assert w.user_seen() is None  # ours
+    move = g._MSLLHOOKSTRUCT(flags=0)
+    move.pt.x, move.pt.y = 102, 99
+    assert w._mouse(0, WM_MOUSEMOVE, ctypes.addressof(move)) == 7
+    assert w.user_seen() is None  # a resting hand
+    key.flags = 0
+    assert w._keyboard(-1, 0x100, ctypes.addressof(key)) == 7  # not to be looked at
+    assert w.user_seen() is None
+    assert w._keyboard(0, 0x100, ctypes.addressof(key)) == 7
+    assert w.user_seen() == 0.0 and w.activity.what == "key"
+    assert nxt.passed == [(0, 0x100), (0, WM_MOUSEMOVE), (-1, 0x100), (0, 0x100)]
+
+
+def test_the_hooks_go_in_for_the_watch_and_come_out_after(g):
+    """Real hooks for a moment: nothing is sent, and any key pressed meanwhile is passed on."""
+    from jharokha.core.guard import Activity
+
+    w = g.UserWatch(Activity((0, 0)))
+    threads = []
+    with pytest.raises(KeyError), w:
+        assert len(w._hooks) == 2 and w._thread is not None and w._thread.is_alive()
+        threads.append(w._thread)
+        raise KeyError("the sender failed")
+    assert w._hooks == [] and not threads[0].is_alive()
+
+
 def test_user_input_after_ours_refuses(g, clock):
     clock.now = 50_000
     g.record_own_input()

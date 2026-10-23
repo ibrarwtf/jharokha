@@ -8,10 +8,11 @@ from mcp.types import TextContent
 
 from jharokha.core import apps
 from jharokha.core.layout import parse
+from jharokha.core.models import Frame
 from jharokha.core.screen import ScreenError
 from jharokha.server import build_server
 
-from .conftest import FakeSource
+from .conftest import FakeSource, render
 
 
 async def call(source: FakeSource, name: str, **args: Any):
@@ -172,7 +173,10 @@ async def test_click_type_press_are_opt_in_and_return_the_new_screen(source):
 
 
 class Shell(FakeSource):
-    """A PowerShell that answers `Get-Date` after two polls and `cls` by clearing."""
+    """A PowerShell that answers `Get-Date` after two polls and `cls` by clearing, drawn as
+    Windows Terminal draws it (light on (12, 12, 12)), or on white when not dark."""
+
+    dark = True
 
     def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
         cmd = text.rstrip("\n")
@@ -186,27 +190,34 @@ class Shell(FakeSource):
     def frame(self, w):  # noqa: ANN001, ANN201
         if getattr(self, "pending", None):
             self.items.append(self.pending.pop(0))
-        return super().frame(w)
+        if not self.dark:
+            return super().frame(w)
+        self.frame_id += 1
+        f = render(self.items, bg=(12, 12, 12), ink=(204, 204, 204))
+        return Frame(f.width, f.height, f.bgra, self.frame_id, f.ts)
 
 
 async def test_run_returns_only_the_commands_output():
     shell = Shell([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
+    shell.dark = False
     async with Client(build_server(shell, allow_input=True)) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
         assert tools["jharokha_run"].annotations.destructive_hint is not False  # type: ignore[union-attr]
-        # A bare prompt on white is no terminal the definitions know: refused by default.
+        # Prompts on white are no terminal the definitions know: refused by default.
         r = await c.call_tool("jharokha_run", {"command": "Get-Date"})
         assert r.is_error and text(r).startswith("wrong_app: expected terminal in front")
         assert "nothing was sent" in text(r) and shell.items[-1][0] == "PS C:\\a>"
-        # A shell that prints no end marker is waited on by its prompt.
-        args = {"command": "Get-Date", "expect": "any", "shell": "other"}
+        # On a terminal's dark body a prompt is enough to know it. A shell that prints no
+        # end marker is waited on by its prompt.
+        shell.dark = True
+        args = {"command": "Get-Date", "shell": "other"}
         r = text(await c.call_tool("jharokha_run", args))
         assert r.startswith("run_ms=") and " lines=1" in r
         assert "Friday 23 October" in r and "old.txt" not in r and "PS C:" not in r
-        args = {"command": "Get-Date", "clear": True, "expect": "any", "shell": "other"}
+        args = {"command": "Get-Date", "clear": True, "shell": "other"}
         r = text(await c.call_tool("jharokha_run", args))
         assert "lines=1" in r and "Friday" in r
-        args = {"command": "x", "prompt": "(", "timeout_s": 1, "expect": "any"}
+        args = {"command": "x", "prompt": "(", "timeout_s": 1, "shell": "other"}
         r = await c.call_tool("jharokha_run", args)
         assert r.is_error and text(r).startswith("bad_prompt")
 

@@ -1,5 +1,6 @@
-"""The Windows side of core/guard.py: the input lease file, the last local input, and what
-covers the session window. Used only with --allow-input."""
+"""The Windows side of core/guard.py: the input lease file, the last local input, the user's
+input while ours is sent, and what covers the session window. Used only with
+--allow-input."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import json
 import msvcrt
 import os
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterator
 from ctypes import wintypes
@@ -18,6 +20,7 @@ from jharokha.core.guard import (
     LEASE_TTL_S,
     OWN_MARGIN_MS,
     USER_IDLE_S,
+    Activity,
     Holder,
     InputLeased,
     check_lease,
@@ -67,6 +70,60 @@ user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
 user32.MonitorFromWindow.restype = wintypes.HMONITOR
 user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
 user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)]
+
+WH_KEYBOARD_LL, WH_MOUSE_LL, WM_QUIT, PM_NOREMOVE = 13, 14, 0x0012, 0
+LRESULT = wintypes.LPARAM  # pointer-sized and signed, as LRESULT is
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+
+class _KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+user32.SetWindowsHookExW.restype = wintypes.HHOOK
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+user32.CallNextHookEx.restype = LRESULT
+user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+user32.GetMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.PeekMessageW.argtypes = [
+    ctypes.POINTER(wintypes.MSG),
+    wintypes.HWND,
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.UINT,
+]
+user32.PostThreadMessageW.argtypes = [
+    wintypes.DWORD,
+    wintypes.UINT,
+    wintypes.WPARAM,
+    wintypes.LPARAM,
+]
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 
 def _alive(pid: int) -> bool:
@@ -191,6 +248,104 @@ def user_idle_s(margin_ms: int = OWN_MARGIN_MS) -> float | None:
 def ensure_user_idle(threshold_s: float = USER_IDLE_S, margin_ms: int = OWN_MARGIN_MS) -> None:
     """Raises UserActive when the user's last input is under threshold_s old."""
     check_user_idle(user_idle_s(margin_ms), threshold_s)
+
+
+class WatchFailed(RuntimeError):
+    """The hooks that tell the user's input from ours could not be installed."""
+
+
+class UserWatch:
+    """The user's keys, clicks and mouse moves while jharokha sends input, as they happen.
+
+    Entering installs WH_KEYBOARD_LL and WH_MOUSE_LL hooks on a thread of their own, which
+    runs the message loop they are called from; leaving removes them (also on an error)
+    and ends the thread. Each event is handed to core.guard.Activity, which keeps the time
+    of the first that was the user's (user_seen), and passed on at once with
+    CallNextHookEx: nothing is held back or slowed but by the few microseconds of the
+    decision. Only entered around sending, so no hook runs otherwise."""
+
+    START_S = 2.0  # for the thread to install the hooks
+
+    def __init__(self, activity: Activity | None = None) -> None:
+        self.activity = activity or Activity(_cursor())
+        self._ready = threading.Event()
+        self._stop = False
+        self._tid = 0
+        self._error = ""
+        self._thread: threading.Thread | None = None
+        # Kept referenced while the hooks are in: a collected callback would crash the loop.
+        self._procs = (HOOKPROC(self._keyboard), HOOKPROC(self._mouse))
+        self._hooks: list[int] = []
+
+    def __enter__(self) -> UserWatch:
+        self._thread = threading.Thread(target=self._run, name="jharokha-user-watch", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(self.START_S) or self._error:
+            self.__exit__(None, None, None)
+            raise WatchFailed(
+                f"could not watch this computer's keyboard and mouse ({self._error or 'timed out'})"
+                "; nothing was sent"
+            )
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        if self._thread is None:
+            return
+        # A thread that has no _tid yet sees _stop once its hooks are in, and leaves.
+        self._stop = True
+        if self._tid:
+            user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
+        self._thread.join(self.START_S)
+        self._thread = None
+
+    def user_seen(self) -> float | None:
+        return self.activity.user_seen()
+
+    def _run(self) -> None:
+        msg = wintypes.MSG()
+        # The first call into user32 gives the thread its message queue, which WM_QUIT is
+        # posted to; it must exist before _tid is published.
+        user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_NOREMOVE)
+        self._tid = kernel32.GetCurrentThreadId()
+        try:
+            module = kernel32.GetModuleHandleW(None)
+            for kind, proc in zip((WH_KEYBOARD_LL, WH_MOUSE_LL), self._procs, strict=True):
+                hook = user32.SetWindowsHookExW(kind, proc, module, 0)
+                if not hook:
+                    self._error = f"SetWindowsHookExW({kind}) failed: {ctypes.WinError().strerror}"
+                    return
+                self._hooks.append(hook)
+            self._ready.set()
+            while not self._stop and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                pass
+        finally:
+            for hook in self._hooks:
+                user32.UnhookWindowsHookEx(hook)
+            self._hooks.clear()
+            self._ready.set()
+
+    def _keyboard(self, code: int, wparam: int, lparam: int) -> int:
+        if code >= 0:
+            try:
+                ev = _KBDLLHOOKSTRUCT.from_address(lparam)
+                self.activity.key(ev.flags)
+            except Exception:  # a hook must pass every key on, whatever went wrong here
+                pass
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    def _mouse(self, code: int, wparam: int, lparam: int) -> int:
+        if code >= 0:
+            try:
+                ev = _MSLLHOOKSTRUCT.from_address(lparam)
+                self.activity.mouse(wparam, ev.pt.x, ev.pt.y, ev.flags)
+            except Exception:  # as for keys
+                pass
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+
+def _cursor() -> tuple[int, int] | None:
+    pt = wintypes.POINT()
+    return (pt.x, pt.y) if user32.GetCursorPos(ctypes.byref(pt)) else None
 
 
 def covered(hwnd: int, step: int = COVER_STEP) -> list[dict]:
