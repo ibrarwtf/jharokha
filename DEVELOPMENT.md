@@ -95,6 +95,18 @@ Measured on the same laptop, synthetic 16 px screens plus four live frames of th
 
 Live session, one OCR frame each, panels found: with the first rule (columns wherever a 3-line-height gap runs the full height) 19, mostly toolbar buttons and labels split into columns; requiring a region to be at least 3 lines tall before it can split into columns, 13; merging stacked blocks of the same width, 5 where pairwise merging gave 9 on the same frames (the body was 5 full-width slices). Eval CER and lines exact unchanged on all synthetic screens. `jharokha_layout` 360 ms, a panel read ~210 ms on the fake windows.
 
+### Terminal grid (v0.12.0)
+
+Synthetic dark Consolas terminal, real Windows OCR, `tests/eval_ocr.py terminal`, CER / lines exact (the last truth line holds a `_` cursor, so 6 of 7 is the most):
+
+| px | reading order | grid | verify=flagged |
+|---|---|---|---|
+| 13 | .146 / 0 | .151 / 0 | .080 / .29 |
+| 16 | .060 / .43 | .019 / .43 | .020 / .57 |
+| 20 | .046 / .43 | .010 / .71 | .027 / .57 |
+
+Grid costs no OCR time. What it fixes: pieces of a row split and spaced apart (`dist/index . html`), table columns, dotted zeros inside numbers (`e.46`, `142.e7`). What is left are single-character misreads (`B3`→`83`, a lone `0`→`e`), which is verify's job. Inverting a dark screen before OCR changes nothing (same CER to three decimals on every screen): Windows OCR binarizes on its own.
+
 ## Open
 
 - No shared convention for marking untrusted tool output was found; ours is the `<screen_text>` wrapper.

@@ -93,6 +93,9 @@ def main() -> None:
     m.add_argument(
         "--focus", help="the region input tools report changes in, e.g. thread (default: kept)"
     )
+    m.add_argument(
+        "--grid", help="a region that is a terminal's character grid, e.g. body (default: kept)"
+    )
     args = p.parse_args()
     source = _source()
     if args.cmd is None:
@@ -135,6 +138,7 @@ def main() -> None:
                 args.zoom,
                 args.names,
                 args.focus,
+                args.grid,
             )
     except ScreenError as e:
         sys.exit(str(e))

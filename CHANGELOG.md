@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.0
+
+- Terminal grid: `grid = "<region>"` in an app's layouts table marks a region as a character grid. Reads of it (full, region, find, wait, input results, changes) snap OCR words to rows by the line pitch and space them by the character width, so `dist/index . html` reads `dist/index.html`, table columns keep their spacing, and a row that runs to the right edge is joined to its continuation. Zeros read as `e`, `@` or `o` inside a number with a decimal point (`e.46`, `142.e7`) become `0`. On the synthetic terminal, CER falls from .060 to .019 at 16 px and from .046 to .010 at 20 px, at no extra OCR time.
+- `jharokha measure APP --grid NAME` writes it; remeasuring keeps it, like `focus`.
+- `tests/eval_ocr.py` scores the grid on dark screens.
+
 ## v0.11.0
 
 - App profiles: a layouts table with an anchor is an app. `jharokha_status` returns `app`, and a full `jharokha_read_text` says `app=teams` in its header.

@@ -5,7 +5,7 @@ import pytest
 
 from jharokha.core import layout, text
 from jharokha.core.cache import FrameCache
-from jharokha.core.models import Line, Word
+from jharokha.core.models import Line, Word, union
 
 from .conftest import lines_for, render
 
@@ -111,6 +111,36 @@ def test_find_tolerates_what_ocr_does_to_punctuation():
     assert text.find(lines, r"^PS C:.*>\s*$", regex=True)[0].ref == "L3"
     assert text.find(lines, r"links\.txt|Error", regex=True)[0].ref == "L1"
     assert text.find(lines, "--") == text.find(lines, "----")  # one hyphen is not a rule
+
+
+def test_grid_rebuilds_terminal_rows():
+    """Pieces of a row OCR split and spaced apart, a wrapped row, a table and a dotted zero."""
+
+    def word(t: str, col: int, row: int) -> Word:
+        return Word(t, (10 + 7 * col + 1, 5 + 20 * row + (row % 2), 7 * len(t) - 2, 12))
+
+    def line(*ws: Word) -> Line:
+        return Line(" ".join(w.text for w in ws), union(w.box for w in ws), ws)
+
+    lines = [
+        line(word("PS", 0, 0), word("C:\\repo>", 3, 0)),
+        line(word("dir", 12, 0)),  # same row, its own OCR line, a pixel lower
+        line(word("dist/index", 0, 1), word(".", 10, 1), word("html", 11, 1)),
+        line(word("e.46", 18, 1), word("kB", 23, 1)),
+        line(word("x" * 88, 0, 2)),  # reaches the right edge: wraps
+        line(word("yz", 0, 3)),
+        line(word("Found", 0, 5), word("e", 6, 5), word("errors", 8, 5)),
+        Line("menu", (700, 5, 30, 12), (Word("menu", (700, 5, 30, 12)),)),
+    ]
+    out = text.grid(lines, (0, 0, 640, 200))
+    assert [ln.text for ln in out] == [
+        "PS C:\\repo> dir",
+        "dist/index.html   0.46 kB",
+        "x" * 88 + "yz",
+        "Found e errors",
+        "menu",
+    ]
+    assert text.grid(lines[:1], (0, 0, 640, 200)) == lines[:1]
 
 
 def test_locked_detection():
@@ -219,9 +249,9 @@ def test_measure_finds_columns_and_bands_and_writes_toml():
     assert regions["col1"][0] == 0 and regions["col2"][0] < regions["top"][0]
     assert regions["top"][1] == 0 and regions["body"][1] < 120 <= regions["body"][1] + 40
     fr = {k: layout.to_fraction(b, 640, 400) for k, b in regions.items()}
-    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02), focus="body")
+    t = layout.table("app@-1", "Header title", fr, (0.3, 0.02), {"focus": "body", "grid": "body"})
     text_ = layout.replace_app('[other]\nr = [0, 0, 1, 1]\n["app@0"]\nanchor = "x"\n', "app", t)
     parsed = layout.parse(text_)
     assert set(parsed) == {"other", "app@-1"} and parsed["app@-1"].anchor_at == (0.3, 0.02)
-    assert parsed["app@-1"].focus == "body"
+    assert parsed["app@-1"].focus == parsed["app@-1"].grid == "body"
     assert layout.to_box(parsed["app@-1"].regions["body"], 640, 400) == regions["body"]

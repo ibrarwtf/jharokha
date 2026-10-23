@@ -26,6 +26,7 @@ def run(
     zoom: str | None,
     names: str | None,
     focus: str | None = None,
+    grid: str | None = None,
 ) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", app):
         raise SystemExit("measure: app must be letters, digits, - or _")
@@ -83,16 +84,20 @@ def run(
 
     w, h = size
     old = path.read_text(encoding="utf-8") if path.exists() else ""
-    # Remeasuring keeps the focus set earlier, by hand or with --focus.
-    kept = [la.focus for la in layout.parse(old, str(path)).values() if la.app == app]
-    focus = focus or next((f for f in kept if f), None)
-    if focus and focus not in {rename.get(k, k) for k in found}:
-        raise SystemExit(f"measure: --focus {focus} is not one of the regions found")
+    # Remeasuring keeps the focus and grid set earlier, by hand or with --focus and --grid.
+    before = [la for la in layout.parse(old, str(path)).values() if la.app == app]
+    profile = {}
+    for key, given in (("focus", focus), ("grid", grid)):
+        value = given or next((getattr(la, key) for la in before if getattr(la, key)), None)
+        if value and value not in {rename.get(k, k) for k in found}:
+            raise SystemExit(f"measure: {key} {value} is not one of the regions found")
+        if value:
+            profile[key] = value
     tables = []
     for s, (regions, at) in sorted(seen.items(), reverse=True):
         name = f"{app}@{s:+d}" if steps else app
         fr = {rename.get(k, k): layout.to_fraction(b, w, h) for k, b in regions.items()}
-        tables.append(layout.table(name, anchor, fr, at if steps else None, focus))
+        tables.append(layout.table(name, anchor, fr, at if steps else None, profile))
         print(f"{name}: " + "  ".join(f"{rename.get(k, k)}={list(b)}" for k, b in regions.items()))
     head = f"# {app}: written by `jharokha measure` at {w}x{h} client"
     path.write_text(layout.replace_app(old, app, head + "\n" + "\n".join(tables)), encoding="utf-8")

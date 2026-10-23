@@ -241,6 +241,17 @@ async def test_layout_panels_and_named_regions(source):
         assert r.is_error and "2 panels" in text(r)
 
 
+async def test_grid_region_reads_as_terminal_rows(source):
+    source.items = [("PS C:\\repo> dir", 10, 10), ("a.txt 0.46 kB", 10, 30)]
+    source.misreads = {"a.txt 0.46 kB": "a.txt e.46 kB"}
+    layouts = parse('[term]\nanchor = "PS"\ngrid = "body"\nbody = [0, 0, 1, 1]\n')
+    async with Client(build_server(source, layouts=layouts)) as c:
+        r = text(await c.call_tool("jharokha_read_text", {}))
+        assert "L1 [10,30] a.txt 0.46 kB" in r
+        r = text(await c.call_tool("jharokha_read_text", {"region": [0, 25, 640, 30]}))
+        assert "L0 [10,30] a.txt 0.46 kB" in r
+
+
 async def test_app_on_screen_and_its_focus_region_after_input(source):
     layouts = parse(
         "[taskbar]\nbar = [0, 0.9, 1, 0.1]\n"
@@ -255,5 +266,7 @@ async def test_app_on_screen_and_its_focus_region_after_input(source):
         r = text(await c.call_tool("jharokha_press", {"keys": "enter"}))
         assert "elsewhere" not in r and "+ L0 [10,260] pressed enter" in r
         assert "Build succeeded" not in r
+    with pytest.raises(ValueError, match="grid must name one of its regions"):
+        parse('[app]\nanchor = "x"\ngrid = "nope"\nall = [0, 0, 1, 1]')
     with pytest.raises(ValueError, match="focus must name one of its regions"):
         parse('[app]\nanchor = "x"\nfocus = "nope"\nall = [0, 0, 1, 1]')
