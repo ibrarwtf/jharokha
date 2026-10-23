@@ -1,0 +1,27 @@
+{
+ "_doc": "Budgets for python -m evals.resources --check evals/budget.json --profile <name>. Each 'max' maps a metric the run prints to the most it may be.",
+ "laptop": {
+  "_doc": "Targets on the machine jharokha runs on: i5-8365U, 4 cores, 8 GB RAM. Checked by hand on that laptop, never in CI. Wall times count here.",
+  "max": {
+   "rss_idle_mb": 100,
+   "rss_peak_mb": 200,
+   "read_full.wall_p95_ms": 300,
+   "read_region.wall_p95_ms": 150,
+   "watch_idle.cpu_pct": 2,
+   "verify.wall_ms_per_line": 60
+  }
+ },
+ "ci": {
+  "_doc": "Gated on every push on windows-latest. Memory and CPU time only: wall time on a shared runner is noise. Each value is a measured windows-latest baseline plus a margin (memory +25%, CPU time +50%, watcher +1 point); until the first CI run replaces them, they are the laptop's numbers with that margin.",
+  "max": {
+   "rss_idle_mb": 130,
+   "rss_first_read_mb": 150,
+   "rss_peak_mb": 240,
+   "read_full.cpu_mean_ms": 450,
+   "read_region.cpu_mean_ms": 300,
+   "find_text.cpu_mean_ms": 300,
+   "verify.cpu_ms_per_line": 220,
+   "watch_idle.cpu_pct": 3.5
+  }
+ }
+}
