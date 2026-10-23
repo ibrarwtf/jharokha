@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.1
+
+- Waits and finds no longer miss text OCR mangled the punctuation of, which timed out waits in a live terminal: dashes of any kind and runs of them match `-` and `--` (`----` finds `——`), spaces OCR puts around `.`, `/`, `\` and `:` are ignored (`links.txt` finds `links .txt`, a URL finds `https : //aka . ms/x`), and a caret read as a letter after a prompt (`PS C:\repo>I`) is dropped. A regex that fails on the raw line is tried on the normalized one.
+- `jharokha_wait_for_text` takes `regex=true`; input tools take `until_regex=true` (`--until-regex` in the shell). Patterns like `saved|Error` used to be matched as plain text and never found.
+
 ## v0.10.0
 
 - `paste` on `jharokha_type` (`type --paste` in the shell): the text goes through the clipboard and Ctrl+V instead of key by key, so a long script or file arrives exactly and at once, and keys pressed on this machine meanwhile cannot mix in. A final newline is sent as Enter after the paste. The local clipboard's text is put back afterwards. Needs clipboard sharing into the session; a terminal may ask to confirm a multi-line paste. Live: two lines with quotes and `$` pasted and entered in 1.9 s, clipboard restored.

@@ -94,6 +94,25 @@ def test_find_exact_fuzzy_regex_and_all():
     assert text.find(lines, "missing") == []
 
 
+def test_find_tolerates_what_ocr_does_to_punctuation():
+    """The misses that timed out waits in a live terminal."""
+    lines = lines_for(
+        [
+            ("Name —— ——", 0, 0),
+            ("saved links .txt", 0, 20),
+            ("see https : //aka . ms/x", 0, 40),
+            (r"PS C:\repo>I", 0, 60),
+            ("a - b", 0, 80),
+        ]
+    )
+    assert text.find(lines, "----")[0].ref == "L0"
+    assert text.find(lines, "links.txt")[0].ref == "L1"
+    assert text.find(lines, "https://aka.ms/x")[0].ref == "L2"
+    assert text.find(lines, r"^PS C:.*>\s*$", regex=True)[0].ref == "L3"
+    assert text.find(lines, r"links\.txt|Error", regex=True)[0].ref == "L1"
+    assert text.find(lines, "--") == text.find(lines, "----")  # one hyphen is not a rule
+
+
 def test_locked_detection():
     assert text.looks_locked(lines_for([("Press Ctrl+Alt+Del to unlock", 0, 0)]))
     assert not text.looks_locked(lines_for([("hello", 0, 0)]))

@@ -50,6 +50,7 @@ def main() -> None:
     after.add_argument(
         "--until", help="afterwards, wait until this text is on screen (up to --timeout)"
     )
+    after.add_argument("--until-regex", action="store_true", help="--until is a regex")
     after.add_argument("--timeout", type=float, default=10, help="seconds for --until")
     after.add_argument("--quiet", action="store_true", help="do not read the screen afterwards")
     c = sub.add_parser("click", parents=[after], help="click at a client point")
@@ -165,7 +166,7 @@ def act(screen: Screen, args: argparse.Namespace) -> None:
     start = time.monotonic()
     while args.until:
         _, lines = screen.read(args.window_title, None)
-        if find(lines, args.until):
+        if find(lines, args.until, regex=args.until_regex):
             break
         if time.monotonic() - start >= args.timeout:
             sys.exit(f"timeout: the input was sent, but '{args.until}' did not appear")
