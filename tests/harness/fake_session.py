@@ -1,6 +1,6 @@
-"""A local window that stands in for a remote session: the synthetic eval screens, no real data.
+"""A local window that stands in for a remote session: a generated eval screen, no real data.
 
-    uv run python tests/harness/fake_session.py [terminal|chat|mail|ids|lock] [px]
+    uv run python tests/harness/fake_session.py [terminal|teams|outlook|ids|lock] [seed]
 
 Then, in another terminal, let the allowlist accept python:
 
@@ -17,17 +17,23 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
-from eval_ocr import SCREENS, Col, render  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from evals import screens  # noqa: E402
+from evals.render import render  # noqa: E402
 
-SCREENS = {**SCREENS, "lock": ("light", [Col(420, 560, ["Press Ctrl+Alt+Del to unlock"])])}
+KINDS = {
+    "terminal": screens.terminal,
+    "teams": screens.teams,
+    "outlook": screens.outlook,
+    "ids": screens.ids,
+    "lock": lambda seed: screens.lock(seed, seed % 5),
+}
 
 
 def main() -> None:
     name = sys.argv[1] if len(sys.argv) > 1 else "terminal"
-    px = int(sys.argv[2]) if len(sys.argv) > 2 else 16
-    theme, cols = SCREENS[name]
-    frame, _ = render(cols, px, theme == "dark")
+    seed = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+    frame, _ = render(KINDS[name](seed))
     buf = io.BytesIO()
     frame.image().save(buf, "PNG")
     # Otherwise Windows stretches the window by the display scale and the pixels no longer

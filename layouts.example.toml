@@ -20,7 +20,7 @@
 # that plain OCR splits apart. `jharokha measure APP --grid NAME` writes it.
 #
 # Picked up from --layouts PATH, else $JHAROKHA_LAYOUTS, else ./layouts.toml.
-# These values fit the synthetic chat and mail screens in tests/eval_ocr.py.
+# These values are an example of the shape only; measure your own with `jharokha measure`.
 
 [teams]
 anchor = "Chat"
