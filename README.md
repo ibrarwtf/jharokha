@@ -58,7 +58,7 @@ Read-only unless the server is started with `--allow-input`. Coordinates are cli
 | `jharokha_learn` | `step`, `names`, `confirm` | Name the session's taskbar icons as spots that switch apps: `taskbar` lists them, `name_icons` reads their tooltips (with input allowed), `save` shows the change to apps.toml and writes it with `confirm=true`. |
 | `jharokha_screenshot` | `region`, `max_long_edge` (1024) | The last resort: a PNG for images, colours, or a value `verify` still disagrees on. |
 
-Every tool takes `window_title` (a substring) for when more than one session is open. A small region is upscaled so small text resolves. Up to 0.20 there were 17 tools; 0.21 replaced them with these nine, whose descriptions cost 3.3k tokens a session where they cost 7.9k (2.6k read-only, from 3.8k).
+One server reads one session: start it with `--window-title` (a substring) when more than one is open. A small region is upscaled so small text resolves. Up to 0.20 there were 17 tools; 0.21 replaced them with these nine, whose descriptions cost 3.3k tokens a session where they cost 7.9k (2.6k read-only, from 3.8k).
 
 Panels are the app's panes, found from the pixels: its 1 to 2 px divider lines and its background colours (a Teams chat list is told from its thread only by its shade of grey), each covering its whole pane so text that arrives later still falls inside. Text is read pane by pane, row by row inside each. On a screen with neither dividers nor colours, panels come from the blank space between text instead: side-by-side columns and the bands above and below them. They need no setup but follow the screen, so `P1` can change when the screen does. Apps (below) name the panes of the apps they know.
 
