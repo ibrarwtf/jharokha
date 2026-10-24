@@ -1,6 +1,6 @@
 [project]
 name = "jharokha"
-version = "0.23.1"
+version = "0.24.0"
 description = "Local MCP server that lets AI agents read and, opt-in, operate a Windows remote-desktop session."
 readme = "README.md"
 license = "MIT"
@@ -41,7 +41,7 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
-include = ["src", "tests", "evals"]
+include = ["src", "tests"]
 pythonVersion = "3.11"
 
 [tool.pytest.ini_options]

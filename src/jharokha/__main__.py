@@ -1,6 +1,6 @@
 """`jharokha` runs the MCP server on stdio. In a shell the same verbs as the tools:
 `jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`, plus
-`bench` (and `measure`, deprecated: an alias of `learn ... --save`). Each verb is the
+`bench`. Each verb is the
 server's tool, called in-process, so a shell command is guarded and answers exactly as the
 tool does."""
 
@@ -19,7 +19,6 @@ from typing import Any
 from jharokha import version
 from jharokha.core import actions, apps
 from jharokha.core.apps import Catalog
-from jharokha.core.layout import LayoutError, load
 from jharokha.core.screen import Screen
 from jharokha.core.text import format_concise
 from jharokha.core.trace import Trace
@@ -49,11 +48,6 @@ def main() -> None:
     p.add_argument(
         "--apps",
         help="app definitions and calibration (default: $JHAROKHA_APPS, else ./apps.toml)",
-    )
-    p.add_argument(
-        "--layouts",
-        help="old layouts file, read as calibration (default: $JHAROKHA_LAYOUTS, "
-        "else ./layouts.toml)",
     )
     p.add_argument(
         "--trace",
@@ -121,7 +115,12 @@ def main() -> None:
         "learn",
         help="propose an app definition from the screen, or calibrate a known app's view",
     )
-    le.add_argument("--app", required=True, help="the id to learn it as, or a known app")
+    le.add_argument(
+        "--app",
+        required=True,
+        help="the id to learn it as, a known app, or taskbar (the session's taskbar icons; "
+        '--names {"T8": "teams"} makes them spots)',
+    )
     le.add_argument("--view", help="the view (default: main, or a known app's first)")
     le.add_argument("--names", type=json.loads, help='JSON, e.g. {"P2": "thread", "I0": "send"}')
     le.add_argument("--name-icons", action="store_true", help="read the icons' tooltips")
@@ -133,28 +132,14 @@ def main() -> None:
     le.add_argument("--variant", help="keep the screen now as the calibration variant NAME")
     le.add_argument("--save", action="store_true", help="write it into apps.toml")
     sub.add_parser("bench")
-    m = sub.add_parser("measure", help="deprecated: `learn --app APP [--zoom Z] --save`")
-    m.add_argument("app")
-    m.add_argument("--view")
-    m.add_argument("--anchor", help="ignored: learn picks the anchor itself")
-    m.add_argument("--zoom")
     args = p.parse_args()
-    if args.cmd == "measure":
-        # A thin alias for a release or two: the same calibration, written by learn.
-        hint = f"jharokha{' --allow-input' if args.zoom else ''} learn --app {args.app}"
-        hint += (f" --view {args.view}" if args.view else "") + (
-            f" --zoom={args.zoom}" if args.zoom else ""
-        )
-        print(f"`jharokha measure` is deprecated; running `{hint} --save`", file=sys.stderr)
-        args.cmd, args.save, args.names = "learn", True, None
-        args.name_icons, args.variant = False, None
     source = _source()
     trace = Trace(args.trace, include_text=args.trace_text)
     apps_path = _apps_path(args.apps)[0]
     if args.cmd is None:
         from jharokha.server import build_server
 
-        catalog = _catalog(args.apps, args.layouts)
+        catalog = _catalog(args.apps)
         acts = _actions(args.apps)
         build_server(source, args.allow_input, catalog, trace, acts, apps_path).run("stdio")
         return
@@ -165,7 +150,7 @@ def main() -> None:
         return
     if args.cmd == "act" and not args.allow_input:
         sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
-    catalog = _catalog(args.apps, args.layouts)
+    catalog = _catalog(args.apps)
     calls = _calls(args, catalog)
     from jharokha.server import build_server
 
@@ -274,9 +259,20 @@ def _learn_calls(
     The save shows the change to apps.toml, and writes it with --save: typed by the user."""
     if (args.zoom or args.name_icons) and not args.allow_input:
         sys.exit("input_disabled: --zoom and --name-icons send input; add --allow-input.")
+    tool = "jharokha_learn"
+    if args.app == "taskbar":
+        # Icons are numbered left to right each scan, so names given with it hold for it.
+        calls = [(tool, given(step="taskbar"))]
+        if args.name_icons:
+            calls.append((tool, given(step="name_icons")))
+        if not args.names:
+            return calls
+        return calls + [
+            (tool, given(step="taskbar", names=args.names)),
+            (tool, given(step="save", confirm=args.save)),
+        ]
     known = catalog.apps.get(args.app)
     calibrate = known is not None and not args.names and (args.view in (None, *known.views))
-    tool = "jharokha_learn"
     target = given(app=args.app, view=args.view)
     calls: list[tuple[str, dict[str, Any]]] = []
     if not calibrate:
@@ -317,16 +313,13 @@ def _apps_path(flag: str | None) -> tuple[Path, bool]:
     return Path(given or "apps.toml"), bool(given)
 
 
-def _catalog(apps_flag: str | None, layouts_flag: str | None) -> Catalog:
-    """Built-in apps, the old layouts file if there is one, then apps.toml."""
-    given = layouts_flag or os.environ.get("JHAROKHA_LAYOUTS")
-    lpath = Path(given or "layouts.toml")
+def _catalog(apps_flag: str | None) -> Catalog:
+    """Built-in apps, then apps.toml."""
     apath, _ = _apps_path(apps_flag)
     try:
-        layouts = load(lpath) if given or lpath.exists() else None
         # A file not there yet is one jharokha_learn has still to write.
-        return apps.load(apath if apath.exists() else None, layouts)
-    except (OSError, LayoutError, apps.AppError) as e:
+        return apps.load(apath if apath.exists() else None)
+    except (OSError, apps.AppError) as e:
         sys.exit(f"apps: {e}")
 
 

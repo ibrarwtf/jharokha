@@ -1118,7 +1118,7 @@ def build_server(
         window_title: str | None = None,
     ) -> str:
         """Run an action: a named, checked sequence of steps in one call, with a structured
-        result, such as teams.new_messages {chat, since}, teams.draft {chat, text},
+        result, such as teams.messages {chat, from, to}, teams.draft {chat, text},
         outlook.unread {folder}, browser.goto {url}, terminal.run {command, shell} (a
         command's output and exit code), terminal.put_file {path, content_base64};
         jharokha_apps lists them all with their arguments and risk. args is a JSON object.

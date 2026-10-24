@@ -78,18 +78,14 @@ def test_do_shows_a_plan_without_input(monkeypatch, source, capsys):
         run(monkeypatch, source, "do", "teams.draft", "--args", '{"chat": "Ana", "text": "hi"}')
 
 
-def test_learn_shows_the_change_saves_with_save_and_measure_is_its_alias(
-    monkeypatch, source, tmp_path, capsys
-):
+def test_learn_shows_the_change_and_saves_with_save(monkeypatch, source, tmp_path, capsys):
     from jharokha.core import apps
 
     path = tmp_path / "apps.toml"
     run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine")
     assert "not saved yet" in capsys.readouterr().out and not path.exists()
-    run(monkeypatch, source, "--apps", str(path), "measure", "mine", "--anchor", "Build")
-    out = capsys.readouterr()
-    assert "deprecated" in out.err and "learn --app mine" in out.err
-    assert out.out.rstrip().endswith("its regions read as mine.<region>")
+    run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine", "--save")
+    assert capsys.readouterr().out.rstrip().endswith("its regions read as mine.<region>")
     assert "mine" in apps.load(path).apps
     # Zoom and tooltips send input; a known view is calibrated, and must be on screen.
     for flag in ("--zoom=-1..1", "--name-icons"):

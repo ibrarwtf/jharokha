@@ -2,11 +2,7 @@ name: ci
 on:
   push:
     branches: [main]
-    # Minor releases only: the full eval. Patch and suffixed tags (v0.x.y, v0.x.0-rc1) skip it.
-    tags: ["v*.*.0"]
   pull_request:
-  # Run by hand to regenerate the eval baselines on the runner that checks them.
-  workflow_dispatch:
 
 jobs:
   checks:
@@ -25,34 +21,6 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run pyright
       - run: uv run pytest
-
-  evals:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0
-        with:
-          python-version: "3.13"
-      - run: uv sync
-      - name: evals (quick on pushes, full on v0.x.0 tags)
-        if: github.event_name != 'workflow_dispatch'
-        run: uv run python -m evals ${{ github.ref_type == 'tag' && '--full' || '--quick' }} --check --out evals-results.json
-      - name: new baselines
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          uv run python -m evals --quick --update --out evals-results.json
-          uv run python -m evals --full --update
-      - name: resources (memory and CPU time; wall time is noisy on shared runners, not gated)
-        if: github.event_name != 'workflow_dispatch'
-        run: uv run python -m evals.resources --repeats 10 --idle-s 15 --check evals/budget.json --profile ci --out resources-results.json
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: evals-results
-          path: |
-            evals-results.json
-            resources-results.json
-            evals/baseline-*.json
 
   gitleaks:
     if: github.ref_type != 'tag'

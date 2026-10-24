@@ -1,8 +1,7 @@
 """Apps as data. A definition (TOML, `format = 1`) says how to recognise an app and each of
 its views from text and pixels, and where each view's regions are; calibration measured on
 one setup says where they are exactly there. Generic definitions ship in jharokha/apps/; a
-local apps.toml adds calibration, new apps and overrides of built-in ones; an old
-layouts.toml is read as calibration of the matching built-in app (from_layouts).
+local apps.toml adds calibration, new apps and overrides of built-in ones.
 
     format = 1
     [app.teams]
@@ -60,8 +59,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from jharokha.core.geometry import Fraction, choose, to_box
 from jharokha.core.guard import Policy
-from jharokha.core.layout import Fraction, Layout, choose, to_box
 from jharokha.core.models import Box, iou
 from jharokha.core.readers import KINDS, READERS
 
@@ -178,7 +177,7 @@ class Grid:
 @dataclass(frozen=True)
 class Variant:
     """One way a view was measured, such as one zoom level; told apart by where its
-    anchor text sat (layout.choose)."""
+    anchor text sat (geometry.choose)."""
 
     name: str
     anchor: str | None = None
@@ -503,43 +502,6 @@ def builtin() -> tuple[Doc, ...]:
     )
 
 
-def from_layouts(layouts: Mapping[str, Layout], known: Mapping[str, App]) -> Doc:
-    """An old layouts file as calibration. A table named after a known app (teams,
-    teams@-3, terminal) calibrates that app's first view; one with an anchor and any other
-    name becomes an app of its own with a view `main`, recognised by that anchor; one
-    without an anchor (a taskbar under every app) is a session region, still named
-    `<table>.<region>`."""
-    doc = Doc()
-    groups: dict[str, list[Layout]] = {}
-    for la in layouts.values():
-        groups.setdefault(la.app, []).append(la)
-    for app, group in groups.items():
-        if not any(la.anchor for la in group):
-            for la in group:
-                for k, f in la.regions.items():
-                    doc.session_cal[f"{la.name}.{k}"] = f
-            continue
-        view = next(iter(known[app].views)) if app in known else "main"
-        variants = tuple(
-            Variant(la.name.partition("@")[2], la.anchor, la.anchor_at, dict(la.regions))
-            for la in group
-        )
-        grid = next((la.grid for la in group if la.grid), None)
-        doc.calibration[(app, view)] = Calibration(
-            variants,
-            focus=next((la.focus for la in group if la.focus), None),
-            prompt=next((la.prompt for la in group if la.prompt), None),
-            readers={grid: "grid"} if grid else {},
-        )
-        if app not in known:
-            names = dict.fromkeys(k for la in group for k in la.regions)
-            regions = {k: Region(k) for k in names}
-            doc.apps[app] = App(
-                app, app, views={view: View(view, regions=regions)}, source="layouts"
-            )
-    return doc
-
-
 # The catalog: every file merged, calibration applied
 
 
@@ -748,12 +710,9 @@ def catalog(*docs: Doc) -> Catalog:
     return Catalog(apps, cal, session, session_cal, spots, tuple(docs))
 
 
-def load(path: Path | None = None, layouts: Mapping[str, Layout] | None = None) -> Catalog:
-    """Built-ins, an old layouts file read as calibration, then apps.toml, which wins."""
-    known = {a.id: a for d in builtin() for a in d.apps.values()}
-    docs = [from_layouts(layouts, known)] if layouts else []
-    if path is not None:
-        docs.append(parse(path.read_text(encoding="utf-8"), str(path)))
+def load(path: Path | None = None) -> Catalog:
+    """Built-ins, then apps.toml, which wins."""
+    docs = [parse(path.read_text(encoding="utf-8"), str(path))] if path is not None else []
     return catalog(*docs)
 
 
