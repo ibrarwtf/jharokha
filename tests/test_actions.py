@@ -106,6 +106,9 @@ def test_a_day_without_a_clock_keeps_all_of_its_messages():
     its = listread.items(thread, (0, 0, 640, 400), "messages")
     assert [m.time for m in listread.upto(its, "22/09", now)] == ["20/09 10:47"]
     assert listread.after(its, "22/09", now) and not listread.after(its, "26/09", now)
+    # Scrolled back to a message during the day, the start of that day is not yet reached.
+    assert not listread.before(its[1:], "26/09", now)
+    assert listread.before(its, "21/09", now) and listread.before(its[1:], "26/09 15:02", now)
 
 
 # Locators

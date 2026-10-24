@@ -64,8 +64,8 @@ timeout_s = 20
 do = "scroll"
 region = "thread"
 exclude = "compose"
-ticks = -5
-max = 120
+ticks = -7
+max = 400
 until = { after = "{to}", region = "thread" }
 collect = "messages"
 since = "{from}"
