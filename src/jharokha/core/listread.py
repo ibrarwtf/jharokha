@@ -140,7 +140,7 @@ def format_items(items: list[Item]) -> str:
 
 # TODO(live 2026-10-24): another person's Teams message that quotes a reply is split into
 # several items (a header without text, the quote as its own message marked own, a body
-# without sender). evals/screens.py has a thread screen that reproduces it.
+# without sender).
 def items(lines: list[Line], box: Box, kind: str) -> list[Item]:
     """The items in the region box: kind is messages (a chat thread), entries (a chat list or
     any list) or mails (an inbox). See the module docstring for how lines become items."""
@@ -557,6 +557,20 @@ def since(items: list[Item], when: datetime | str, now: datetime) -> list[Item]:
     on either side, by day."""
     start = _start(when, now)
     return [it for it, at in _timed(items, now) if _cmp(at, start) >= 0]
+
+
+def upto(items: list[Item], when: datetime | str, now: datetime) -> list[Item]:
+    """The items at or before when; by day without a clock on either side, so a day keeps
+    all of its messages."""
+    end = _start(when, now)
+    return [it for it, at in _timed(items, now) if _cmp(at, end) <= 0]
+
+
+def after(items: list[Item], when: datetime | str, now: datetime) -> bool:
+    """Whether an item is past when: a list scrolled on far enough to hold every item up
+    to it."""
+    end = _start(when, now)
+    return any(_cmp(at, end) > 0 for _, at in _timed(items, now))
 
 
 def before(items: list[Item], when: datetime | str, now: datetime) -> bool:

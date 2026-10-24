@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.24.0
+
+From use on the live session instead of imagined ones: a Teams group chat read a week at a time into a timeline by a fresh headless Claude Code with jharokha as its only tools. Week 1 on v0.23.1: 22 calls, 2 m 47 s, 4 lost to errors. The same week on this release: one `teams.messages` call, about 30 s.
+
+- `teams.messages {chat, from, to}` replaces `teams.new_messages`: back in long strides until a message at or before `from` (or the group chat's "… to the chat." first line) is on screen, then down a screen at a time collecting until one past `to`; days inclusive, `to` omitted means up to now. Scroll steps take `end` (a condition marking the list's end) and `upto`; conditions take `after`.
+- A list that stops moving is no longer taken for its end: Teams holds the thread still while it fetches older messages, which made the first live run return `ok` with 0 messages. Scrolling back, a list that stops moving before `until` holds is a failure that says so. The end check compared frame ids, which a live capture never repeats, so it had only ever fired on the simulator; it compares the region's text now.
+- Scrolling sends up to 10 wheel ticks in one event instead of one event and a 30 ms pause per tick: 1,000 ticks took about 33 s live, now about 6 s end to end.
+- Identification: a focused box's blinking caret hides a placeholder's first letter every other frame (`ype a message`), which dropped Teams to 0.47 confidence and held input back as `wrong_app`. A text cue of 8 letters or more holds without its first. An action's guard waits up to 5 s for its app to read as itself again instead of refusing at once while a view redraws.
+- Taskbar spots from the shell: `jharokha learn --app taskbar [--name-icons] --names '{"T8": "teams"}' --save`. A focus step that cannot switch apps says how to name the icons.
+- Removed, unused or only ever exercised on imagined screens: `evals/` (generated screens, the simulated session, scenarios, the agent suite, baselines, the resource budget) and the tests built on them, the CI evals job, the experimental UI detector (`win/detect.py`), and the old layouts file (`core/layout.py`, `--layouts`, `$JHAROKHA_LAYOUTS`; move its tables into `apps.toml` as `[calibration.<app>.<view>]`) with the deprecated `jharokha measure`. The geometry they shared is `core/geometry.py`. The input guards and their tests stay. A simulator comes back later, built from what the live session shows.
+- Tests: 422 (unit, guards, the server on a small synthetic source), 23 s. About 11,600 lines fewer.
+
 ## v0.23.1
 
 Side fixes from the first live run on a Windows 365 session. Tested on generated screens and the simulator only; not yet verified on the live session.

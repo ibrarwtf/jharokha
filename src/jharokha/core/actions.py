@@ -24,7 +24,8 @@ and `timeout_s`:
     click     target (a locator, core.locate), button, double
     type      text, newline (enter | shift+enter | forbid), target to click first
     press     keys
-    scroll    region, ticks, until (a condition), max; collect the region's items into a list
+    scroll    region, ticks, until (a condition), end (one marking the list's end), max;
+              collect the region's items into a list
     wait      for = ready | settled, or until (a condition)
     read      region as items (by the region's reader, core.readers) or lines into a result,
               since a time (a list region); zoom reads it close
@@ -41,7 +42,8 @@ rows read up close, then by the second engine, once the screen holds still.
 
 Conditions: text, regex, gone (in region), name (a name as a header shows it: cut short
 with an ellipsis, icon glyphs beside it, a letter misread; core.actions.name_on), app,
-view, ready, before (an item of a list region at or before this time). An empty text or
+view, ready, before (an item of a list region at or before this time), after (one past
+it). A scroll's collected items keep those since a time and upto one. An empty text or
 name (an optional argument left out) holds. Arguments fill `{name}` in step values; in a
 regex they are escaped. Only arguments and repeat variables fill placeholders, never text
 read off the screen: what is on screen goes into the result, and never becomes a step, a
@@ -98,7 +100,7 @@ Risk = Literal["read", "reversible", "irreversible"]
 NEWLINES = ("enter", "shift+enter", "forbid")
 ARG_TYPES = ("text", "number", "list", "base64", "choice")
 SHELLS = ("powershell", "cmd", "bash")
-COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before")
+COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before", "after")
 COMMON = ("do", "risk", "expect", "unless", "timeout_s", "label")
 INPUT = ("click", "type", "press", "scroll", "run", "put_file")
 DECLARED = ("click", "type", "press", "run", "put_file")  # risk must be stated
@@ -109,7 +111,18 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "click": ("target", "button", "double"),
     "type": ("text", "newline", "target"),
     "press": ("keys",),
-    "scroll": ("region", "ticks", "until", "max", "collect", "fields", "exclude", "since"),
+    "scroll": (
+        "region",
+        "ticks",
+        "until",
+        "end",
+        "max",
+        "collect",
+        "fields",
+        "exclude",
+        "since",
+        "upto",
+    ),
     "wait": ("for", "until"),
     "read": ("region", "as", "into", "fields", "exclude", "since", "zoom"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
@@ -121,6 +134,7 @@ _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
 POLL_S = 0.1
 MAX_REPEAT = 50  # passes of a repeat, whatever times says
+STILL_ENDS = 3  # scrolls in a row that change nothing: the end of a list
 # A band of terminal rows read up close: a quarter of the screen's area or less is what a
 # Source upscales, and Windows OCR drops short tokens on Cascadia rows at 1x.
 ZOOM_AREA = 0.24
@@ -266,7 +280,7 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
                 locator(params[key])
             except ValueError as e:
                 raise ActionError(f"{where}.{key}: {e}") from e
-    for key in ("until",):
+    for key in ("until", "end"):
         if key in params:
             _check_condition(params[key], f"{where}.{key}")
     if "fields" in params and not (
@@ -654,7 +668,10 @@ class Runner:
             spot = p.get("spot", f"taskbar.{app}")
             hit = locate(Locator(spot=spot), [], {}, snap.spots, (0, 0, *snap.size))
             if isinstance(hit, Miss):
-                raise _Fail(f"cannot switch to {app}: {hit.reason}")
+                raise _Fail(
+                    f"cannot switch to {app}: {hit.reason}. Name the taskbar icons once with "
+                    "jharokha_learn(step='taskbar'), or bring the app forward yourself"
+                )
             self.ex.click(*hit.center)
             self.ex.settle()
             snap = self._until({"app": app}, s.timeout_s, f"switching to {app}")
@@ -683,7 +700,22 @@ class Runner:
         try:
             guard.check_front(want, snap.app, snap.view, snap.confidence)
         except guard.WrongApp as e:
-            raise _Refuse(*guard.refusal(e, snap.spots)) from None
+            refusal = guard.refusal(e, snap.spots)
+            if snap.app not in (want, GENERIC, None):
+                raise _Refuse(*refusal) from None
+            # The app itself, or nothing, read with too little confidence: a view redrawing
+            # after the step before (a chat opening). Wait for it to read as itself again.
+            end = self.ex.now() + TIMEOUT_S
+            while self.ex.now() < end:
+                self.ex.settle()
+                s = self._look()
+                try:
+                    guard.check_front(want, s.app, s.view, s.confidence)
+                    return
+                except guard.WrongApp:
+                    if s.app not in (want, GENERIC, None):
+                        break
+            raise _Refuse(*refusal) from None
 
     def _keys(self, snap: Snapshot, chords: list[str]) -> None:
         """core.guard.check_keys under the policy of the app in front: a key it calls
@@ -781,7 +813,8 @@ class Runner:
         ticks, most = int(p.get("ticks", 3)), int(p.get("max", 10))
         until = p.get("until")
         got: list[Any] = []
-        last_id, n = None, 0
+        last_seen: tuple[str, ...] | None = None
+        n = still = 0
         for n in range(most + 1):
             snap = self._look()
             if p.get("collect"):
@@ -790,15 +823,30 @@ class Runner:
                 got = _merge(its, got) if ticks > 0 else _merge(got, its)
             if until and _holds(until, snap, self._regions(snap), self._info(snap))[0]:
                 break
-            if snap.frame_id == last_id:
-                break  # the last scroll changed nothing: the end of the list
+            # end marks the list's end positively (a chat's first line): reached, nothing
+            # further can hold until.
+            if p.get("end") and _holds(p["end"], snap, self._regions(snap), self._info(snap))[0]:
+                break
+            # A list that loads more as it nears its end holds still while it loads (a Teams
+            # thread fetching older messages), so a list that stops moving is no proof of its
+            # end: with an until still to hold it is a failure, said as one, never an empty
+            # success. Every capture is a new frame, so "unchanged" is the text read the same.
+            seen = tuple(ln.text for ln in self._pool(snap, p))
+            still = still + 1 if seen == last_seen else 0
+            if still >= STILL_ENDS:
+                # Only history loads late; the newest end of a list is all there.
+                if until and ticks > 0:
+                    raise _Fail(f"the list stopped moving before {_describe(until)} held")
+                break
+            if still:
+                self.ex.settle()  # give a list that is loading more a moment longer
             if n == most:
                 if until:
                     raise _Fail(f"scrolled {most} times and {_describe(until)} did not hold")
                 break
             box = self._box(snap, p["region"])
             self._guard(snap)
-            last_id = snap.frame_id
+            last_seen = seen
             self.ex.scroll(box[0] + box[2] // 2, box[1] + box[3] // 2, ticks)
             self.ex.settle()
         if p.get("collect"):
@@ -830,13 +878,15 @@ class Runner:
         return readers.items(info.reader, self._pool(snap, p), box, info.kind, inner)
 
     def _store(self, into: str, its: list[Any], p: dict[str, Any]) -> None:
-        if p.get("since"):
+        for key, keep in (("since", listread.since), ("upto", listread.upto)):
+            if not p.get(key):
+                continue
             if not all(isinstance(i, listread.Item) for i in its):
-                raise _Fail(f"since needs a list region; {p['region']} is not one")
+                raise _Fail(f"{key} needs a list region; {p['region']} is not one")
             try:
-                its = listread.since(its, str(p["since"]), datetime.now())
+                its = keep(its, str(p[key]), datetime.now())
             except ValueError as e:
-                raise _Fail(f"since: {e}") from None
+                raise _Fail(f"{key}: {e}") from None
         rename = {v: k for k, v in (p.get("fields") or {}).items()}
         self.res.items[into] = [
             {rename.get(k, k): v for k, v in d.items()} for d in readers.plain(its)
@@ -1165,16 +1215,21 @@ def _holds(
         return False, "the regex matches nothing on screen"
     if "gone" in cond and find(pool, str(cond["gone"])):
         return False, f"'{cond['gone']}' is still on screen"
-    if "before" in cond:
+    for key, test, miss in (
+        ("before", listread.before, "nothing on screen is that old yet"),
+        ("after", listread.after, "nothing on screen is that recent yet"),
+    ):
+        if key not in cond:
+            continue
         name = cond.get("region")
         reg = (info or {}).get(name) if name else None
         if reg is None or reg.reader != "list":
-            return False, "before needs a list region (one whose reader is list)"
+            return False, f"{key} needs a list region (one whose reader is list)"
         assert name is not None
         its = readers.items(reg.reader, pool, regions[name], reg.kind, list(reg.inner))
         try:
-            if not listread.before(its, str(cond["before"]), datetime.now()):
-                return False, "nothing on screen is that old yet"
+            if not test(its, str(cond[key]), datetime.now()):
+                return False, miss
         except ValueError as e:
             return False, str(e)
     return True, ""

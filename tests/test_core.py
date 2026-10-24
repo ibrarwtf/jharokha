@@ -1,10 +1,10 @@
 import ast
 import pathlib
 
-import pytest
 from PIL import Image, ImageDraw
 
-from jharokha.core import layout, panes, text
+from jharokha.core import geometry, panes, text
+from jharokha.core.apps import Variant
 from jharokha.core.cache import FrameCache
 from jharokha.core.models import Frame, Line, Word, union
 
@@ -267,15 +267,6 @@ def test_reading_order_reads_pane_by_pane_and_rows_inside():
     assert [box for box, _ in text.cells(lines, None, found)] == found
 
 
-def test_layouts_parse_validate_and_scale():
-    layouts = layout.parse('[teams]\nanchor = "Chat"\nthread = [0.24, 0, 0.76, 1]\n')
-    assert layouts["teams"].anchor == "Chat" and "thread" in layouts["teams"].regions
-    assert layout.to_box(layouts["teams"].regions["thread"], 1000, 500) == (240, 0, 760, 500)
-    for bad in ("[a]\nr = [0, 0, 2, 1]", "[a]\nr = [0.5, 0, 0.6, 1]", "[a]\nr = [0, 0]", "a = 1"):
-        with pytest.raises(layout.LayoutError):
-            layout.parse(bad)
-
-
 def test_stacked_blocks_of_one_width_are_one_panel():
     long = "a line that runs across the whole width of the window here"
     lines = lines_for(
@@ -288,16 +279,13 @@ def test_stacked_blocks_of_one_width_are_one_panel():
 
 
 def test_variants_are_chosen_by_where_the_anchor_is():
-    layouts = layout.parse(
-        '["app@small"]\nanchor = "Find"\nanchor_at = [0.3, 0.02]\nr = [0, 0, 0.5, 1]\n'
-        '["app@big"]\nanchor = "Find"\nanchor_at = [0.25, 0.02]\nr = [0, 0, 0.6, 1]\n'
-        "[bar]\nr = [0, 0.9, 1, 0.1]"
-    )
-    group = [la for la in layouts.values() if la.app == "app"]
-    assert layout.choose(group, {"Find": (260, 20, 50, 12)}, 1000, 1000) is layouts["app@big"]
-    assert layout.choose(group, {"Find": (295, 20, 50, 12)}, 1000, 1000) is layouts["app@small"]
-    assert layout.choose(group, {"Find": None}, 1000, 1000) is None
-    assert layout.choose([layouts["bar"]], {}, 1000, 1000) is layouts["bar"]
+    small = Variant("small", "Find", (0.3, 0.02), {})
+    big = Variant("big", "Find", (0.25, 0.02), {})
+    bar = Variant("bar", None, None, {})
+    assert geometry.choose([small, big], {"Find": (260, 20, 50, 12)}, 1000, 1000) is big
+    assert geometry.choose([small, big], {"Find": (295, 20, 50, 12)}, 1000, 1000) is small
+    assert geometry.choose([small, big], {"Find": None}, 1000, 1000) is None
+    assert geometry.choose([bar], {}, 1000, 1000) is bar
 
 
 def test_right_aligned_own_messages_stay_in_the_thread():

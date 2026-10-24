@@ -30,9 +30,9 @@ from typing import TYPE_CHECKING, Any
 from jharokha.core import apps
 from jharokha.core.apps import RGB, App, Calibration, Cue, Grid, Region, Variant, View
 from jharokha.core.elements import elements as find_elements
+from jharokha.core.geometry import Fraction, choose, to_fraction
+from jharokha.core.geometry import to_box as layout_box
 from jharokha.core.identify import Identity, identify
-from jharokha.core.layout import Fraction, choose, to_fraction
-from jharokha.core.layout import to_box as layout_box
 from jharokha.core.lazy import LazyNumpy
 from jharokha.core.locate import spot_icon, spot_px
 from jharokha.core.models import Box, Frame, Line, iou, union
@@ -1074,7 +1074,7 @@ def _zoomed(r: Region, s: Scan) -> Box | None:
 
 
 def matching(cal: Calibration, s: Scan) -> Variant | None:
-    """The variant of cal that scan s is, by where its anchor sits (layout.choose)."""
+    """The variant of cal that scan s is, by where its anchor sits (geometry.choose)."""
     found: dict[str, Box | None] = {}
     for v in cal.variants:
         if v.anchor and v.anchor not in found:

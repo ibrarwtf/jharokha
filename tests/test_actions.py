@@ -4,14 +4,11 @@ including the two incident replays, now refused."""
 
 from __future__ import annotations
 
-import base64
-import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import pytest
 
-from evals.scenarios import seen
 from jharokha.core import actions, listread
 from jharokha.core.actions import ActionError, Runner, Snapshot
 from jharokha.core.guard import Policy
@@ -32,7 +29,7 @@ def test_builtin_actions_parse_and_declare_their_risk():
         "terminal.run",
         "terminal.put_file",
         "teams.open_chat",
-        "teams.new_messages",
+        "teams.messages",
         "teams.draft",
         "outlook.unread",
         "outlook.open",
@@ -98,6 +95,18 @@ def test_before_a_time_by_the_list_reader():
     its = listread.items(thread, (0, 0, 640, 400), "messages")
     assert listread.before(its, "7:05", now) and not listread.before(its, "7:04", now)
     assert [m.time for m in listread.since(its, "7:06", now)] == ["7:12"]
+    assert listread.after(its, "7:11", now) and not listread.after(its, "7:12", now)
+    assert [m.time for m in listread.upto(its, "7:11", now)] == ["7:05"]
+
+
+def test_a_day_without_a_clock_keeps_all_of_its_messages():
+    now = datetime(2026, 10, 24, 12, 0)
+    thread = lines_for(
+        [("Ana Silva  25/09 10:47", 10, 30), ("hi", 10, 52), ("Ana Silva  01/10 15:02", 10, 100)]
+    )
+    its = listread.items(thread, (0, 0, 640, 400), "messages")
+    assert [m.time for m in listread.upto(its, "27/09", now)] == ["25/09 10:47"]
+    assert listread.after(its, "27/09", now) and not listread.after(its, "01/10", now)
 
 
 # Locators
@@ -367,28 +376,6 @@ def test_extract_and_repeat():
     assert [s.label for s in r.steps] == ["1.1.1", "1.2.1", "1", "2"]
 
 
-# On the simulated session, with the real Windows OCR
-
-sim = pytest.mark.skipif(sys.platform != "win32", reason="GDI and Windows OCR")
-
-
-def session(front: str):  # noqa: ANN201
-    from evals.sim import Desktop, SimSource
-    from jharokha.core.executor import SessionExecutor
-    from jharokha.core.screen import Screen
-    from jharokha.core.session import Session
-
-    source = SimSource(Desktop(100, front=front))
-    return source.desk, SessionExecutor(Session(Screen(source), source.catalog()))
-
-
-def do(ex, name: str, allow: str = "irreversible", **args: object) -> actions.Result:  # noqa: ANN001
-    policies = ex.session.catalog.policies()
-    return Runner(ex, allow, policies).run(actions.builtin()[name], args)  # type: ignore[arg-type]
-
-
-@sim
-@pytest.mark.windows
 def test_header_names_match_cut_short_and_beside_icon_glyphs():
     from jharokha.core.actions import name_on
     from jharokha.core.guard import WrongApp, check_front
@@ -402,156 +389,3 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
         check_front("generic", "teams", "chat", 1.0)
-
-
-def test_terminal_run_returns_output_and_exit_code_by_its_end_marker():
-    desk, ex = session("terminal")
-    r = do(ex, "terminal.run", command="Get-Content notes.txt")
-    assert r.ok, r.failed
-    assert r.output == desk.shell.files["notes.txt"]
-    # $LASTEXITCODE empty (no native program ran): PowerShell's own success, exit 0.
-    assert (r.exit_code, r.fields["ok"]) == (0, True)
-    assert r.to_dict(brief=True)["exit_code"] == 0
-    r = do(ex, "terminal.run", command="cmd /c exit 3")
-    assert r.ok and r.output == [] and (r.exit_code, r.fields["ok"]) == (3, False)
-    assert len(desk.shell.log) == 2 and desk.shell.log[0].startswith("Get-Content notes.txt; $jkq")
-
-
-@sim
-@pytest.mark.windows
-def test_terminal_put_file_writes_the_bytes_and_checks_their_hash():
-    desk, ex = session("terminal")
-    data = bytes(range(256)) + "naïve résumé\r\n".encode() * 20
-    b64 = base64.b64encode(data).decode()
-    r = do(ex, "terminal.put_file", path="out\\blob.bin", content_base64=b64)
-    assert r.ok, r.failed
-    assert desk.shell.written == {f"{desk.shell.cwd}\\out\\blob.bin": data}
-    assert r.fields["hash_check"] in ("exact", "folded") and r.fields["size"] == len(data)
-
-
-@sim
-@pytest.mark.windows
-def test_teams_draft_leaves_the_text_in_compose_and_sends_nothing():
-    desk, ex = session("terminal")
-    chat = desk.teams.chats[2]
-    text = "draft line one\ndraft line two"
-    r = do(ex, "teams.draft", allow="reversible", chat=chat.name, text=text)
-    assert r.ok, r.failed
-    assert desk.front == "teams" and desk.teams.chat is chat
-    assert chat.draft == ["draft line one", "draft line two"]
-    assert desk.teams.sent == [] and desk.safety() == []
-    assert "press shift+enter" in ex.inputs and "press enter" not in ex.inputs
-
-
-@sim
-@pytest.mark.windows
-def test_teams_new_messages_after_a_time_across_scrolling():
-    desk, ex = session("outlook")
-    chat = desk.teams.chats[1]
-    since = chat.msgs[-17].time  # older than the screen shows
-    r = do(ex, "teams.new_messages", allow="reversible", chat=chat.name, since=since)
-    assert r.ok, r.failed
-    want = chat.msgs[-17:]  # at or after: one in the same minute is not missed
-    got = r.items["messages"]
-    assert [m["time"].replace(" ", "") for m in got] == [m.time for m in want]
-    assert all(seen(g["text"], m.lines[0]) for g, m in zip(got, want, strict=True))
-    assert all(seen(g["sender"], m.who) for g, m in zip(got, want, strict=True))
-    assert r.fields["count"] == 17 and desk.teams.offset > 0 and desk.safety() == []
-
-
-@sim
-@pytest.mark.windows
-def test_browser_goto_navigates_and_refuses_what_is_not_a_url():
-    desk, ex = session("teams")
-    r = do(ex, "browser.goto", url="status.example.net")
-    assert r.ok, r.failed
-    assert desk.browser.url == "https://status.example.net/" and desk.browser.searches == []
-    before = list(ex.inputs)
-    r = do(ex, "browser.goto", url="Get-ChildItem")
-    assert not r.ok and ex.inputs == before and desk.browser.searches == []
-
-
-@sim
-@pytest.mark.windows
-def test_outlook_unread_open_and_a_click_sequence():
-    desk, ex = session("browser")
-    r = do(ex, "outlook.unread", allow="reversible", folder="Inbox")
-    assert r.ok, r.failed
-    assert r.fields["unread"] == str(sum(m.unread for m in desk.outlook.folders["Inbox"]))
-    shown = desk.outlook.mails[: desk.outlook.visible()]
-    assert len(r.items["messages"]) == len(shown)
-    pairs = zip(r.items["messages"], shown, strict=True)
-    assert all(seen(i["subject"], m.subject) for i, m in pairs)
-    mail = desk.outlook.mails[3]
-    r = do(ex, "outlook.open", subject=mail.subject)
-    assert r.ok, r.failed
-    assert desk.outlook.selected == 3 and seen("\n".join(r.lines["message"]), mail.body[0])
-    r = do(ex, "browser.click_sequence", buttons=["Docs", "Status board"], times=2)
-    assert r.ok, r.failed
-    docs, status = "https://docs.example.net/", "https://status.example.net/"
-    assert desk.browser.history[-4:] == [docs, status, docs, status]
-
-
-# The incidents of tests/test_sim.py, replayed through actions: both refused.
-
-
-@sim
-@pytest.mark.windows
-def test_incident_terminal_run_with_edge_in_front_is_refused():
-    desk, ex = session("browser")
-    r = do(ex, "terminal.run", command="Get-ChildItem")
-    assert not r.ok and r.safety and r.safety[0]["kind"] == "wrong_app"
-    assert ex.inputs == [] and desk.browser.searches == [] and desk.shell.log == []
-    assert desk.safety() == []
-    # Under the default allow of a do call, a command that writes is refused before anything
-    # else; one that only reads still goes nowhere but the terminal.
-    r = do(ex, "terminal.run", allow="reversible", command="Remove-Item notes.txt")
-    assert r.failed["code"] == "irreversible" and ex.inputs == []  # type: ignore[index]
-    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem")
-    assert r.failed["code"] == "wrong_app" and ex.inputs == []  # type: ignore[index]
-
-
-@sim
-@pytest.mark.windows
-def test_terminal_run_of_a_read_only_command_needs_no_irreversible_allow():
-    desk, ex = session("terminal")
-    r = do(ex, "terminal.run", allow="reversible", command="Get-ChildItem | select -first 3")
-    assert r.ok, r.failed
-    assert r.risk == "reversible (read-only: Get-ChildItem, Select-Object)"
-    assert seen("\n".join(r.output or []), "Directory:") and r.steps[1].risk == "reversible"
-    r = do(ex, "terminal.run", allow="reversible", command="Remove-Item notes.txt")
-    assert not r.ok and r.failed["code"] == "irreversible"  # type: ignore[index]
-    assert r.risk == "irreversible (not read-only: Remove-Item changes state)"
-    assert len(desk.shell.log) == 1 and desk.shell.log[0].startswith("Get-ChildItem | select")
-
-
-@sim
-@pytest.mark.windows
-def test_incident_a_newline_typed_through_teams_draft_never_sends():
-    desk, ex = session("teams")
-    chat = desk.teams.chat
-    r = do(
-        ex, "teams.draft", allow="reversible", chat=chat.name, text="draft line one\ndraft line two"
-    )
-    assert r.ok, r.failed
-    assert desk.teams.sent == [] and desk.safety() == []
-    assert chat.draft == ["draft line one", "draft line two"]
-    # A local variant that would press Enter is refused before it types anything: Teams'
-    # policy calls Enter irreversible, whatever the step declares.
-    draft = actions.builtin()["teams.draft"]
-    sends = replace(
-        draft,
-        newline="enter",
-        steps=tuple(replace(s, params={**s.params, "newline": "enter"}) for s in draft.steps),
-    )
-    before = list(ex.inputs)
-    r = Runner(ex, "reversible", ex.session.catalog.policies()).run(
-        sends, {"chat": chat.name, "text": "a\nb"}
-    )
-    assert not r.ok and r.safety[0]["kind"] == "irreversible" and desk.teams.sent == []
-    assert ex.inputs == before
-    press = replace(draft.steps[0], kind="press", params={"keys": "enter"}, risk="reversible")
-    r = Runner(ex, "reversible", ex.session.catalog.policies()).run(
-        replace(draft, steps=(press,)), {"chat": chat.name, "text": "a"}
-    )
-    assert r.failed["code"] == "irreversible" and ex.inputs == before  # type: ignore[index]

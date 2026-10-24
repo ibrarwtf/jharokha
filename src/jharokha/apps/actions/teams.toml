@@ -23,39 +23,56 @@ risk = "reversible"
 unless = { name = "{name}", region = "header" }
 expect = { name = "{name}", region = "header" }
 
-[action.teams.new_messages]
-summary = """The messages in a chat at or after a time, scrolling the thread back until one at
-or before it is on screen. Each has sender, time and text (screen text), as
-jharokha_read reads teams.thread. Without chat, or with the chat already open, the open
-chat is read and nothing in the chat list is clicked."""
+[action.teams.messages]
+summary = """The messages in a chat from one day or time to another, oldest first: scrolls
+back until one at or before `from` is on screen (or the chat's start), then down collecting
+until one past `to` shows (or the newest message). Each has sender, time and text (screen
+text). Days are inclusive (`to = "27/09"` keeps all of 27/09). Without chat, the open chat
+is read."""
 max_risk = "reversible"
 args.chat = { type = "text", max_len = 200, default = "", doc = "omit to read the chat open now" }
-args.since = { type = "text", pattern = '[\w/:., ]{2,30}', doc = "as the thread prints times: 09:15, 16/10 11:40, Yesterday, Mon" }
+args.from = { type = "text", pattern = '[\w/:., ]{2,30}', doc = "as the thread prints times: 21/09, 16/10 11:40, Yesterday, Mon" }
+args.to = { type = "text", pattern = '[\w/:., ]{2,30}', default = "", doc = "the last day or time kept; omit for up to now" }
 
-[[action.teams.new_messages.step]]
+[[action.teams.messages.step]]
 do = "focus"
 switch = true
 view = "chat"
 
-[[action.teams.new_messages.step]]
+[[action.teams.messages.step]]
 do = "click"
 target = { text = "{chat}", region = "list" }
 risk = "reversible"
 unless = { name = "{chat}", region = "header" }
 expect = { name = "{chat}", region = "header" }
 
-[[action.teams.new_messages.step]]
+# Back in long strides, reading only to know when to stop: overshooting costs a few screens
+# on the way down, each stride read costs a capture.
+[[action.teams.messages.step]]
 do = "scroll"
 region = "thread"
 exclude = "compose"
-ticks = 3
-max = 12
-until = { before = "{since}", region = "thread" }
-collect = "messages"
-since = "{since}"
+ticks = 150
+max = 60
+until = { before = "{from}", region = "thread" }
+# A group chat begins with Teams' own line about who added whom.
+end = { regex = 'to the chat\.?$', region = "thread" }
 timeout_s = 20
 
-[[action.teams.new_messages.step]]
+# Down a screen at a time, short of a full one so no message falls between two reads.
+[[action.teams.messages.step]]
+do = "scroll"
+region = "thread"
+exclude = "compose"
+ticks = -5
+max = 120
+until = { after = "{to}", region = "thread" }
+collect = "messages"
+since = "{from}"
+upto = "{to}"
+timeout_s = 20
+
+[[action.teams.messages.step]]
 do = "extract"
 items = "messages"
 pick = "count"

@@ -24,6 +24,7 @@ INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
 MOUSEEVENTF_WHEEL = 0x0800
 KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, KEYEVENTF_SCANCODE = 0x1, 0x2, 0x4, 0x8
 WHEEL_DELTA = 120
+WHEEL_BATCH = 10  # ticks in one wheel event
 GA_ROOT = 2
 BUTTONS = {  # down, up flags
     "left": (0x0002, 0x0004),
@@ -225,10 +226,12 @@ def _unicode(ch: str, up: bool) -> _INPUT:
 
 def scroll(hwnd: int, x: int, y: int, ticks: int) -> None:
     """Wheel ticks at client point (x, y); negative scrolls down."""
-    step = WHEEL_DELTA if ticks > 0 else -WHEEL_DELTA
+    sign = 1 if ticks > 0 else -1
     with _active(hwnd, x, y):
-        for _ in range(abs(ticks)):
-            _send(_mouse(MOUSEEVENTF_WHEEL, step))
+        # One event carries several ticks (a free-spinning wheel does the same), so a long
+        # scroll costs a few events, not a pause per tick.
+        for left in range(abs(ticks), 0, -WHEEL_BATCH):
+            _send(_mouse(MOUSEEVENTF_WHEEL, sign * WHEEL_DELTA * min(left, WHEEL_BATCH)))
             time.sleep(0.03)
 
 

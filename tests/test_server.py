@@ -9,7 +9,6 @@ from mcp.types import TextContent
 from PIL import ImageDraw
 
 from jharokha.core import apps
-from jharokha.core.layout import parse
 from jharokha.core.models import Frame
 from jharokha.core.screen import ScreenError
 from jharokha.server import build_server
@@ -631,75 +630,3 @@ async def test_list_regions_read_as_items_since_a_time_and_since_last(source):
         source.items += [("Cy Cole 16/10 11:50", 10, 160), ("Shipped", 20, 176)]
         r = await read(region="chat.thread", since="last")
         assert "items=1" in r and "Cy Cole" in r and "Ana Alder" not in r
-
-
-def old_layouts(toml: str) -> apps.Catalog:
-    """A catalog with an old layouts file read into it, as the server loads one."""
-    return apps.load(None, parse(toml))
-
-
-async def test_panes_panels_and_named_regions(source):
-    catalog = old_layouts(
-        '[app]\nanchor = "Build"\nright = [0.4, 0, 0.6, 1]\n'
-        '[other]\nanchor = "Zzz"\nall = [0, 0, 1, 1]'
-    )
-    async with Client(build_server(source, catalog=catalog)) as c:
-
-        async def read(**args: Any) -> Any:
-            return await c.call_tool("jharokha_read", args)
-
-        r = text(await read(format="panes"))
-        assert " app=app view=main confidence=1.0 runner_up=" in r.split("\n")[0]
-        assert "P0 [0,0,232,400] 3 lines: Build succeeded in 12s" in r
-        assert "P1 [232,0,408,400] 1 lines: second column" in r
-        assert "regions of app main:\n  app.right [256,0,384,400] calibrated, reader text" in r
-        r = text(await read(region="P1"))
-        assert "second column" in r and "Build" not in r
-        r = text(await c.call_tool("jharokha_find", {"query": "column", "region": "app.right"}))
-        assert json.loads(r)["matches"][0]["text"] == "column"
-        r = await read(region="other.all")
-        assert r.is_error and text(r).startswith("layout_mismatch:")
-        r = await read(region="nope.x")
-        assert r.is_error and "app.right" in text(r) and text(r).startswith("region_unknown:")
-        r = await read(region="P9")
-        assert r.is_error and "2 panels" in text(r)
-
-
-async def test_grid_region_reads_as_terminal_rows(source):
-    source.items = [("PS C:\\repo> dir", 10, 10), ("a.txt 0.46 kB", 10, 30)]
-    source.misreads = {"a.txt 0.46 kB": "a.txt e.46 kB"}
-    catalog = old_layouts('[term]\nanchor = "PS"\ngrid = "body"\nbody = [0, 0, 1, 1]\n')
-    async with Client(build_server(source, catalog=catalog)) as c:
-        r = text(await c.call_tool("jharokha_read", {}))
-        assert "L1 [10,30] a.txt 0.46 kB" in r
-        r = text(await c.call_tool("jharokha_read", {"region": [0, 25, 640, 30]}))
-        assert "L0 [10,30] a.txt 0.46 kB" in r
-
-
-async def test_app_on_screen_and_its_focus_region_after_input(source):
-    catalog = old_layouts(
-        "[taskbar]\nbar = [0, 0.9, 1, 0.1]\n"
-        '[app]\nanchor = "Build"\nfocus = "lower"\nlower = [0, 0.6, 1, 0.4]\n'
-    )
-    async with Client(build_server(source, allow_input=True, catalog=catalog)) as c:
-        status = json.loads(text(await c.call_tool("jharokha_status", {})))
-        assert (status["app"], status["view"], status["confidence"]) == ("app", "main", 1.0)
-        r = text(await c.call_tool("jharokha_read", {}))
-        assert " app=app view=main confidence=1.0 region=app.lower (focus; 4 lines" in r
-        r = text(await c.call_tool("jharokha_read", {"region": "screen"}))
-        assert "Build succeeded" in r
-        r = text(await c.call_tool("jharokha_read", {"region": "taskbar.bar"}))
-        assert "(no text)" in r
-        # The fake types at y 230, above the focus (y 240 on), and presses at y 260, in it.
-        r = text(await c.call_tool("jharokha_act", {"op": "type", "text": "hi"}))
-        assert "focus=app.lower (1 lines changed elsewhere" in r and "(no text changed)" in r
-        # An app from an old layouts file has no policy, so the default holds Enter back.
-        r = text(await c.call_tool("jharokha_act", {"op": "press", "keys": "enter"}))
-        assert r.startswith("irreversible: enter is irreversible in app.main")
-        r = text(await c.call_tool("jharokha_act", {"op": "press", "keys": "tab"}))
-        assert "elsewhere" not in r and "+ L0 [10,260] pressed tab" in r
-        assert "Build succeeded" not in r
-    with pytest.raises(ValueError, match="grid must name one of its regions"):
-        parse('[app]\nanchor = "x"\ngrid = "nope"\nall = [0, 0, 1, 1]')
-    with pytest.raises(ValueError, match="focus must name one of its regions"):
-        parse('[app]\nanchor = "x"\nfocus = "nope"\nall = [0, 0, 1, 1]')

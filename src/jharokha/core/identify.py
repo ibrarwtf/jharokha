@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from jharokha.core.apps import GENERIC, RGB, App, Cue
-from jharokha.core.layout import to_box
+from jharokha.core.geometry import to_box
 from jharokha.core.models import Box, Line, iou
 from jharokha.core.text import find, fold, normalize
 
@@ -25,6 +25,7 @@ THRESHOLD = 0.5
 ELSEWHERE = 0.3
 COLOUR = 12
 PANE_MATCH = 0.6
+CARET_MIN = 8  # letters a text cue needs before it may match without its first one
 
 
 @dataclass(frozen=True)
@@ -73,8 +74,11 @@ class _Evidence:
             return out
         for alt in cue.text:
             q = fold(alt).replace(" ", "")
+            # A focused box's blinking caret sits on a placeholder's first letter, and OCR
+            # drops it every other frame (`ype a message`); a long cue holds without it.
+            short = q[1:] if len(q) >= CARET_MIN else None
             for ln, f in zip(self.lines, self.folded, strict=True):
-                if q and q in f:
+                if q and (q in f or (short and short in f)):
                     m = find([ln], alt, fuzzy=False)
                     out.append((m[0].box, m[0].text) if m else (ln.box, ln.text))
         return out
