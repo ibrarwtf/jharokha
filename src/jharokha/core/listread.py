@@ -138,6 +138,9 @@ def format_items(items: list[Item]) -> str:
     return wrap_untrusted(json.dumps([it.as_dict() for it in items], separators=(",", ":")))
 
 
+# TODO(live 2026-10-24): another person's Teams message that quotes a reply is split into
+# several items (a header without text, the quote as its own message marked own, a body
+# without sender). evals/screens.py has a thread screen that reproduces it.
 def items(lines: list[Line], box: Box, kind: str) -> list[Item]:
     """The items in the region box: kind is messages (a chat thread), entries (a chat list or
     any list) or mails (an inbox). See the module docstring for how lines become items."""

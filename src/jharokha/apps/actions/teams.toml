@@ -13,18 +13,23 @@ do = "focus"
 switch = true
 view = "chat"
 
+# The header shows the open chat's name next to icon glyphs and cut short when long: it is
+# matched as a name (a prefix up to an ellipsis, junk glyphs ignored), not as exact text.
+# A chat already open is not clicked again in the list, which would also mark it read.
 [[action.teams.open_chat.step]]
 do = "click"
 target = { text = "{name}", region = "list" }
 risk = "reversible"
-expect = { text = "{name}", region = "header" }
+unless = { name = "{name}", region = "header" }
+expect = { name = "{name}", region = "header" }
 
 [action.teams.new_messages]
 summary = """The messages in a chat at or after a time, scrolling the thread back until one at
 or before it is on screen. Each has sender, time and text (screen text), as
-jharokha_read reads teams.thread."""
+jharokha_read reads teams.thread. Without chat, or with the chat already open, the open
+chat is read and nothing in the chat list is clicked."""
 max_risk = "reversible"
-args.chat = { type = "text", max_len = 200 }
+args.chat = { type = "text", max_len = 200, default = "", doc = "omit to read the chat open now" }
 args.since = { type = "text", pattern = '[\w/:., ]{2,30}', doc = "as the thread prints times: 09:15, 16/10 11:40, Yesterday, Mon" }
 
 [[action.teams.new_messages.step]]
@@ -36,7 +41,8 @@ view = "chat"
 do = "click"
 target = { text = "{chat}", region = "list" }
 risk = "reversible"
-expect = { text = "{chat}", region = "header" }
+unless = { name = "{chat}", region = "header" }
+expect = { name = "{chat}", region = "header" }
 
 [[action.teams.new_messages.step]]
 do = "scroll"
@@ -71,7 +77,8 @@ view = "chat"
 do = "click"
 target = { text = "{chat}", region = "list" }
 risk = "reversible"
-expect = { text = "{chat}", region = "header" }
+unless = { name = "{chat}", region = "header" }
+expect = { name = "{chat}", region = "header" }
 
 [[action.teams.draft.step]]
 do = "click"

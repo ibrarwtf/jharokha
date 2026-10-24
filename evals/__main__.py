@@ -154,9 +154,16 @@ def by_rows(
         n += len(bs)
         return recognizer.read(frame, bs, margin=0)
 
-    read = rows.read_rows(frame, box, reader, g, ordered)
+    # As the server reads a screen held still: each read takes the next rows within the
+    # budget, until none is left to Windows OCR alone.
+    read = None
+    for _ in range(20):
+        read = rows.read_rows(frame, box, reader, g, ordered, read)
+        assert read is not None
+        if not read.pending:
+            break
     assert read is not None
-    got = [ln for ln in rows.unwrap(read.lines, g) if ln.text]
+    got = [ln for ln in rows.unwrap(read.lines, read.grid) if ln.text]
     x0, y0, bw, bh = box
     inside = [
         x0 <= ln.box[0] + ln.box[2] / 2 < x0 + bw and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + bh

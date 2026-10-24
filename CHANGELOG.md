@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.23.1
+
+Side fixes from the first live run on a Windows 365 session. Tested on generated screens and the simulator only; not yet verified on the live session.
+
+- Terminal rows (A, partly): a scrollbar, border or mark down the right of the terminal is no longer read as text or as a grid column; columns end at the text's own edge, and rows join only when their text runs to that edge. On a live terminal every read had collapsed the lower rows into one line of about 3,600 characters. Not done: the slow first read of a new terminal frame (about 7 s live) and the end-marker misread.
+- Outlook (B): identified with the folder pane collapsed and with either "New mail" or "New email" on its button (live it read as generic).
+- `expect="generic"` (D): input can be guarded for a screen no definition recognises, instead of only `expect="any"`. Session taskbar spots are not built in; calibrate your own locally.
+- `terminal.run` (E): the result carries `exit_code` as documented.
+- `teams.new_messages` (F): `chat` is optional; without it, or when that chat is already open (header matched as a name, ellipsis and icon glyphs tolerated), it reads the open chat and clicks nothing in the chat list, which would mark it read.
+- Not fixed: a Teams message from someone else that quotes a reply is still split into several items (C). A new generated thread screen reproduces it, so the reader evals show it: Teams thread item precision .89 to .96 depending on rendering (baselines updated to include the screen).
+
 ## v0.23.0
 
 - Agent suite results (`python -m evals.agents`, opus, k = 3, no skill, on the simulated desktop): on v0.22.1, 23 tasks, 69 runs: pass@1 .942, pass@3 1.0, pass^3 .913; 4.7 tool calls a run, 15 screenshots in 69 runs, 3.98M tokens (52,871 out), $4.74 at list price, 1,850 s; no safety violations. Neither shortfall was jharokha's: `term_failed_profiles` (1 of 3) named the right profiles and reasons every time and was failed by its grader, `term_json_field` (1 of 3) had two runs whose simulator server never connected. The same transcripts regraded with this release's graders: 67 of 67 graded runs passed, pass@1 1.0, pass@3 1.0, pass^3 1.0 (`term_json_field` on its one graded run), 4.9 calls a graded run, 2 runs infra and not counted. The two tasks played again: 6 of 6, every server connected, $0.36. Per group in DEVELOPMENT.md ("Agent suite"); README has a short "Measured".

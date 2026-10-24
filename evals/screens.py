@@ -175,6 +175,127 @@ def terminal(seed: int, px: int = 20) -> Screen:
     )
 
 
+FILES = [  # mixed case, as file names are; Windows OCR and the second engine flip case
+    "ReadMe.md",
+    "BuildPipeline.yml",
+    "appSettings.Json",
+    "LoginController.cs",
+    "UserService.cs",
+    "packageLock.json",
+    "DockerFile",
+    "SetupGuide.PDF",
+    "runAll.ps1",
+    "WebConfig.xml",
+    "QuoteEngine.py",
+    "testData.CSV",
+]
+TERM_EDGE: RGB = (90, 90, 90)  # a thin vertical mark right of the text, as seen live
+
+
+def terminal_full(seed: int, px: int = 20) -> Screen:
+    """A terminal scrolled to its end with every row in use, as a long session leaves it: a
+    scrollbar thumb at x=1156-1160 and a thin mark at x=1126 right of the text, both inside
+    the body region the definition places, file names in mixed case, and a URL that wraps.
+    The grid box is that whole region, scrollbar included, as a live read gets it."""
+    rng = random.Random(seed)
+    proj = rng.choice(PROJECTS)
+    prompt = f"PS C:\\work\\{proj}>"
+    adv = math.ceil(ImageFont.truetype(str(CASCADIA), px).getlength("M" * 100) / 100)
+    left, top, right = 8, 46, 1118
+    cols = (right - left) // adv
+    pitch = round(px * 1.15)
+    nrows = (TASKBAR_Y - 6 - top) // pitch
+    rows: list[str] = []
+    finds: list[tuple[str, int, int]] = []
+
+    def out(line: str, find: str | None = None) -> None:
+        if find is not None:
+            finds.append((find, len(rows), line.index(find)))
+        rows.append(line)
+
+    def height(line: str) -> int:
+        return max(1, -(-len(line) // cols))
+
+    while sum(map(height, rows)) < 2 * nrows:
+        kind = rng.choice(["dir", "git", "log", "status", "wrap"])
+        if kind == "dir":
+            out(f"{prompt} Get-ChildItem")
+            out("")
+            out(f"    Directory: C:\\work\\{proj}")
+            out("")
+            out("Mode                 LastWriteTime         Length Name")
+            out("----                 -------------         ------ ----")
+            for f in rng.sample(FILES, 6):
+                day, size = rng.randint(10, 28), rng.randint(900, 90000)
+                out(f"-a----        10/{day}/2026   9:{rng.randint(10, 59)} AM {size:>14} {f}", f)
+            out("")
+        elif kind == "git":
+            out(f"{prompt} git log --oneline -4")
+            for _ in range(4):
+                msg = rng.choice(["fix retry window", "add profile 07", "bump timeout"])
+                out(f"{_hex(rng, 7)} {msg} in {rng.choice(FILES)}")
+        elif kind == "status":
+            out(f"{prompt} git status --short")
+            for f in rng.sample(FILES, 3):
+                out(f" {rng.choice('MAD')} src/{f}", f)
+        elif kind == "log":
+            out(f"{prompt} Get-Content run.log -Tail 4")
+            for _ in range(4):
+                p, code = rng.randint(1, 15), rng.choice([200, 200, 400, 429])
+                level = "ERROR" if code >= 400 else "INFO"
+                t = f"09:{rng.randint(10, 59)}:{rng.randint(10, 59)}"
+                out(f"2026-10-22 {t} {level} profile {p:02d} status {code}")
+        else:
+            out(f"{prompt} Write-Output $env:EXPORT_URL")
+            path = "/".join(_hex(rng, 6) for _ in range(cols // 6 + 4))
+            out(f"https://files.example.net/exports/{path}/report.csv")
+    out(prompt)
+    # The rows that fill the screen from the bottom up, whole lines only.
+    first, used = len(rows), 0
+    while first > 0 and used + height(rows[first - 1]) <= nrows:
+        first -= 1
+        used += height(rows[first])
+    texts: list[Text] = [Text(14, 10, "Windows PowerShell", "Segoe UI", 12, TERM_FG)]
+    first_text: dict[int, int] = {}
+    y = top
+    for i in range(first, len(rows)):
+        first_text[i] = len(texts)
+        for c in range(0, max(1, len(rows[i])), cols):
+            if rows[i][c : c + cols]:
+                texts.append(Text(left, y, rows[i][c : c + cols], "Cascadia Mono", px, TERM_FG))
+            y += pitch
+    shown = [i for i in range(first, len(rows)) if rows[i]]
+    find_list = [
+        Find(q, first_text[i], s)
+        for q, i, s in finds
+        if i >= first and s + len(q) <= cols and rows[i]
+    ][:4]
+    bar, clock = _taskbar(rng)
+    track = TASKBAR_Y - 20 - top
+    thumb_h = max(20, track * nrows // sum(map(height, rows)))
+    rects: Rects = [
+        ((0, 0, W, 38), (32, 32, 32)),
+        ((0, 38, W, 1), (64, 64, 64)),
+        ((1126, 300, 1, 520), TERM_EDGE),
+        ((1156, top + track - thumb_h, 5, thumb_h), (110, 110, 110)),
+        *bar,
+    ]
+    return Screen(
+        f"termfull-{seed}-{px}",
+        "terminal",
+        W,
+        H,
+        TERM_BG,
+        texts + clock,
+        ["Windows PowerShell"] + [rows[i] for i in shown] + [t.text for t in clock],
+        find_list,
+        grid=(0, 39, W, TASKBAR_Y - 39),
+        rects=rects,
+        panes=[(0, 0, W, 38), (0, 39, W, TASKBAR_Y - 39), TASKBAR],
+        view="shell",
+    )
+
+
 SHELLS = [  # a tab's title and its shell's prompt
     ("Windows PowerShell", "PS C:\\work\\{proj}>"),
     ("Command Prompt", "C:\\work\\{proj}>"),
@@ -298,6 +419,111 @@ def teams(seed: int, px: int = 14) -> Screen:
     )
 
 
+QUOTE_BG: RGB = (240, 240, 240)
+QUOTE_BAR: RGB = (98, 100, 167)
+
+
+def teams_quote(seed: int, px: int = 14) -> Screen:
+    """A Teams thread laid out as new Teams draws it at a small zoom: other people's
+    messages right of an avatar, yours right-aligned under a bare time, and replies that
+    quote an earlier message in a card (a grey box with a coloured bar) whose text starts
+    past 15% of the thread's width, where your own side begins. One quote is in another
+    person's message, one in yours; each reply is one message with the quote apart."""
+    rng = random.Random(seed)
+    texts: list[Text] = []
+    truth: list[str] = []
+    rects: Rects = []
+
+    def put(x: int, y: int, s: str, size: int = px, color: RGB = INK, bold: bool = False) -> int:
+        texts.append(Text(x, y, s, "Segoe UI", size, color, bold))
+        truth.append(s)
+        return len(texts) - 1
+
+    def right(s: str) -> int:  # where right-aligned text starts, about
+        return max(600, W - 30 - round(0.52 * px * len(s)))
+
+    split, body = 440, TASKBAR_Y - 63
+    put(320, 20, "Search (Ctrl+E)", px, GREY)
+    for i, label in enumerate(["Activity", "Chat", "Teams", "Calendar", "Files"]):
+        put(12, 90 + 64 * i, label, px - 3, GREY)
+    put(100, 90, "Chat", px + 4, INK, True)
+    people = list(dict.fromkeys(_name(rng) for _ in range(12)))[:4]
+    for i, who in enumerate(people):
+        put(100, 160 + 62 * i, who, px, INK, True)
+        put(100, 182 + 62 * i, _sentence(rng, 5), px - 1, GREY)
+    a, b = people[0], people[1]
+    put(456, 90, f"{a}, {b}", px + 2, INK, True)
+    hour = rng.randint(9, 15)
+    ask, answer = _sentence(rng, 7), _sentence(rng, 6)
+    msgs = []
+    y = 170
+    # Someone else's message, right of an avatar.
+    rects.append(((452, y, 28, 28), QUOTE_BAR))
+    put(492, y, f"{a}  {hour}:05", px - 1, GREY)
+    put(492, y + 22, ask)
+    msgs.append({"sender": a, "time": f"{hour}:05", "text": ask, "own": False})
+    y += 80
+    # Yours: a bare time over right-aligned text.
+    put(right(f"{hour}:07"), y, f"{hour}:07", px - 1, GREY)
+    put(right(answer), y + 22, answer)
+    msgs.append({"sender": "", "time": f"{hour}:07", "text": answer, "own": True})
+    y += 80
+    # Someone else's reply quoting the first message: the card's text past the own side.
+    reply = _sentence(rng, 6)
+    rects.append(((452, y, 28, 28), (37, 56, 88)))
+    put(492, y, f"{b}  {hour}:12", px - 1, GREY)
+    rects += [((504, y + 24, 520, 54), QUOTE_BG), ((504, y + 24, 3, 54), QUOTE_BAR)]
+    put(560, y + 28, f"{a}  {hour}:05", px - 1, GREY)
+    put(560, y + 50, ask[:40], px - 1)
+    put(492, y + 88, reply)
+    msgs.append({"sender": b, "time": f"{hour}:12", "text": reply, "own": False})
+    y += 132
+    # Yours, quoting that reply.
+    mine = _sentence(rng, 5)
+    put(right(f"{hour}:15"), y, f"{hour}:15", px - 1, GREY)
+    rects += [((640, y + 24, 480, 54), QUOTE_BG), ((640, y + 24, 3, 54), QUOTE_BAR)]
+    put(660, y + 28, f"{b}  {hour}:12", px - 1, GREY)
+    put(660, y + 50, reply[:40], px - 1)
+    put(644, y + 88, mine)  # in the bubble, under the card's edge
+    msgs.append({"sender": "", "time": f"{hour}:15", "text": mine, "own": True})
+    put(456, TASKBAR_Y - 80, "Type a message", px, GREY)
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    rects = [
+        ((0, 0, W, 62), TEAMS_BAR),
+        ((0, 62, W, 1), DIVIDER),
+        ((0, 63, 88, body), TEAMS_BAR),
+        ((88, 63, 1, body), DIVIDER),
+        ((89, 63, split - 89, body), TEAMS_LIST),
+        ((89, 142, W - 89, 1), DIVIDER),
+        *rects,
+        *bar,
+    ]
+    panes = [
+        (0, 0, W, 62),
+        (0, 63, 88, body),
+        (89, 63, split - 89, 79),
+        (89, 143, split - 89, TASKBAR_Y - 143),
+        (split, 63, W - split, 79),
+        (split, 143, W - split, TASKBAR_Y - 143),
+        TASKBAR,
+    ]
+    return Screen(
+        f"teamsquote-{seed}-{px}",
+        "teams",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        rects=rects,
+        panes=panes,
+        view="chat",
+        items={"teams.thread": truth_items.listed("messages", msgs)},
+    )
+
+
 # New Outlook: a ribbon from y=103 to 154 between dividers, the app rail left of a divider
 # at x=61, then folders, the message list and, past a divider at x=500, the reading pane.
 OUTLOOK_TOP: RGB = (239, 242, 246)
@@ -377,6 +603,69 @@ def outlook(seed: int, px: int = 14) -> Screen:
         panes=panes,
         view="mail",
         items={"outlook.list": truth_items.listed("mails", mails)},
+    )
+
+
+def outlook_collapsed(seed: int, px: int = 14) -> Screen:
+    """New Outlook's mail with the folder pane collapsed: the rail, the ribbon of a newer
+    version (its button reads New email), the message list right of the rail under the
+    folder's name, and the reading pane. No folder but the one open is named anywhere."""
+    rng = random.Random(seed)
+    texts: list[Text] = []
+    truth: list[str] = []
+
+    def put(x: int, y: int, s: str, size: int = px, color: RGB = INK, bold: bool = False) -> int:
+        texts.append(Text(x, y, s, "Segoe UI", size, color, bold))
+        truth.append(s)
+        return len(texts) - 1
+
+    put(480, 40, "Search", px, GREY)
+    ribbon = ("New email", "Delete", "Archive", "Report", "Sweep", "Move to", "Reply all")
+    for x, label in zip((80, 200, 290, 380, 470, 550, 650), ribbon, strict=True):
+        put(x, 120, label, px - 1)
+    split = 440
+    put(76, 170, "Inbox", px + 2, INK, True)
+    for i in range(6):
+        y = 210 + 74 * i
+        put(76, y, _name(rng), px, INK, True)
+        put(76, y + 22, f"{rng.choice(['Run report', 'Invite', 'Access request'])}", px)
+        put(76, y + 44, _sentence(rng, 3), px - 1, GREY)
+    put(split + 16, 170, "Run report", px + 4, INK, True)
+    for i in range(5):
+        put(split + 16, 220 + 28 * i, _sentence(rng, 8), px)
+    bar, clock = _taskbar(rng)
+    texts += clock
+    truth += [t.text for t in clock]
+    body = TASKBAR_Y - 155
+    rects: Rects = [
+        ((0, 0, W, 103), OUTLOOK_TOP),
+        ((0, 103, W, 1), OUTLOOK_LINE),
+        ((0, 104, W, 50), (250, 250, 250)),
+        ((0, 154, W, 1), OUTLOOK_LINE),
+        ((0, 155, 61, body), OUTLOOK_TOP),
+        ((61, 155, 1, body), OUTLOOK_LINE),
+        ((split, 155, 1, body), OUTLOOK_LINE),
+        *bar,
+    ]
+    panes = [
+        (0, 0, W, 103),
+        (0, 104, W, 50),
+        (0, 155, 61, body),
+        (62, 155, split - 62, body),
+        (split + 1, 155, W - split - 1, body),
+        TASKBAR,
+    ]
+    return Screen(
+        f"outlookcollapsed-{seed}-{px}",
+        "outlook",
+        W,
+        H,
+        WHITE,
+        texts,
+        truth,
+        rects=rects,
+        panes=panes,
+        view="mail",
     )
 
 
@@ -609,8 +898,11 @@ def suite(quick: bool) -> list[Screen]:
         out += [terminal(s, px) for px in term]
         out += [prompt(s, px, (s - 100 + i) % len(SHELLS)) for i, px in enumerate(term)]
         out.append(prompt(s, term[-1], (s - 100) % len(SHELLS), empty=True))
+        out.append(terminal_full(s, 20))
         out += [teams(s, px) for px in small]
+        out.append(teams_quote(s, small[len(small) // 2]))
         out += [outlook(s, px) for px in small]
+        out.append(outlook_collapsed(s, small[len(small) // 2]))
         out += [calendar(s, px) for px in small]
         out += [browser(s, px) for px in small]
         out += [ids(s, px) for px in sizes]

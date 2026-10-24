@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +36,10 @@ MOVE_SLACK_PX = 4
 # Identified this surely, or the front app does not count as the one expected.
 EXPECT_CONFIDENCE = 0.6
 ANY = "any"  # expect when the app is in no definition
+# expect for the screen no definition recognises (core.apps.GENERIC, which imports this
+# module): it holds whenever nothing is recognised, at any confidence, since a generic
+# screen's confidence says how far the best app fell short, not how sure it is.
+GENERIC = "generic"
 MODIFIERS = ("ctrl", "alt", "shift", "win")
 _ALIASES = {"return": "enter", "escape": "esc", "control": "ctrl", "del": "delete"}
 ALLOW_IRREVERSIBLE = "irreversible"
@@ -44,9 +48,9 @@ ALLOW_IRREVERSIBLE = "irreversible"
 class WrongApp(RuntimeError):
     """The app in front is not the one the input was meant for."""
 
-    def __init__(self, message: str, want: str) -> None:
+    def __init__(self, message: str, want: str, front: str | None = None) -> None:
         super().__init__(message)
-        self.want = want
+        self.want, self.front = want, front
 
 
 class Irreversible(RuntimeError):
@@ -92,14 +96,33 @@ class TypingInterrupted(UserActive):
         self.sent = sent
 
 
-def refusal(e: WrongApp | Irreversible | InputLeased | UserActive) -> tuple[str, str]:
-    """The error code and message, with what to do next, for a refused input."""
+def refusal(
+    e: WrongApp | Irreversible | InputLeased | UserActive, spots: Collection[str] = ()
+) -> tuple[str, str]:
+    """The error code and message, with what to do next, for a refused input. spots are the
+    session's spot names (`session.taskbar.teams`), so a wrong_app says whether the app's
+    taskbar icon is one."""
     if isinstance(e, WrongApp):
-        return "wrong_app", (
-            f"{e}; nothing was sent. Bring {e.want} to the front (its icon on the session's "
-            "taskbar; jharokha_apps lists them as spots), confirm with jharokha_status, and "
-            "retry. Do not send it to the app in front instead."
+        if e.want == GENERIC:
+            how = "the app you mean"
+        elif any(s.endswith(f"taskbar.{e.want}") for s in spots):
+            how = f"{e.want}: click {{'spot': 'taskbar.{e.want}'}}"
+        else:
+            how = (
+                f"{e.want}: its icon on the session's taskbar, which is no spot here: find it "
+                "with jharokha_find {'icon': true, 'region': 'session.taskbar'} or ask the "
+                "user; jharokha_learn step='taskbar' names the icons as spots"
+            )
+        out = (
+            f"{e}; nothing was sent. Bring {how} to the front, confirm with jharokha_status, "
+            "and retry. Do not send it to the app in front instead."
         )
+        if e.front == GENERIC and e.want != GENERIC:
+            out += (
+                " If the app in front is the one you mean and jharokha does not recognise it, "
+                "pass expect='generic' (or teach it the app with jharokha_learn)."
+            )
+        return "wrong_app", out
     if isinstance(e, Irreversible):
         return "irreversible", (
             f"{e}; nothing was sent. Read the screen to be sure what it would send or submit; "
@@ -333,18 +356,21 @@ def check_front(
     min_confidence: float = EXPECT_CONFIDENCE,
 ) -> None:
     """Raises WrongApp unless expect ('terminal' or 'teams.chat') is what was identified in
-    front, at min_confidence or more."""
+    front, at min_confidence or more; 'generic' holds while nothing is recognised."""
     if expect == ANY:
         return
     want_app, _, want_view = expect.partition(".")
     on = f"{app} {view}, confidence {confidence}" if app else "a lock screen or nothing known"
+    if want_app == GENERIC and app == GENERIC:
+        return
     if app != want_app or (want_view and view != want_view):
-        raise WrongApp(f"expected {expect} in front, but the screen shows {on}", want_app)
+        raise WrongApp(f"expected {expect} in front, but the screen shows {on}", want_app, app)
     if confidence < min_confidence:
         raise WrongApp(
             f"expected {expect} in front; the screen looks like it, but only at confidence "
             f"{confidence} (needs {min_confidence})",
             want_app,
+            app,
         )
 
 

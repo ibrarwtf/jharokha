@@ -65,6 +65,14 @@ ICON_COLOURS = {
     "tickets": (37, 56, 88),
 }
 CLOCK, DATE = "9:41", "10/23/2026"
+# What each icon's tooltip says when the pointer rests on it, as Windows names the programs.
+TIPS = {
+    "terminal": "Terminal",
+    "teams": "Microsoft Teams",
+    "outlook": "Outlook",
+    "browser": "Microsoft Edge",
+    "tickets": "Queue Desk",
+}
 
 
 def parse_combo(combo: str) -> tuple[Mods, str]:
@@ -111,6 +119,7 @@ class Desktop:
         self.version = 0
         self.events: list[Event] = []
         self.locked: int | None = None  # which lock screen, while locked
+        self.tip: str | None = None  # the taskbar icon the pointer rests on
         self._timers: list[tuple[float, int, Callable[[], None]]] = []
         self._seq = 0
         self.shell = Shell(self, seed, term_px)
@@ -194,6 +203,11 @@ class Desktop:
                 c.rect((x - 8, y + ICON // 2 + 6, 16, 3), (0, 103, 192))
         c.text(1092, TASKBAR_Y + 10, CLOCK, 12, INK)
         c.text(1074, TASKBAR_Y + 32, DATE, 12, INK)
+        if self.tip in self.apps:
+            x, _ = self.spots()[self.tip]
+            label = TIPS[self.tip]
+            c.rect((x - 70, TASKBAR_Y - 44, 140, 32), (249, 249, 249))
+            c.text(x - 60, TASKBAR_Y - 36, label, 13, INK)
         return Screen(
             f"sim-{app.id}",
             app.id,
@@ -240,6 +254,11 @@ class Desktop:
         self.tick()
         if self._ignored("hover"):
             return
+        self.tip = None
+        if y >= TASKBAR_Y:
+            for a, (sx, sy) in self.spots().items():
+                if abs(x - sx) <= ICON // 2 and abs(y - sy) <= ICON // 2:
+                    self.tip = a
         self.app.hover(x, y)
         self.event(self.front, "hover", f"{x},{y}")
         self.changed()

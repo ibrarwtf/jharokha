@@ -1151,6 +1151,71 @@ def _find(texts: tuple[str, ...], s: Scan) -> tuple[float, float] | None:
     return None
 
 
+# The session's taskbar: its icons as spots, which no built-in definition can know
+
+# What a taskbar tooltip says for an app the built-ins define by another name.
+_TASKBAR_NAMES = {
+    "edge": "browser",
+    "chrome": "browser",
+    "firefox": "browser",
+    "powershell": "terminal",
+    "command prompt": "terminal",
+    "terminal": "terminal",
+    "teams": "teams",
+    "outlook": "outlook",
+}
+
+
+def taskbar_icons(frame: Frame, lines: Sequence[Line], box: Box) -> list[Icon]:
+    """The text-less elements in the session's taskbar box, left to right: its app icons
+    (the clock is text and drops out)."""
+    found = [e for e in find_elements(frame, list(lines), find_panes(frame)) if _centre_in(e, box)]
+    found.sort(key=lambda e: e[0])
+    return [Icon(i, e, 0) for i, e in enumerate(found)]
+
+
+def taskbar_name(tip: str, known: Iterable[App]) -> str | None:
+    """The app id a taskbar tooltip names: a known app's name or id in it, or one of the
+    names its program goes by (Microsoft Edge is the browser); else a name made of the
+    tooltip's words."""
+    t = " ".join(re.findall(r"[a-z0-9]+", tip.lower()))
+    for a in known:
+        if a.id != apps.GENERIC and (a.name.lower() in t or re.search(rf"\b{a.id}\b", t)):
+            return a.id
+    for k, v in _TASKBAR_NAMES.items():
+        if k in t:
+            return v
+    return icon_name(tip)
+
+
+def save_spots(text: str, spots: Mapping[str, tuple[float, float]]) -> str:
+    """apps.toml text with these session spots (`taskbar.teams` -> the icon's centre, as
+    fractions of the client area) added to those it has, replacing any of the same name;
+    its session regions and everything else stay. Checked to parse and load."""
+    doc = apps.parse(text, "apps.toml") if text.strip() else apps.Doc()
+    regions = {k.removeprefix(f"{apps.SESSION}."): v for k, v in doc.session_cal.items()}
+    have = {k.removeprefix(f"{apps.SESSION}."): v for k, v in doc.spots.items()}
+    have.update(spots)
+    keep, drop = [], False
+    for line in text.splitlines():
+        if m := apps._HEADER.match(line.strip()):
+            drop = apps._path(m.group(1))[:2] == ["calibration", apps.SESSION]
+        if not drop:
+            keep.append(line)
+    out = [f"[calibration.{apps.SESSION}]", "# the session's own taskbar, learned"]
+    if regions:
+        parts = ", ".join(f"{json.dumps(k)} = {apps._nums(f)}" for k, f in regions.items())
+        out.append(f"regions = {{ {parts} }}")
+    parts = ", ".join(
+        f"{json.dumps(k)} = [{round(x, 4):g}, {round(y, 4):g}]" for k, (x, y) in have.items()
+    )
+    out.append(f"spots = {{ {parts} }}")
+    body = "\n".join(keep).rstrip() or f"format = {apps.FORMAT}"
+    result = body + "\n\n" + "\n".join(out) + "\n"
+    apps.catalog(apps.parse(result, "apps.toml"))
+    return result
+
+
 # Saving
 
 

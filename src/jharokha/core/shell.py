@@ -76,13 +76,12 @@ class Run:
     code: int | None
 
 
-def read_reply(lines: list[Line], token: str) -> Reply | None:
-    """The reply to the command marked with token, or None while its marker is not on
-    screen. Tolerates case, one misread token character, spaces OCR adds or drops, a
-    marker OCR split into pieces or that wrapped onto the next row; markers of other
-    tokens (earlier runs) do not count."""
+def _scan(
+    lines: list[Line], token: str
+) -> tuple[list[list[Line]], list[tuple[int, str]], list[int]]:
+    """The rows, the markers of token (row, payload) and the rows of its echo."""
     rows = _rows(lines)
-    texts = ["".join("".join(ln.text.split()) for ln in r) for r in rows]
+    texts = [_fold("".join("".join(ln.text.split()) for ln in r)) for r in rows]
     markers: list[tuple[int, str]] = []
     echoes: list[int] = []
     for i, t in enumerate(texts):
@@ -96,6 +95,24 @@ def read_reply(lines: list[Line], token: str) -> Reply | None:
             echoes.append(i)
         elif nxt and not _echo(nxt, token) and _echo(t + nxt, token):
             echoes.append(i + 1)
+    return rows, markers, echoes
+
+
+def echo_bottom(lines: list[Line], token: str) -> int | None:
+    """The y just below the last row of the command's echo: its output starts there."""
+    rows, _, echoes = _scan(lines, token)
+    if not echoes:
+        return None
+    return max(ln.box[1] + ln.box[3] for ln in rows[echoes[-1]])
+
+
+def read_reply(lines: list[Line], token: str) -> Reply | None:
+    """The reply to the command marked with token, or None while its marker is not on
+    screen. Tolerates case, one misread token character, lookalikes OCR reads for the
+    token's letters (`VV` for W), spaces OCR adds or drops, a stray character in front, a
+    marker OCR split into pieces or that wrapped onto the next row; markers of other
+    tokens (earlier runs) do not count."""
+    rows, markers, echoes = _scan(lines, token)
     if echoes:
         e = echoes[-1]
         after = [m for m in markers if m[0] > e]
@@ -110,6 +127,9 @@ def read_reply(lines: list[Line], token: str) -> Reply | None:
     return Reply(out, payload, bool(echoes))
 
 
+# TODO(live 2026-10-24): once on a live terminal the end marker read as `XXXXXX:Xxxx:` and the
+# run waited out its 30 s timeout although the command had finished; find out why on the live
+# session (row not re-read? token letters confusable at that size?).
 def read_run(lines: list[Line], token: str, shell: Shell) -> Run | None:
     """read_reply for a command from marked(), with its status parsed."""
     reply = read_reply(lines, token)
@@ -235,13 +255,30 @@ def _near(a: str, b: str) -> bool:
     return len(a) == len(b) and sum(x != y for x, y in zip(a.upper(), b, strict=True)) <= 1
 
 
+# What OCR reads for the token alphabet's letters at terminal sizes, folded back: two
+# glyphs for one (VV for W, IVI or rn for M) would otherwise shift every character after.
+_GLYPHS = (("VV", "W"), ("IVI", "M"), ("|\\/|", "M"), ("I-I", "H"), ("|-|", "H"))
+
+
+def _fold(text: str) -> str:
+    out = text
+    for a, b in _GLYPHS:
+        out = out.replace(a, b)
+    return out
+
+
 def _payload(text: str, token: str) -> str | None:
-    """What follows the token when text is a marker line; a stray character OCR put in
-    front (the caret, a border) is allowed."""
+    """What follows the token when text is a marker line: at its start, after a stray
+    character OCR put in front (the caret, a border), or further in when a separator
+    follows it (the row ran together with what was left of the prompt)."""
     n = len(token)
-    for at in (0, 1):
+    for at in range(0, max(1, len(text) - n + 1)):
         if _near(text[at : at + n], token):
             rest = text[at + n :]
+            # Further in, only a status after a separator: an echo whose quotes OCR dropped
+            # reads `...KX7R4C:${jkq}...` and is no marker.
+            if at > 1 and not re.match(rf"[{_SEPS}][TtFf\d-]", rest):
+                continue
             return rest[1:] if rest[:1] and rest[0] in _SEPS else rest
     return None
 

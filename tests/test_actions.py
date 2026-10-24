@@ -346,7 +346,7 @@ def test_steps_check_their_outcome_and_report_where_they_failed():
     # Switched by the spot and clicked the chat, but the header never showed its name.
     assert ex.inputs == ["click 300,390", "click 41,106"]
     assert not r.ok and r.failed["step"] == "2:click"  # type: ignore[index]
-    assert "expected text='Ben Okoro'" in r.failed["reason"]  # type: ignore[index]
+    assert "expected name='Ben Okoro'" in r.failed["reason"]  # type: ignore[index]
     assert [s.kind for s in r.steps] == ["focus"]
     r = Runner(ex).run(actions.builtin()["teams.open_chat"], {"name": "Cy Dube"})
     assert r.failed["candidates"]  # type: ignore[index]
@@ -389,12 +389,29 @@ def do(ex, name: str, allow: str = "irreversible", **args: object) -> actions.Re
 
 @sim
 @pytest.mark.windows
+def test_header_names_match_cut_short_and_beside_icon_glyphs():
+    from jharokha.core.actions import name_on
+    from jharokha.core.guard import WrongApp, check_front
+
+    from .conftest import lines_for
+
+    assert name_on(lines_for([("@ Ana Alder", 0, 0)]), "Ana Alder")
+    assert name_on(lines_for([("Ana Ald…", 0, 0)]), "Ana Alder")
+    assert not name_on(lines_for([("Ana Altman", 0, 0)]), "Ana Alder")
+    assert name_on([], "")
+    check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
+    with pytest.raises(WrongApp):
+        check_front("generic", "teams", "chat", 1.0)
+
+
 def test_terminal_run_returns_output_and_exit_code_by_its_end_marker():
     desk, ex = session("terminal")
     r = do(ex, "terminal.run", command="Get-Content notes.txt")
     assert r.ok, r.failed
     assert r.output == desk.shell.files["notes.txt"]
-    assert (r.exit_code, r.fields["ok"]) == (None, True)
+    # $LASTEXITCODE empty (no native program ran): PowerShell's own success, exit 0.
+    assert (r.exit_code, r.fields["ok"]) == (0, True)
+    assert r.to_dict(brief=True)["exit_code"] == 0
     r = do(ex, "terminal.run", command="cmd /c exit 3")
     assert r.ok and r.output == [] and (r.exit_code, r.fields["ok"]) == (3, False)
     assert len(desk.shell.log) == 2 and desk.shell.log[0].startswith("Get-Content notes.txt; $jkq")

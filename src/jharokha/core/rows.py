@@ -5,15 +5,26 @@ where the ink is.
 Windows OCR drops whole rows and most of a dark terminal's prompt, and text.grid can only
 guess the row pitch from the rows it found. The second engine reads a full-width strip
 exactly when the strip holds one row and no part of its neighbours, but drops the spaces
-between monospaced columns; the grid gives both the strips and the columns."""
+between monospaced columns; the grid gives both the strips and the columns.
+
+The second engine costs 50 to 150 ms a row, so a screen of 46 rows took seconds. A row
+whose Windows OCR words put exactly one character on each inked cell of it, and cover them
+all, was read well and keeps those words; only the others, and rows a caller needs exact
+(`exact`: a command's output, a find's target), go to the second engine, and what it read
+is kept per row while the row's pixels stay the same.
+
+A scrollbar, a border or a mark down the right of the body is not text: ink in a vertical
+run longer than one and a half rows is left out of every cell, and the grid ends at the
+first such run right of all the text, so its columns never reach it and a row is joined to
+the next only when its text runs to that edge."""
 
 from __future__ import annotations
 
 import hashlib
 import re
 import unicodedata
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from jharokha.core.lazy import LazyNumpy
@@ -31,6 +42,12 @@ _CARET_AREA = 100  # px^2: a text caret, not a character (as core.watch)
 _DIFF = 8  # per channel; less is codec noise
 _INK_CELL = 3  # ink pixels that make a cell more than a stray pixel of its neighbours
 _FIT = 0.1  # how much worse than the best fit a period may be and still be the period
+_RUN = 1.5  # pitches: a vertical run of ink this long is a scrollbar or a border, no glyph
+_SCROLL_GAP = 3  # blank cells before a thin last cell that make it a scrollbar's thumb
+# Cells the second engine reads in one read, about 1.5 ms each on a 4-core laptop: a full
+# terminal of 46 rows is about 2,000, three and a half seconds; this keeps a first read of
+# a new screen near a second, and each read after it takes the next rows.
+BUDGET = 500
 _DASHES = str.maketrans("—–‐‑−一", "------")
 # A word of capitals with zeros and no other digit: the zeros are the letter O.
 _O_IN_CAPS = re.compile(r"\b(?=[A-Z0]*[A-Z]{2})(?=[A-Z0]*0)[A-Z0]{3,}\b")
@@ -73,6 +90,11 @@ def measured(
     return Grid(float(oy), float(pitch), float(ox), float(char_width), rows, cols)
 
 
+def spanning(grid: Grid, box: Box) -> Grid:
+    """grid with columns across all of box, for bounded() to end at each frame's edge."""
+    return replace(grid, cols=int((box[0] + box[2] - grid.origin_x) / grid.char_w + 0.25))
+
+
 def row_boxes(grid: Grid, which: Sequence[int] | None = None) -> list[Box]:
     """Full-width strips aligned to the grid, for the rows in which (default all)."""
     return [grid.row_box(r) for r in (range(grid.rows) if which is None else which)]
@@ -96,7 +118,7 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
     bx, by, bw, bh = _clip(box, frame)
     if bw < 4 or bh < 4:
         return None
-    ink = _ink(_pixels(frame)[by : by + bh, bx : bx + bw])
+    ink = _box_ink(frame, (bx, by, bw, bh))
     hs = sorted(ln.box[3] for ln in lines if _inside(ln.box, (bx, by, bw, bh)))
     words = [
         w
@@ -116,6 +138,8 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
     if found is None:
         return None
     pitch, phase_y = found
+    edges = _long_runs(ink, _RUN * pitch)
+    text = ink & ~edges
 
     cws = sorted(w.box[2] / len(w.text) for w in words if len(w.text) >= 5)
     if cws:
@@ -124,14 +148,16 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
     else:
         lo, hi = 0.3 * pitch, 0.8 * pitch
     # A rule of dashes or box-drawing characters fills every column alike.
-    down = _drop_runs(ink, axis=1, longest=int(4 * hi) + 1).sum(axis=0)
+    down = _drop_runs(text, axis=1, longest=int(4 * hi) + 1).sum(axis=0)
+    if not down.any():
+        return None
     found = _period(down.astype(np.float64), lo, hi)
     if found is None:
         return None
     char_w, phase_x = found
 
     top = int(np.flatnonzero(across)[0])
-    left = int(np.flatnonzero(down)[0]) if down.any() else 0
+    left = int(np.flatnonzero(down)[0])
     # A glyph may reach a pixel past its cell's edge, so the first cell is the one the
     # first ink is nearest the start of.
     oy = phase_y + np.floor((top - phase_y) / pitch + 0.5) * pitch
@@ -139,8 +165,33 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
         oy -= pitch
     ox = phase_x + np.floor((left - phase_x) / char_w + 0.5) * char_w
     rows = int((bh - oy) / pitch + 0.25)
-    cols = int((bw - ox) / char_w + 0.25)
+    cols = int((_edge(text, edges, bw) - ox) / char_w + 0.25)
     return Grid(by + float(oy), float(pitch), bx + float(ox), float(char_w), rows, cols)
+
+
+def _edge(text: np.ndarray, edges: np.ndarray, width: int) -> int:
+    """Where the text area ends, in pixels from the box's left: at the first edge (a
+    scrollbar, a border, a mark) right of all the text, else at the box's own edge."""
+    inked = np.flatnonzero(text.any(axis=0))
+    if not len(inked):
+        return width
+    right = np.flatnonzero(edges.any(axis=0))
+    right = right[right > inked[-1]]
+    return int(right[0]) if len(right) else width
+
+
+def bounded(grid: Grid, frame: Frame, box: Box) -> Grid:
+    """grid with its columns ending where the text area ends in this frame (_edge), never
+    further than they went: a grid from calibration in apps.toml spans its whole region,
+    scrollbar included."""
+    bx, by, bw, bh = _clip(box, frame)
+    if bw < 4 or bh < 4:
+        return grid
+    ink = _box_ink(frame, (bx, by, bw, bh))
+    edges = _long_runs(ink, _RUN * grid.pitch)
+    edge = bx + _edge(ink & ~edges, edges, bw)
+    cols = int((edge - grid.origin_x) / grid.char_w + 0.25)
+    return replace(grid, cols=cols) if 0 < cols < grid.cols else grid
 
 
 def _period(
@@ -244,23 +295,51 @@ def _median_band(profile: np.ndarray) -> float:
     return float(heights[len(heights) // 2]) if heights else 16.0
 
 
-def _drop_runs(ink: np.ndarray, axis: int, longest: int) -> np.ndarray:
+def _drop_runs(ink: np.ndarray, axis: int, longest: float) -> np.ndarray:
     """ink without its runs along axis longer than longest pixels."""
     a = ink if axis == 0 else ink.T
-    out = a.copy()
-    on = np.zeros((a.shape[0] + 2, a.shape[1]), np.int8)
-    on[1:-1] = a
-    d = np.diff(on, axis=0)
-    for col in np.flatnonzero(a.sum(axis=0) > longest):
-        starts = np.flatnonzero(d[:, col] == 1)
-        ends = np.flatnonzero(d[:, col] == -1)
-        for s, e in zip(starts, ends, strict=True):
-            if e - s > longest:
-                out[s:e, col] = False
+    out = a & ~_long_runs(a, longest)
     return out if axis == 0 else out.T
 
 
+def _long_runs(ink: np.ndarray, longest: float) -> np.ndarray:
+    """The pixels of ink in runs down a column longer than longest. A window sum finds the
+    few columns that hold one; only those are measured run by run: each pixel's run reaches
+    from the last blank above it to the first blank below."""
+    n = ink.shape[0]
+    out = np.zeros_like(ink)
+    k = int(longest) + 1
+    if n < k:
+        return out
+    cs = np.zeros((n + 1, ink.shape[1]), np.int32)
+    np.cumsum(ink, axis=0, out=cs[1:])
+    cols = np.flatnonzero(((cs[k:] - cs[:-k]) == k).any(axis=0))
+    if not len(cols):
+        return out
+    sub = ink[:, cols]
+    at = np.arange(1, n + 1, dtype=np.int32)[:, None]
+    above = np.maximum.accumulate(np.where(sub, 0, at), axis=0)
+    below = np.minimum.accumulate(np.where(sub, n + 1, at)[::-1], axis=0)[::-1]
+    out[:, cols] = sub & (below - above - 1 > longest)
+    return out
+
+
 # ------------------------------------------------------------------------------- pixels
+
+
+_LAST_INK: list[tuple[bytes, Box, np.ndarray]] = []
+
+
+def _box_ink(frame: Frame, box: Box) -> np.ndarray:
+    """_ink of a clipped box, kept for the last frame and box: one read calibrates, bounds
+    and measures cells on the same pixels, and each pass over them costs tens of ms."""
+    for bgra, b, ink in _LAST_INK:
+        if bgra is frame.bgra and b == box:
+            return ink
+    bx, by, bw, bh = box
+    ink = _ink(_pixels(frame)[by : by + bh, bx : bx + bw])
+    _LAST_INK[:] = [(frame.bgra, box, ink)]
+    return ink
 
 
 def _pixels(frame: Frame) -> np.ndarray:
@@ -318,7 +397,7 @@ Ink = Sequence[Sequence[Cell | None]]
 
 
 def ink_cells(
-    frame: Frame, grid: Grid, which: Sequence[int] | None = None
+    frame: Frame, grid: Grid, which: Sequence[int] | None = None, box: Box | None = None
 ) -> list[list[Cell | None]]:
     """For each row in which (default all), the ink in each of its cells, None where it is
     blank. A cell's sides and the strip's edge pixels are left out: ClearType and the codec
@@ -329,9 +408,15 @@ def ink_cells(
     x0, x1 = round(grid.origin_x), min(frame.width, round(grid.origin_x + grid.cols * grid.char_w))
     y0 = max(0, round(grid.origin_y))
     y1 = min(frame.height, round(grid.origin_y + grid.rows * grid.pitch))
-    if x1 <= x0 or y1 <= y0:
+    if x1 <= x0 or y1 <= y0 or not len(which):
         return [[] for _ in which]
-    bgc, threshold = _ink_params(px[y0:y1, x0:x1])
+    b = _clip(box, frame) if box is not None else None
+    if b is not None and b[0] <= x0 and b[1] <= y0 and x1 <= b[0] + b[2] and y1 <= b[1] + b[3]:
+        area = _box_ink(frame, b)[y0 - b[1] : y1 - b[1], x0 - b[0] : x1 - b[0]]
+    else:
+        area = _ink(px[y0:y1, x0:x1])
+    # A border or a mark down the body inside the grid is no character of any row.
+    area = area & ~_long_runs(area, _RUN * grid.pitch)
     edges = grid.origin_x + np.arange(grid.cols) * grid.char_w
     inset = 0.2 * grid.char_w
     lefts = np.clip(np.rint(edges + inset).astype(np.intp), 0, frame.width)
@@ -346,7 +431,7 @@ def ink_cells(
         strip = np.zeros((max(0, rh - 2), frame.width), bool)
         s0, s1 = max(y0, ry + 1), min(y1, ry + rh - 1)
         if s1 > s0:
-            strip[s0 - ry - 1 : s1 - ry - 1, x0:x1] = _inked(px[s0:s1, x0:x1], bgc, threshold)
+            strip[s0 - ry - 1 : s1 - ry - 1, x0:x1] = area[s0 - y0 : s1 - y0]
         cum = np.concatenate(([0], strip.sum(axis=0).cumsum()))
         counts = cum[np.minimum(rights, len(cum) - 1)] - cum[np.minimum(lefts, len(cum) - 1)]
         row: list[Cell | None] = []
@@ -366,8 +451,24 @@ def ink_cells(
                 max(0, sub.shape[1] // 2 - 1) : sub.shape[1] // 2 + 1,
             ]
             row.append(Cell(top + 1, bottom + 1, int(xs[-1] - xs[0] + 1), bool(mid.any())))
-        out.append(row)
+        out.append(_no_thumb(row, grid))
     return out
+
+
+def _no_thumb(row: list[Cell | None], grid: Grid) -> list[Cell | None]:
+    """row without a scrollbar's thumb too short to be a long run: one thin cell in the
+    last two columns, after a gap of blank cells."""
+    on = [c for c, cell in enumerate(row) if cell]
+    if not on or on[-1] < grid.cols - 2:
+        return row
+    last = on[-1]
+    cell = row[last]
+    assert cell is not None
+    before = on[-2] if len(on) > 1 else -_SCROLL_GAP - 1
+    if last - before > _SCROLL_GAP and cell.width <= 0.6 * grid.char_w:
+        row = list(row)
+        row[last] = None
+    return row
 
 
 def changed_rows(old: Frame | None, new: Frame, grid: Grid) -> list[int]:
@@ -439,13 +540,17 @@ def assemble(
 
 _CAPS = set("ABDEFGHIJKLMNQRTY123456789")  # no small letter of the same shape
 _SMALL = set("aemnr")  # x-height, no ascender or descender
-_CASED = set("cosuvwxzpCOSUVWXZP")  # the same shape in both cases
+# Small with no ascender, so their case shows in how high the ink starts. Both engines flip
+# them in file names (`Readme`, `appsettings.json`), not only those of one shape in both
+# cases (c, o, s, ...).
+_CASED = set("acegmnopqrsuvwxyzACEGMNOPQRSUVWXYZ")
 
 
 def _by_shape(laid: list[list[str]], ink: Ink, grid: Grid) -> None:
     """Characters the engine cannot tell apart in a strip of one row, settled from where
     the ink sits in the cell, measured against the screen's own capitals and small
-    letters: c, o, s, u, v, w, x, z and p small or capital by the height of their top;
+    letters: a letter whose small form has no ascender small or capital by the height of
+    its top;
     `-` or `_` by the height of a thin bar, also in a cell the engine read nothing for,
     where a tall narrow stroke is `|`; O or 0 by whether the middle is inked."""
     caps, small, base = [], [], []
@@ -684,9 +789,10 @@ def unwrap(lines: Sequence[Line], grid: Grid) -> list[Line]:
 
 @dataclass(frozen=True)
 class RowRead:
-    """A read of a grid: what the engine read on each row (None for a blank row), the lines,
-    and the frame, per-row pixel digests and ink, for reading only what changes next
-    time."""
+    """A read of a grid: what the engine read on each row (None for a blank row or one
+    Windows OCR read well), the lines, and the frame, per-row pixel digests and ink, for
+    reading only what changes next time. base is the grid asked for, grid the one read:
+    base with its columns ending at this frame's text edge (bounded)."""
 
     frame: Frame
     grid: Grid
@@ -694,8 +800,14 @@ class RowRead:
     lines: tuple[Line, ...]
     digests: tuple[bytes, ...]
     ink: tuple[tuple[Cell | None, ...], ...]
+    base: Grid | None = None
+    pending: int = 0  # inked rows left to Windows OCR by the budget: the next read takes them
 
 
+# TODO(live 2026-10-24): the first read of a new terminal frame re-reads every inked row with
+# the second engine (~7 s, 16 s CPU on a live Windows Terminal; status and terminal.run felt it).
+# Read only the rows Windows OCR got wrong or the caller needs (a run's new rows), and verify
+# the fix on the live session before trusting the generated screens.
 def read_rows(
     frame: Frame,
     box: Box,
@@ -703,17 +815,26 @@ def read_rows(
     grid: Grid | None = None,
     ocr_lines: Sequence[Line] = (),
     prev: RowRead | None = None,
+    exact: Box | None = None,
+    budget: int = BUDGET,
 ) -> RowRead | None:
     """The grid inside box read row by row: one line per row, blank rows included, so line
     numbers are the terminal's rows. reader reads strips (boxes in client pixels) and
     returns their text. Without a grid it is calibrated from this frame (None when the box
-    holds no text). With the previous read, only rows whose pixels changed are read again,
-    and a row that only moved (the terminal scrolled) keeps the text read where it was."""
-    grid = grid or calibrate(frame, ocr_lines, box)
-    if grid is None:
+    holds no text). Every row inside exact goes to the reader; then, bottom up, rows
+    Windows OCR (ocr_lines) read poorly, then the others, while their cells fit in budget;
+    a row left over shows Windows OCR's words and counts as pending. With the previous
+    read, only rows whose pixels changed or are pending are read, and a row that only
+    moved (the terminal scrolled) keeps the text read where it was."""
+    base = grid or calibrate(frame, ocr_lines, box)
+    if base is None:
         return None
-    if prev is not None and prev.grid == grid and prev.frame.bgra == frame.bgra:
-        return prev
+    if prev is not None and prev.base == base and prev.frame.bgra == frame.bgra:
+        wanted = _rows_in(prev.grid, exact)
+        done = all(prev.texts[r] is not None or not any(prev.ink[r]) for r in wanted)
+        if done and not prev.pending:
+            return prev
+    grid = bounded(base, frame, box)
     digests = _digests(frame, grid)
     texts: list[str | None] = [None] * grid.rows
     known: dict[bytes, str | None] = {}
@@ -726,30 +847,126 @@ def read_rows(
             if r < len(prev.texts):
                 known.setdefault(digests[r], prev.texts[r])
     fresh = [r for r in range(grid.rows) if digests[r] not in seen]
-    measured = dict(zip(fresh, ink_cells(frame, grid, fresh), strict=True))
+    measured = dict(zip(fresh, ink_cells(frame, grid, fresh, box), strict=True))
     ink = [tuple(measured[r]) if r in measured else seen[digests[r]] for r in range(grid.rows)]
-    todo = []
-    for r in range(grid.rows):
+    words = _row_words(grid, ocr_lines)
+    wanted = _rows_in(grid, exact)
+    must, poor, rest = [], [], []
+    for r in reversed(range(grid.rows)):  # the newest output, at the bottom, first
         if not any(ink[r]):
             continue
         if digests[r] in known and known[digests[r]] is not None:
             texts[r] = known[digests[r]]
+        elif r in wanted:
+            must.append(r)
+        elif not _read_well(ink[r], words.get(r, [])) or any(
+            _doubtful(chars) for _, _, chars in words.get(r, [])
+        ):
+            poor.append(r)
         else:
-            todo.append(r)
+            rest.append(r)
+    todo, cost = list(must), sum(_cells(ink[r]) for r in must)
+    for r in poor + rest:
+        if cost + _cells(ink[r]) > budget and (todo or cost):
+            break
+        todo.append(r)
+        cost += _cells(ink[r])
     if todo:
-        boxes = []
-        for r in todo:
-            last = max(i for i, on in enumerate(ink[r]) if on)
-            # A cell of margin each side: the engine reads the first and last glyph worse
-            # when they touch the edge.
-            x, y, _, h = grid.row_box(r)
-            x0 = max(0, round(grid.origin_x - grid.char_w))
-            x1 = min(frame.width, grid.col_x(min(grid.cols, last + 2)))
-            boxes.append((x0, y, x1 - x0, h))
+        boxes = [_strip(grid, frame, r, ink[r]) for r in todo]
         for r, t in zip(todo, reader(boxes), strict=True):
             texts[r] = t
+    pending = sum(1 for r in poor + rest if texts[r] is None)
     lines = assemble(grid, texts, ocr_lines, ink)
-    return RowRead(frame, grid, tuple(texts), tuple(lines), tuple(digests), tuple(ink))
+    return RowRead(
+        frame, grid, tuple(texts), tuple(lines), tuple(digests), tuple(ink), base, pending
+    )
+
+
+def _cells(cells: Sequence[Cell | None]) -> int:
+    """How many cells the engine reads for a row: up to its last ink, about what it costs."""
+    return 2 + max((i for i, on in enumerate(cells) if on), default=0)
+
+
+def _strip(grid: Grid, frame: Frame, r: int, cells: Sequence[Cell | None]) -> Box:
+    """Row r's strip for the engine, to a cell past its last ink: a cell of margin each
+    side, since the engine reads the first and last glyph worse when they touch the edge."""
+    last = max(i for i, on in enumerate(cells) if on)
+    _, y, _, h = grid.row_box(r)
+    x0 = max(0, round(grid.origin_x - grid.char_w))
+    x1 = min(frame.width, grid.col_x(min(grid.cols, last + 2)))
+    return (x0, y, x1 - x0, h)
+
+
+_LOOKS_DIGIT = set("OoIlSBZGUDQq|")
+
+
+def _doubtful(chars: str) -> bool:
+    """A word Windows OCR may have read with a lookalike in it at the right length: letters
+    and digits mixed (a hash, an ID), a character no terminal output has, or one letter that
+    looks like a digit alone (`-U`)."""
+    alnum = [c for c in chars if c.isalnum()]
+    if any(not c.isascii() for c in chars) or "@" in chars:
+        return True
+    if any(c.isdigit() for c in alnum) and any(c.isalpha() for c in alnum):
+        return True
+    return len(alnum) == 1 and alnum[0] in _LOOKS_DIGIT
+
+
+def _rows_in(grid: Grid, box: Box | None) -> set[int]:
+    """The rows whose middle lies inside box."""
+    if box is None:
+        return set()
+    out = set()
+    for r in range(grid.rows):
+        x, y, w, h = grid.row_box(r)
+        mid = y + h / 2
+        if box[1] <= mid < box[1] + box[3] and x < box[0] + box[2] and box[0] < x + w:
+            out.add(r)
+    return out
+
+
+Placed = tuple[int, int, str]  # a word's first column, the column past its end, its characters
+
+
+def _row_words(grid: Grid, lines: Sequence[Line]) -> dict[int, list[Placed]]:
+    """Windows OCR's words by the row their middle is on, with the columns they span; words
+    outside the grid's columns (a scrollbar read as `|`) are left out."""
+    out: dict[int, list[Placed]] = {}
+    for ln in lines:
+        for w in ln.words or (Word(ln.text, ln.box),):
+            if at := _place(grid, w):
+                r, c0, c1, chars = at
+                out.setdefault(r, []).append((c0, c1, chars))
+    return out
+
+
+def _place(grid: Grid, w: Word) -> tuple[int, int, int, str] | None:
+    """A word's row, first column, the column past its end and its characters; None
+    outside the grid."""
+    right = grid.origin_x + grid.cols * grid.char_w
+    if not grid.origin_x - grid.char_w / 2 <= w.box[0] + w.box[2] / 2 < right:
+        return None
+    r = int((w.box[1] + w.box[3] / 2 - grid.origin_y) // grid.pitch)
+    chars = "".join(ch for ch in clean(w.text) if not ch.isspace())
+    if not 0 <= r < grid.rows or not chars:
+        return None
+    c0 = max(0, round((w.box[0] - grid.origin_x) / grid.char_w))
+    c1 = min(grid.cols, round((w.box[0] + w.box[2] - grid.origin_x) / grid.char_w))
+    return r, c0, c1, chars
+
+
+def _read_well(cells: Sequence[Cell | None], words: Collection[Placed]) -> bool:
+    """Windows OCR's words put one character on each inked cell under them, and leave no
+    inked cell of the row without one: nothing dropped, split or run together. What is
+    left to doubt (case, 0 and O) the cells' shapes settle as for the engine's reads."""
+    inked = {c for c, cell in enumerate(cells) if cell}
+    covered: set[int] = set()
+    for c0, c1, chars in words:
+        under = [c for c in range(c0, c1) if c in inked]
+        if len(under) != len(chars):
+            return False
+        covered.update(under)
+    return bool(inked) and covered == inked
 
 
 def _digests(frame: Frame, grid: Grid) -> list[bytes]:

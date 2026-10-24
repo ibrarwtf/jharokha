@@ -227,7 +227,7 @@ async def test_terminal_typed_command_and_its_output():
         r = await a.act("type", text=cmd, until="KX7R4C", show="full")
         assert seen(r, source.desk.shell.files["notes.txt"][0]) and seen(r, "KX7R4C:True:")
         r = body(await run(a, "Get-Date"))
-        assert r["ok"] and r["fields"]["ok"] is True and "exit_code" not in r
+        assert r["ok"] and r["fields"]["ok"] is True and r["exit_code"] == 0
         assert seen("\n".join(r["output"]), "October 23, 2026")
         assert not seen("\n".join(r["output"]), "$LASTEXITCODE")
         log = source.desk.shell.log
