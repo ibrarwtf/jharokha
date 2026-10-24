@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.24.5
+
+- Every shell command is irreversible again: `core/readonly.py`, the allowlist that ran read-only commands under the default allow, is gone. It passed almost no real commands: agents write script blocks, `python -c`, subexpressions and parentheses. A user's allow for commands comes later, designed from use.
+
 ## v0.24.4
 
 - `--capture DIR` (server and shell verbs): each distinct frame a tool call or action step identifies is saved as `<ts>-<frame_id>.png` with a `.json` beside it (the call and its arguments, the app and view identified, the screen's OCR lines with word boxes, the regions placed), so readers can be fixed and checked offline on real screens. Off unless given; the frames hold real content, so the directory stays out of any repository (`captures/` is git-ignored). Typed text in an `act` or `do` call's arguments is saved as given.
