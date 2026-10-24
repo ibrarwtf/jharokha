@@ -1,8 +1,7 @@
 """`jharokha` runs the MCP server on stdio. In a shell the same verbs as the tools:
-`jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`, plus
-`bench`. Each verb is the
-server's tool, called in-process, so a shell command is guarded and answers exactly as the
-tool does."""
+`jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`. Each
+verb is the server's tool, called in-process, so a shell command is guarded and answers
+exactly as the tool does."""
 
 from __future__ import annotations
 
@@ -12,15 +11,12 @@ import base64
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 from jharokha import version
 from jharokha.core import actions, apps
 from jharokha.core.apps import Catalog
-from jharokha.core.screen import Screen
-from jharokha.core.text import format_concise
 from jharokha.core.trace import Trace
 
 # In a shell the user's own Enter started the command: input waits this long for the
@@ -111,27 +107,10 @@ def main() -> None:
     d.add_argument("--args", type=json.loads, default={}, help='JSON, e.g. {"folder": "Inbox"}')
     d.add_argument("--allow", choices=["read", "reversible", "irreversible"], default="reversible")
     d.add_argument("--dry-run", action="store_true")
-    le = sub.add_parser(
-        "learn",
-        help="propose an app definition from the screen, or calibrate a known app's view",
-    )
-    le.add_argument(
-        "--app",
-        required=True,
-        help="the id to learn it as, a known app, or taskbar (the session's taskbar icons; "
-        '--names {"T8": "teams"} makes them spots)',
-    )
-    le.add_argument("--view", help="the view (default: main, or a known app's first)")
-    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"P2": "thread", "I0": "send"}')
+    le = sub.add_parser("learn", help="name the session's taskbar icons as spots that switch apps")
+    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"T8": "teams"}')
     le.add_argument("--name-icons", action="store_true", help="read the icons' tooltips")
-    le.add_argument(
-        "--zoom",
-        help="calibrate zoom steps LOW..HIGH, e.g. --zoom=-3..2: presses Ctrl+0, Ctrl+= and "
-        "Ctrl+- in the session, then restores the zoom (needs --allow-input)",
-    )
-    le.add_argument("--variant", help="keep the screen now as the calibration variant NAME")
-    le.add_argument("--save", action="store_true", help="write it into apps.toml")
-    sub.add_parser("bench")
+    le.add_argument("--save", action="store_true", help="write the spots into apps.toml")
     args = p.parse_args()
     source = _source()
     trace = Trace(args.trace, include_text=args.trace_text)
@@ -145,9 +124,6 @@ def main() -> None:
         return
     if hasattr(source, "wait_idle_s"):
         source.wait_idle_s = WAIT_IDLE_S
-    if args.cmd == "bench":
-        bench(Screen(source), args.window_title)
-        return
     if args.cmd == "act" and not args.allow_input:
         sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
     catalog = _catalog(args.apps)
@@ -227,7 +203,7 @@ def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[s
         d = given(action=args.action, args=args.args, allow=args.allow, dry_run=args.dry_run)
         return [("jharokha_do", d)]
     if cmd == "learn":
-        return _learn_calls(args, catalog, given)
+        return _learn_calls(args, given)
     # act
     text = args.text
     if args.stdin:
@@ -251,40 +227,22 @@ def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[s
     return [("jharokha_act", a)]
 
 
-def _learn_calls(
-    args: argparse.Namespace, catalog: Catalog, given: Any
-) -> list[tuple[str, dict[str, Any]]]:
-    """A view jharokha knows, without --names, is calibrated (its zoom steps, or the screen
-    now as a variant) and its definition left alone; anything else is scanned and proposed.
-    The save shows the change to apps.toml, and writes it with --save: typed by the user."""
-    if (args.zoom or args.name_icons) and not args.allow_input:
-        sys.exit("input_disabled: --zoom and --name-icons send input; add --allow-input.")
+def _learn_calls(args: argparse.Namespace, given: Any) -> list[tuple[str, dict[str, Any]]]:
+    """The taskbar scanned, its tooltips read with --name-icons, and with --names the spots
+    shown as a change to apps.toml, written with --save: typed by the user. Icons are
+    numbered left to right each scan, so names given with it hold for it."""
+    if args.name_icons and not args.allow_input:
+        sys.exit("input_disabled: --name-icons rests the pointer on each icon; add --allow-input.")
     tool = "jharokha_learn"
-    if args.app == "taskbar":
-        # Icons are numbered left to right each scan, so names given with it hold for it.
-        calls = [(tool, given(step="taskbar"))]
-        if args.name_icons:
-            calls.append((tool, given(step="name_icons")))
-        if not args.names:
-            return calls
-        return calls + [
-            (tool, given(step="taskbar", names=args.names)),
-            (tool, given(step="save", confirm=args.save)),
-        ]
-    known = catalog.apps.get(args.app)
-    calibrate = known is not None and not args.names and (args.view in (None, *known.views))
-    target = given(app=args.app, view=args.view)
-    calls: list[tuple[str, dict[str, Any]]] = []
-    if not calibrate:
-        calls.append((tool, given(step="scan") | target))
-        if args.name_icons:
-            calls.append((tool, given(step="name_icons")))
-        calls.append((tool, given(step="propose", names=args.names)))
-    if args.zoom:
-        calls.append((tool, given(step="zoom", steps=args.zoom) | target))
-    if args.variant or (calibrate and not args.zoom):
-        calls.append((tool, given(step="variant", variant=args.variant) | target))
-    return calls + [(tool, given(step="save", confirm=args.save))]
+    calls = [(tool, given(step="taskbar"))]
+    if args.name_icons:
+        calls.append((tool, given(step="name_icons")))
+    if not args.names:
+        return calls
+    return calls + [
+        (tool, given(step="taskbar", names=args.names)),
+        (tool, given(step="save", confirm=args.save)),
+    ]
 
 
 async def _run(
@@ -336,52 +294,6 @@ def _actions(apps_flag: str | None) -> dict[str, actions.Action]:
         return out
     except (OSError, actions.ActionError) as e:
         sys.exit(f"actions: {e}")
-
-
-def bench(screen: Screen, window_title: str | None) -> None:
-    w = screen.window(window_title)
-    t = time.perf_counter()
-    frame = screen.source.frame(w)
-    t_cap = time.perf_counter() - t
-    screen.source.ocr(frame, None)  # warm the engine
-    t = time.perf_counter()
-    lines = screen.source.ocr(frame, None)
-    t_ocr = time.perf_counter() - t
-    t = time.perf_counter()
-    out = format_concise(lines)
-    t_fmt = time.perf_counter() - t
-    t = time.perf_counter()
-    screen.read(window_title, None)
-    screen.read(window_title, None)
-    t_cached = time.perf_counter() - t
-    rss = _peak_rss_mb()
-    print(f"window        {w.client_size[0]}x{w.client_size[1]} @ {w.dpi_scale:g}x dpi")
-    print(f"capture       {t_cap * 1000:6.0f} ms")
-    print(f"ocr           {t_ocr * 1000:6.0f} ms   {len(lines)} lines")
-    print(f"format        {t_fmt * 1000:6.0f} ms   ~{len(out) // 4} tokens concise")
-    print(f"cached read   {t_cached * 1000 / 2:6.0f} ms")
-    print(f"peak rss      {rss:6.0f} MB")
-
-
-def _peak_rss_mb() -> float:
-    import ctypes
-    from ctypes import wintypes
-
-    class PMC(ctypes.Structure):
-        _fields_ = [
-            ("cb", wintypes.DWORD),
-            ("PageFaultCount", wintypes.DWORD),
-            ("PeakWorkingSetSize", ctypes.c_size_t),
-            ("WorkingSetSize", ctypes.c_size_t),
-            ("rest", ctypes.c_size_t * 6),
-        ]
-
-    pmc = PMC(cb=ctypes.sizeof(PMC))
-    k32 = ctypes.windll.kernel32
-    k32.GetCurrentProcess.restype = wintypes.HANDLE
-    k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
-    k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
-    return pmc.PeakWorkingSetSize / 2**20
 
 
 if __name__ == "__main__":

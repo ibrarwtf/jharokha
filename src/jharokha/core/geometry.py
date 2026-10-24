@@ -42,8 +42,3 @@ def choose(
 def to_box(f: Fraction, width: int, height: int) -> Box:
     x, y = round(f[0] * width), round(f[1] * height)
     return (x, y, min(round(f[2] * width), width - x), min(round(f[3] * height), height - y))
-
-
-def to_fraction(box: Box, width: int, height: int) -> Fraction:
-    x, y, w, h = box
-    return (x / width, y / height, w / width, h / height)

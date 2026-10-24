@@ -160,8 +160,8 @@ class SessionExecutor:
         fields = {"point": (x, y), "keys": f"wheel {ticks}"}
         self._send("scroll", f"{x},{y} {ticks}", fields, lambda w: src.scroll(w, x, y, ticks))
 
-    def settle(self) -> None:
-        self.session.screen.settle(self.title)
+    def settle(self, box: Box | None = None) -> None:
+        self.session.screen.settle(self.title, box=box)
 
     def wait(self, seconds: float) -> None:
         time.sleep(seconds)

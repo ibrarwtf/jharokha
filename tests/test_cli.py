@@ -78,24 +78,6 @@ def test_do_shows_a_plan_without_input(monkeypatch, source, capsys):
         run(monkeypatch, source, "do", "teams.draft", "--args", '{"chat": "Ana", "text": "hi"}')
 
 
-def test_learn_shows_the_change_and_saves_with_save(monkeypatch, source, tmp_path, capsys):
-    from jharokha.core import apps
-
-    path = tmp_path / "apps.toml"
-    run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine")
-    assert "not saved yet" in capsys.readouterr().out and not path.exists()
-    run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine", "--save")
-    assert capsys.readouterr().out.rstrip().endswith("its regions read as mine.<region>")
-    assert "mine" in apps.load(path).apps
-    # Zoom and tooltips send input; a known view is calibrated, and must be on screen.
-    for flag in ("--zoom=-1..1", "--name-icons"):
-        with pytest.raises(SystemExit, match="input_disabled"):
-            run(monkeypatch, source, "--apps", str(path), "learn", "--app", "mine", flag)
-    with pytest.raises(SystemExit, match="layout_mismatch"):
-        run(monkeypatch, source, "--apps", str(path), "learn", "--app", "terminal", "--save")
-    assert not any(t.startswith(("pressed", "hovered")) for t, _, _ in source.items)
-
-
 def test_the_server_starts_without_numpy_onnxruntime_or_winrt():
     # They load on the first read; at start they cost about 0.25 s before tools/list.
     # onnxruntime must still come before WinRT, so the OCR engine loads it first.

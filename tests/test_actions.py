@@ -261,7 +261,7 @@ class Scripted:
     def scroll(self, x: int, y: int, ticks: int) -> None:
         self.inputs.append(f"scroll {ticks}")
 
-    def settle(self) -> None:
+    def settle(self, box=None) -> None:  # noqa: ANN001
         pass
 
     def wait(self, seconds: float) -> None:

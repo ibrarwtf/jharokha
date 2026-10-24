@@ -430,7 +430,8 @@ class Executor(Protocol):
     def type(self, text: str) -> None: ...  # never holds a newline
     def press(self, keys: str) -> None: ...
     def scroll(self, x: int, y: int, ticks: int) -> None: ...
-    def settle(self) -> None: ...  # until the screen holds still after input
+    # Until the screen holds still after input; within box only, when given.
+    def settle(self, box: Box | None = None) -> None: ...
     def wait(self, seconds: float) -> None: ...
     def now(self) -> float: ...
 
@@ -815,6 +816,7 @@ class Runner:
         got: list[Any] = []
         last_seen: tuple[str, ...] | None = None
         n = still = 0
+        why = f"{most} scrolls"
         for n in range(most + 1):
             snap = self._look()
             if p.get("collect"):
@@ -822,15 +824,18 @@ class Runner:
                 # Scrolling up (ticks > 0) reads further up: what is read now comes first.
                 got = _merge(its, got) if ticks > 0 else _merge(got, its)
             if until and _holds(until, snap, self._regions(snap), self._info(snap))[0]:
+                why = f"{_describe(until)} held"
                 break
             # end marks the list's end positively (a chat's first line): reached, nothing
             # further can hold until.
             if p.get("end") and _holds(p["end"], snap, self._regions(snap), self._info(snap))[0]:
+                why = "the list's end"
                 break
             # A list that loads more as it nears its end holds still while it loads (a Teams
             # thread fetching older messages), so a list that stops moving is no proof of its
             # end: with an until still to hold it is a failure, said as one, never an empty
-            # success. Every capture is a new frame, so "unchanged" is the text read the same.
+            # success. "Unchanged" is the region's text read the same: a caret blinking
+            # elsewhere changes the frame.
             seen = tuple(ln.text for ln in self._pool(snap, p))
             still = still + 1 if seen == last_seen else 0
             if still >= STILL_ENDS:
@@ -838,22 +843,24 @@ class Runner:
                 if until and ticks > 0:
                     self._partial(got, p)
                     raise _Fail(f"the list stopped moving before {_describe(until)} held")
+                why = "the list stopped moving: its newest end"
                 break
+            box = self._box(snap, p["region"])
             if still:
-                self.ex.settle()  # give a list that is loading more a moment longer
+                self.ex.settle(box)  # give a list that is loading more a moment longer
             if n == most:
                 if until:
                     self._partial(got, p)
                     raise _Fail(f"scrolled {most} times and {_describe(until)} did not hold")
                 break
-            box = self._box(snap, p["region"])
             self._guard(snap)
             last_seen = seen
             self.ex.scroll(box[0] + box[2] // 2, box[1] + box[3] // 2, ticks)
-            self.ex.settle()
+            self.ex.settle(box)
         if p.get("collect"):
             self._store(p["collect"], got, p)
-        return f"{n} scrolls"
+            self.res.fields["stopped"] = why
+        return f"{n} scrolls, stopped: {why}"
 
     def _partial(self, got: list[Any], p: dict[str, Any]) -> None:
         """What a collecting scroll read before it failed: a long read cut short still

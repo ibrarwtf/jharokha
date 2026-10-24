@@ -67,16 +67,22 @@ _AVATAR = re.compile(r"^[A-Z]{2}\s+(?=[A-Z][a-z])")
 # A quote's avatar reads as one letter in front of the name.
 _BADGE = re.compile(r"^[A-Za-z0-9]\s+(?=[A-Z])")
 _ELLIPSIS = re.compile(r"\s*(?:\.{2,}|…)$")
+_EDITED = re.compile(r"\s+Edited$", re.I)
+_YEAR_IN = re.compile(r"/\d{4}\b")
+_AVATAR_TOKEN = re.compile(r"^\S{1,4}\s+")
 _SECTION = re.compile(
     r"^(?:[v>›⌄]\s+(?P<any>[A-Z][\w &'-]{0,30})|(?P<known>today|yesterday|this week|last week"
     r"|this month|last month|older|pinned|favourites|favorites|chats|recent|unread"
     r"|teams and channels))$",
     re.I,
 )
-_OWN_SIDE = 0.15  # of the region's width
+# Of the region's width. Live Teams: others' text at 13%, the quotes inside their messages up
+# to 20%, your own bubbles from 32%.
+_OWN_SIDE = 0.25
 _RIGHT_EDGE = 0.15  # of the region's width
 _QUOTE_INDENT = 16  # px past the message's start
 _ALIGN = 8  # px: rows that start this close start together
+_TAIL_SLACK = 4  # items before a screen's worth that a merge still searches
 
 
 @dataclass(frozen=True)
@@ -108,10 +114,9 @@ class Item:
     def as_dict(self) -> dict[str, object]:
         if self.kind == "message":
             out: dict[str, object] = {
-                "sender": self.sender,
+                "sender": self.sender or ("me" if self.own else ""),
                 "time": self.time,
                 "text": self.text,
-                "own": self.own,
             }
             if self.quote:
                 out["quote"] = {
@@ -146,7 +151,7 @@ def items(lines: list[Line], box: Box, kind: str) -> list[Item]:
     any list) or mails (an inbox). See the module docstring for how lines become items."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {', '.join(KINDS)}, not {kind!r}")
-    rows = _rows(lines, box)
+    rows = _rows(lines, box, clipped=kind == "messages")
     if not rows:
         return []
     return _messages(rows, box) if kind == "messages" else _listed(rows, box, kind)
@@ -176,13 +181,18 @@ _CLOCKISH = re.compile(r"(?<!\S)[\dOoIl|gq]{1,2}:[\dOoIl|gq]{2}(?!\S)")
 _CLOCK_FOLD = str.maketrans("OoIl|gq", "0011199")
 
 
-def _rows(lines: list[Line], box: Box) -> list[_Row]:
+def _rows(lines: list[Line], box: Box, clipped: bool = False) -> list[_Row]:
+    """clipped: the region is a viewport that scrolls under the app's own bars, so a line
+    reaching past its top or bottom is partly hidden and reads as garbage (`men we neea 10`);
+    the next scroll shows it whole."""
     x0, y0, w, h = box
     inside = sorted(
         (
             (i, ln)
             for i, ln in enumerate(lines)
-            if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + w and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + h
+            if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + w
+            and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + h
+            and not (clipped and (ln.box[1] < y0 or ln.box[1] + ln.box[3] > y0 + h))
         ),
         key=lambda p: p[1].box[1],
     )
@@ -269,7 +279,7 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
     above: int | None = None
     day = ""
     for r in rows:
-        x, t = r.box[0], r.text
+        x, t = r.box[0], _EDITED.sub("", r.text)
         gap = r.box[1] - above if above is not None else None
         above = r.box[1] + r.box[3]
         centred = abs(x + r.box[2] / 2 - middle) <= _CENTRED * box[2] and x > side
@@ -285,11 +295,15 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
         badge = _BADGE.match(t)
         head = (badge and _HEADER.match(t[badge.end() :])) or _HEADER.match(t)
         head = head if head and len(head["name"].split()) <= 5 else None
-        if head and (own or (cur is not None and not cur.own and x >= cur.x + _QUOTE_INDENT)):
-            if own and (cur is None or not cur.own or cur.quote):
-                cur = _Draft(own=True, x=x, cut=not drafts)
+        # A quote's header has the year (25/09/2026 10:49), a message's never does: a quote
+        # whose message began above the region's top is still a quote.
+        quoted = bool(head and _YEAR_IN.search(head["when"]))
+        indented = cur is not None and not cur.own and x >= cur.x + _QUOTE_INDENT
+        if head and (own or quoted or indented):
+            if cur is None or (own and (not cur.own or cur.quote)) or (quoted and cur.quote):
+                cur = _Draft(own=own, x=x, cut=not drafts)
                 drafts.append(cur)
-            if cur is not None and cur.quote is None:
+            if cur.quote is None:
                 name, trunc = _name(head["name"])
                 cur.quote, cur.quote_x, cur.quoting = (name, head["when"]), x, True
                 cur.truncated |= trunc
@@ -315,6 +329,10 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
             nxt = _Draft(own=cur.own, x=cur.x, sender=cur.sender, you=cur.you)
             cur = nxt
             drafts.append(cur)
+        if not own and not cur.text and cur.sender and x < cur.x - _ALIGN:
+            # The sender's avatar sits left of the header's column, beside the first row:
+            # its initials, or what OCR makes of a photo, are no part of the text.
+            t = _AVATAR_TOKEN.sub("", t)
         cur.quoting = False
         cur.text.append(t)
         cur.rows.append(r)
@@ -423,7 +441,9 @@ def _join(a: Item, b: Item, edge: bool) -> Item | None:
     edge: a is the last item above and b the first below."""
     if a.kind != b.kind or a.own != b.own:
         return None
-    if b.cut:
+    # A message with neither sender nor time began above the read below (or is the next one
+    # under a header above it): only its text can tell which one it is.
+    if b.cut or (b.kind == "message" and not b.sender and not b.time and not b.own):
         # b lost its header to the region's top: it is a's rows from some row on.
         ra = [_fold(t) for t in a.text.split("\n")] if a.text else []
         rb = [_fold(t) for t in b.text.split("\n")] if b.text else []
@@ -456,7 +476,14 @@ def merge(older: list[Item], newer: list[Item]) -> list[Item]:
     further up (earlier messages; later mails), newer the one below it. Items match in
     order on sender or title, time, and the first 30 characters of the text, folded for
     OCR; a message cut at newer's top joins the one above whose rows it continues. box and
-    refs stay those of the read the item was taken from."""
+    refs stay those of the read the item was taken from.
+
+    A screen read below can only overlap the end of what was collected above it, so only that
+    end is searched: a short line it shares with a message days earlier (`ok`, a repeated
+    question) would otherwise pull it, and every item after it, back to there."""
+    tail = max(0, len(older) - 2 * len(newer) - _TAIL_SLACK)
+    if tail:
+        return older[:tail] + merge(older[tail:], newer)
     out: list[Item] = []
     pending: list[Item] = []
     i = 0

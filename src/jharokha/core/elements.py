@@ -100,21 +100,6 @@ def _beside(box: Box, others: list[Box]) -> tuple[bool, bool]:
 _ICONISH = set("oOQDdxXlI")
 
 
-def away_from_text(boxes: list[Box], lines: list[Line]) -> list[Box]:
-    """The boxes less than half inside the text OCR read: for a detector that boxes words
-    as elements too."""
-    spans = _text(lines)[0]
-
-    def inside(b: Box) -> int:
-        x, y, w, h = b
-        return sum(
-            max(0, min(x + w, sx + sw) - max(x, sx)) * max(0, min(y + h, sy + sh) - max(y, sy))
-            for sx, sy, sw, sh in spans
-        )
-
-    return [b for b in boxes if inside(b) < 0.5 * b[2] * b[3]]
-
-
 def _text(lines: list[Line]) -> tuple[list[Box], list[Box]]:
     """The boxes to mask as text, and the words in them. A box is each run of words in a
     line that are not icons OCR tried to read, so the gaps between its words (and glyphs OCR

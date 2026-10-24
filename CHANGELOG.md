@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.24.2
+
+From the third week of the live Teams read (a busy week: 150 messages, 439 items returned, 56k characters, past the MCP limit):
+
+- Messages read as live Teams draws them: your own side starts at 25% of the thread's width, not 15% (others' text sits at 13%, the quotes inside their messages up to 20%, so those quotes were taken for your messages); the avatar's initials left of the header's column are no part of the first row (`FK Hi Everyone`); a quote's header has the year (`25/09/2026 10:49`) and stays a quote when its message began above the region; `Edited` after a stamp is dropped; a line reaching under the thread's top or bottom bar is left out, being partly hidden.
+- Scrolled reads merge as one list: a screen is matched only against the end of what was collected (a short line shared with a message days earlier had pulled items back there), and a message with neither sender nor time is matched by its text. The same week: 282 items, its first day whole.
+- Items say what, not where: no boxes or line refs in concise output, and your messages have sender `me`. A collecting read says why it stopped (`stopped`: until held, the list's end, or its newest end).
+- Waiting for the screen to settle after a scroll watches the scrolled region only: Teams' blinking caret in the compose box kept the whole window from holding still. (v0.24.0's note said frame ids never repeat on a live capture; they do when nothing changes, but the caret changes the frame.)
+- `jharokha_learn` now does only what real use needed, the session's taskbar icons as spots (`taskbar`, `name_icons`, `save`): learning whole apps (scan, propose, verify, variants, zoom) is gone until it is needed live, `core/learn.py` keeps its outline. Its tool description is a third the length. `jharokha learn` names taskbar icons; `jharokha bench` is gone.
+- About 1,800 lines fewer.
+
 ## v0.24.1
 
 - `teams.messages` from a day (`from = "05/10"`) stopped scrolling back at the first message of that day it saw (05/10 11:25), so the day's earlier messages were left out. A day without a clock is now its start for `before`: a message later that day is not before it.

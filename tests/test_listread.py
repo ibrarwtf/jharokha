@@ -10,7 +10,7 @@ from .conftest import lines_for
 # Laid out like a chat thread measured live, with invented people and text: other people's
 # headers at x 540, their text at 551, quotes at 574, your messages at 683 under a time at
 # the right. Rows 16 px apart inside a message, a blank of 16 px or more between messages.
-THREAD_BOX = (520, 100, 700, 500)
+THREAD_BOX = (464, 100, 686, 500)  # x and width as the live thread region
 THREAD = [
     ("o", 524, 100),  # an avatar read as a letter
     ("Ana Alder", 540, 100),
@@ -195,7 +195,7 @@ LONG = [
 def page(top: int, height: int = 150) -> list[Item]:
     """What the region shows when scrolled so that thread y top is at its top."""
     rows = [(t, x, y - top + 100) for t, x, y in LONG if top <= y < top + height - 12]
-    return messages(rows, (520, 100, 700, height))
+    return messages(rows, (464, 100, 686, height))
 
 
 def test_three_pages_merge_into_one_thread():
@@ -363,3 +363,55 @@ def test_parse_when_month_names(text, want):
 def test_rows_ignore_lines_outside_the_region():
     outside = Line("Ana Alder 16/10 11:20", (10, 10, 100, 12))
     assert items([outside], THREAD_BOX, "messages") == []
+
+
+def test_live_teams_quirks():
+    # As live Teams draws them: the avatar's initials left of the header's column on the first
+    # row, an edited message's stamp, and a quote whose message began above the region.
+    got = messages(
+        [
+            ("O Ben Brook 16/10/2026 11:45", 574, 100),
+            ("Fixed it, the cache was stale", 574, 116),
+            ("Thanks, merging", 551, 132),
+            ("Ana Alder 16/10 11:50", 532, 164),
+            ("AA Morning all", 511, 180),
+            ("16/10 11:55 Edited", 1045, 212),
+            ("You are welcome", 683, 228),
+        ]
+    )
+    assert [(m.sender, m.time, m.text, m.own) for m in got] == [
+        ("", "", "Thanks, merging", False),
+        ("Ana Alder", "16/10 11:50", "Morning all", False),
+        ("", "16/10 11:55", "You are welcome", True),
+    ]
+    assert got[0].cut and got[0].quote is not None and got[0].quote.sender == "Ben Brook"
+    assert got[2].as_dict()["sender"] == "me"
+
+
+def test_merge_searches_only_the_end_of_what_was_collected():
+    early = messages([("Ana Alder 16/10 09:00", 540, 100), ("ok", 551, 116)])
+    middle = [
+        m
+        for d in range(10, 30)
+        for m in messages([(f"Ben Brook 16/10 {d}:00", 540, 100), (f"note {d}", 551, 116)])
+    ]
+    # A screen below whose first message is cut to a line the early one also had.
+    below = messages([("ok", 551, 100), ("Ana Alder 17/10 08:00", 540, 132), ("new", 551, 148)])
+    got = merge(early + middle, below)
+    assert got[: len(early + middle)] == early + middle and got[-1].time == "17/10 08:00"
+
+
+def test_merge_joins_the_next_message_under_a_header_scrolled_off():
+    above = messages(
+        [("Ana Alder 16/10 11:20", 532, 100), ("Hello", 551, 116), ("Second one", 551, 148)]
+    )
+    # Scrolled: Ana's header is gone, her first message cut, the second one without a sender.
+    below = messages(
+        [("Hello", 551, 100), ("Second one", 551, 132), ("Ben Brook 16/10 11:30", 532, 164)]
+        + [("Hi all", 551, 180)]
+    )
+    assert [(m.sender, m.text) for m in merge(above, below)] == [
+        ("Ana Alder", "Hello"),
+        ("Ana Alder", "Second one"),
+        ("Ben Brook", "Hi all"),
+    ]

@@ -147,26 +147,3 @@ def test_regions_take_the_pane_under_their_point_else_their_box():
     # `to` widens a region over cells, as a calendar grid's.
     cells = [(300, 216, 40, 905), (341, 216, 165, 34), (1001, 1036, 165, 85)]
     assert apps.pane_at(cells, (0.26, 0.19), (0.97, 0.9), W, H) == (300, 216, 866, 905)
-
-
-def test_measured_calibration_round_trips_and_replaces_its_view():
-    cal = apps.Calibration(
-        (
-            apps.Variant("-1", "Search (Ctrl+E)", (0.3, 0.02), {"thread": (0.4, 0.1, 0.6, 0.8)}),
-            apps.Variant(
-                "+1",
-                "Search (Ctrl+E)",
-                (0.25, 0.02),
-                {"thread": (0.38, 0.1, 0.62, 0.8)},
-                {"thread": apps.Grid(23.0, 11.0, (8, 4))},
-            ),
-        ),
-        focus="thread",
-    )
-    block = apps.calibration_toml("teams", "chat", cal)
-    old = 'format = 1\n[calibration.teams.chat]\nfocus = "list"\n[calibration.terminal.shell]\n'
-    text = apps.replace_calibration(old, "teams", "chat", block)
-    doc = apps.parse(text)
-    assert doc.calibration[("teams", "chat")] == cal
-    assert ("terminal", "shell") in doc.calibration
-    assert apps.replace_calibration("", "x", "main", block).startswith("format = 1\n")

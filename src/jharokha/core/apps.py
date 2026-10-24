@@ -727,71 +727,9 @@ def _key(k: str) -> str:
     return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k)
 
 
-def calibration_toml(app: str, view: str, cal: Calibration, note: str = "") -> str:
-    """The [calibration.<app>.<view>] tables for cal, in the format parse() reads. note is
-    a comment under the header, so it goes when the tables are replaced."""
-    head = f"calibration.{_key(app)}.{_key(view)}"
-    out = [f"[{head}]"] + ([f"# {note}"] if note else [])
-    anchors = {v.anchor for v in cal.variants}
-    common = next(iter(anchors)) if len(anchors) == 1 else None
-    if common:
-        out.append(f"anchor = {json.dumps(common)}")
-    for k in ("focus", "prompt"):
-        if v := getattr(cal, k):
-            out.append(f"{k} = {json.dumps(v)}")
-    if cal.readers:
-        out.append(
-            "readers = { "
-            + ", ".join(f"{_key(k)} = {json.dumps(r)}" for k, r in cal.readers.items())
-            + " }"
-        )
-
-    def body(v: Variant) -> list[str]:
-        lines = []
-        if v.anchor and not common:
-            lines.append(f"anchor = {json.dumps(v.anchor)}")
-        if v.anchor_at:
-            lines.append(f"anchor_at = {_nums(v.anchor_at)}")
-        if v.regions:
-            parts = ", ".join(f"{_key(k)} = {_nums(f)}" for k, f in v.regions.items())
-            lines.append(f"regions = {{ {parts} }}")
-        for name, g in v.grids.items():
-            parts = []
-            if g.pitch is not None:
-                parts.append(f"pitch = {g.pitch:g}")
-            if g.char_width is not None:
-                parts.append(f"char_width = {g.char_width:g}")
-            if g.origin is not None:
-                parts.append(f"origin = [{g.origin[0]}, {g.origin[1]}]")
-            lines.append(f"grids.{_key(name)} = {{ {', '.join(parts)} }}")
-        return lines
-
-    if len(cal.variants) == 1 and not cal.variants[0].name:
-        out += body(cal.variants[0])
-    else:
-        for v in cal.variants:
-            out += ["", f"[{head}.variant.{json.dumps(v.name)}]", *body(v)]
-    return "\n".join(out) + "\n"
-
-
 _HEADER = re.compile(r"^\[\[?\s*(.+?)\s*\]\]?\s*(#.*)?$")
 
 
 def _path(header: str) -> list[str]:
     """The keys of a table header, quotes removed: calibration.teams.chat.variant."-3"."""
     return [(a or b).strip() for a, b in re.findall(r'"((?:[^"\\]|\\.)*)"|([^.\s"][^."]*)', header)]
-
-
-def replace_calibration(text: str, app: str, view: str, tables: str) -> str:
-    """text with the calibration of app's view dropped and tables appended. A missing
-    file starts with `format = 1`."""
-    keep, drop = [], False
-    for line in text.splitlines():
-        if m := _HEADER.match(line.strip()):
-            drop = _path(m.group(1))[:3] == ["calibration", app, view]
-        if not drop:
-            keep.append(line)
-    body = "\n".join(keep).rstrip()
-    if not body:
-        body = f"format = {FORMAT}"
-    return body + "\n\n" + tables
