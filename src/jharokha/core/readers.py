@@ -69,8 +69,8 @@ def as_dicts(its: Sequence[Any]) -> list[dict[str, Any]]:
 
 
 def plain(its: Sequence[Any]) -> list[dict[str, Any]]:
-    """The items as an action's result holds them: concise, and without boxes."""
-    return [{k: v for k, v in d.items() if k != "box"} for d in _concise(as_dicts(its))]
+    """The items as an action's result holds them: concise."""
+    return _concise(as_dicts(its))
 
 
 def item_text(it: Any) -> str:
@@ -87,12 +87,13 @@ def item_text(it: Any) -> str:
 
 
 def _concise(v: Any) -> Any:
-    """v without refs and without empty or false fields: a third fewer tokens a message."""
+    """v without refs, boxes and empty or false fields: what an item says, not where it sat
+    on screen, which an agent reading it has no use for (detailed keeps them)."""
     if isinstance(v, dict):
         return {
             k: _concise(x)
             for k, x in v.items()
-            if k != "refs" and not (x is False or x is None or x == "" or x == [])
+            if k not in ("refs", "box") and not (x is False or x is None or x == "" or x == [])
         }
     if isinstance(v, list):
         return [_concise(x) for x in v]
@@ -103,7 +104,7 @@ def format_items(
     its: Sequence[Any], offset: int = 0, limit: int = 200, detailed: bool = False
 ) -> str:
     """The items as JSON inside the untrusted wrapper, paged as lines are. Concise leaves out
-    refs and fields that are empty or false; detailed keeps every field."""
+    refs, boxes and fields that are empty or false; detailed keeps every field."""
     page = as_dicts(its[offset : offset + limit])
     if not detailed:
         page = _concise(page)

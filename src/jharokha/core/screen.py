@@ -89,10 +89,12 @@ class Screen:
             )
         return w, frame
 
-    def settle(self, window_title: str | None, max_s: float = 3.0) -> int:
+    def settle(self, window_title: str | None, max_s: float = 3.0, box: Box | None = None) -> int:
         """Wait until the window stops changing after input: at least MIN_SETTLE_S, since the
         RDP client takes a moment to paint anything, then QUIET_S without a change, or
-        max_s for screens that never stop (a spinner). Returns the milliseconds waited."""
+        max_s for screens that never stop (a spinner). With box, only changes inside it count:
+        a caret blinking elsewhere (Teams' compose box) never lets the whole window hold still.
+        Returns the milliseconds waited."""
         start = time.monotonic()
         _, prev = self.frame(window_title)
         quiet_since = start
@@ -100,7 +102,8 @@ class Screen:
             time.sleep(POLL_S)
             _, cur = self.frame(window_title)
             now = time.monotonic()
-            if changed_bbox(prev, cur) is not None:
+            moved = changed_bbox(prev, cur)
+            if moved is not None and (box is None or _meets(moved, box)):
                 quiet_since = now
             prev = cur
             settled = now - start >= MIN_SETTLE_S and now - quiet_since >= QUIET_S
@@ -158,3 +161,7 @@ def png(frame: Frame, region: Box | None, max_long_edge: int) -> tuple[bytes, Bo
     buf = io.BytesIO()
     img.convert("RGB").save(buf, "PNG", optimize=True)
     return buf.getvalue(), box, scale
+
+
+def _meets(a: Box, b: Box) -> bool:
+    return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]

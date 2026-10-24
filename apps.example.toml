@@ -1,9 +1,7 @@
 # App definitions and calibration for jharokha. Copy to apps.toml (git-ignored) and keep
 # what you need: the server reads --apps PATH, else $JHAROKHA_APPS, else ./apps.toml.
-# The values here are synthetic, an example of the shape only; learn your own with
-# jharokha_learn (an app, a view, or a known view at each zoom: step="variant"), or in a
-# shell `jharokha --allow-input learn --app teams --zoom=-3..0 --save`, and see
-# jharokha_read(format="panes").
+# The values here are synthetic, an example of the shape only: measure your own from
+# jharokha_read(format="panes"); taskbar spots come from `jharokha learn --names ... --save`.
 #
 # Built in (src/jharokha/apps/): terminal (shell), teams (chat), outlook (mail, calendar),
 # browser (page) and generic. Everything below adds to them or replaces them. Positions are

@@ -9,7 +9,6 @@ do (without it, do only shows an action's plan)."""
 
 from __future__ import annotations
 
-import dataclasses
 import difflib
 import functools
 import json
@@ -33,7 +32,7 @@ from jharokha.core.apps import Catalog
 from jharokha.core.elements import elements
 from jharokha.core.executor import SessionExecutor
 from jharokha.core.guard import Policy
-from jharokha.core.identify import THRESHOLD, Identity, identify
+from jharokha.core.identify import THRESHOLD, Identity
 from jharokha.core.locate import (
     Hit,
     Miss,
@@ -104,9 +103,8 @@ INSTRUCTIONS = (
 DO_ERRORS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked", "bad_argument")
 OPS = ("click", "double_click", "right_click", "type", "paste", "press", "scroll")
 CONDITIONS = ("text", "regex", "gone", "ready")
-MAX_SCANS = 6
 STALE = 0.05  # of the client area: a calibration anchor this far from where it was measured
-LearnStep = Literal["scan", "propose", "verify", "variant", "zoom", "name_icons", "taskbar", "save"]
+LearnStep = Literal["taskbar", "name_icons", "save"]
 TASKBAR_TIP = (120, 110, 120, 0)  # a taskbar icon's tooltip shows above it
 MAX_HOVER = 16  # icons name_icons rests the pointer on, at about a second each
 TIP_WAIT_S = 1.5  # an app shows a tooltip half a second to a second after the pointer stops
@@ -127,28 +125,14 @@ class Area:
 
 @dataclass
 class Learning:
-    """jharokha_learn's state for one server session: the scans of the app being learned,
-    the proposal made from them (or the known view being calibrated), and the screens kept
-    as its calibration variants."""
+    """jharokha_learn's state for one server session: the session's taskbar icons T<n>,
+    their tooltips, and the spots named so far (`taskbar.teams` -> the icon's centre as
+    fractions), until save."""
 
-    app: str | None = None
-    view: str | None = None
-    scans: list[learn.Scan] = field(default_factory=list)
-    proposal: learn.Proposal | None = None
-    variants: list[tuple[str, learn.Scan]] = field(default_factory=list)
-    front: str | None = None  # the app and view identified at the first scan, for traces
-    # The session's taskbar (step="taskbar"): its icons T<n>, their tooltips, and the spots
-    # named so far (`taskbar.teams` -> the icon's centre as fractions), until save.
     taskbar: list[learn.Icon] = field(default_factory=list)
     tips: dict[int, str] = field(default_factory=dict)
     spots: dict[str, tuple[float, float]] = field(default_factory=dict)
-    on_taskbar: bool = False  # the last scan was the taskbar's: name_icons and save are its
     size: tuple[int, int] = (0, 0)  # the client size the taskbar was scanned at
-
-    def start(self, app: str | None, view: str | None) -> None:
-        self.app, self.view, self.scans, self.proposal = app, view, [], None
-        self.variants, self.front = [], None
-        self.on_taskbar = False
 
 
 def _guard(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1165,339 +1149,30 @@ def build_server(
         return f"{head}\n{body}"
 
     def jharokha_learn(
-        step: LearnStep = "scan",
-        app: str | None = None,
-        view: str | None = None,
+        step: LearnStep = "taskbar",
         names: dict[str, str] | None = None,
-        variant: str | None = None,
-        steps: str | None = None,
         confirm: bool = False,
         window_title: str | None = None,
     ) -> str:
-        """Teach jharokha an app it does not know (or a new view) from the screen, no code.
-        scan: panes P<n> (role, reader), anchors (labels the app draws), ready text, icons
-        I<n>; a scan with app starts over, later ones add screens of the view (scrolled,
-        another item open). propose (app, view, names {"P3": "thread", "I2": "send"}): a
-        definition; named icons become spots ({"spot": "<app>.send"}). verify: scans the
-        screen now (change it first), drops anchors that moved. variant (a name such as
-        '-1'): keeps this screen as a calibration variant: ask the user to change the zoom
-        (Ctrl+= / Ctrl+-) or window size and call it at each; also calibrates a known view
-        (app, view). With input allowed: name_icons rests the pointer on each icon (no
-        click) to read its tooltip; zoom (steps '-3..2') keeps a variant per Ctrl+= /
-        Ctrl+- step, then restores the zoom. taskbar: the session's taskbar icons T<n>;
-        names {"T1": "teams"} makes them the spots taskbar.<app> that switch apps
-        (name_icons after it reads their tooltips). save shows the change to the local apps.toml:
-        show it to the user, and only once they agree save with confirm=true, the one step
-        that writes; anchors that look like content (sentences, emails, phone numbers, many
-        digits) are refused."""
-        nonlocal policies
+        """Teach jharokha the session's taskbar, so focus steps can switch apps. taskbar:
+        its icons T<n>; names {"T8": "teams"} makes them the spots taskbar.<app> (app ids as
+        jharokha_apps lists them). With input allowed, name_icons rests the pointer on each
+        icon (no click) to read its tooltip and suggest names. save shows the change to the
+        local apps.toml: show it to the user, and only once they agree save with
+        confirm=true, the one step that writes. Learning whole apps is not built yet."""
         if step == "taskbar":
             return taskbar(window_title, names)
-        if step == "save" and learning.on_taskbar:
-            return save_taskbar(confirm)
-        if step == "scan":
-            frame, _, at = whole(window_title)
-            s = learn.scan(frame, screen.lines(frame, None))
-            if app or view or not learning.scans:
-                learning.start(app or learning.app, view or learning.view)
-                learning.front = f"{at.ident.app}.{at.ident.view}" if at.ident.app else None
-            first = learning.scans[0] if learning.scans else s
-            if (s.width, s.height) != (first.width, first.height):
-                raise ScreenError(
-                    "bad_argument",
-                    "this scan is of another window size than the first; learn one size at "
-                    "a time (scan with app to start over)",
-                )
-            learning.scans = [*learning.scans, s][-MAX_SCANS:]
-            head = (
-                f"scan {len(learning.scans)} of {learning.app or '(name the app on propose)'}"
-                f"; jharokha identifies this screen as {identity_head(at.ident)}"
-            )
-            hint = (
-                "next: name the regions (and icons) and learn(step='propose', app=..., "
-                "view=..., names={'P<n>': 'name', 'I<n>': 'name'}); a second scan of the "
-                "same view (scrolled, another item open) keeps only anchors that stay put"
-            )
-            if s.icons:
-                hint += "; ask the user what the icons are, or name_icons reads their tooltips"
-            return f"{head}\n{learn.describe(s)}\n{hint}"
-        if step == "propose":
-            app_id = app or learning.app
-            view_id = view or learning.view or "main"
-            if not app_id:
-                raise ScreenError("bad_argument", "propose needs app, the id to learn it as")
-            if not learning.scans:
-                frame, _, _ = whole(window_title)
-                learning.scans = [learn.scan(frame, screen.lines(frame, None))]
-            panes_n: dict[int, str] = {}
-            icons_n: dict[int, str] = {}
-            for k, name in (names or {}).items():
-                m = re.fullmatch(r"([PI]?)(\d+)", str(k))
-                if not m:
-                    raise ScreenError(
-                        "bad_argument", f"names: '{k}' is not a pane like P3 or an icon like I2"
-                    )
-                (icons_n if m[1] == "I" else panes_n)[int(m[2])] = name
-            known_app = session.catalog.apps.get(app_id)
-            try:
-                p = learn.propose(
-                    learning.scans, app_id, view_id, panes_n, known_app, icons=icons_n
-                )
-            except apps.AppError as e:
-                raise ScreenError("bad_argument", str(e)) from None
-            learning.app, learning.view, learning.proposal = app_id, view_id, p
-            learning.variants = []
-            ver = learn.verify(p.app, view_id, learning.scans, session.catalog.apps.values())
-            return proposal_text(p, ver, "proposal")
-        if step == "variant":
-            return add_variant(window_title, app, view, variant)
-        if step == "zoom":
-            return zoom_variants(window_title, app, view, steps or "-2..2")
+        if not learning.taskbar:
+            raise ScreenError("bad_argument", "scan the taskbar first: learn(step='taskbar')")
         if step == "name_icons":
-            return name_icons(window_title)
-        if step == "verify":
-            p = learning.proposal
-            if p is None:
-                raise ScreenError("bad_argument", "nothing proposed yet: learn(step='propose')")
-            frame, _, _ = whole(window_title)
-            learning.scans = [*learning.scans, learn.scan(frame, screen.lines(frame, None))]
-            learning.scans = learning.scans[-MAX_SCANS:]
-            ver = learn.verify(p.app, p.view, learning.scans, session.catalog.apps.values())
-            learning.proposal = p = learn.refine(p, ver)
-            return proposal_text(p, ver, "verified")
-        p = learning.proposal
-        if p is None:
-            raise ScreenError("bad_argument", "nothing proposed yet: learn(step='propose')")
-        if apps_path is None:
-            raise ScreenError(
-                "bad_argument",
-                "this server has no apps.toml to save into (start it with --apps PATH); the "
-                "proposal's TOML can be added to one by hand",
-            )
-        old = apps_path.read_text(encoding="utf-8") if apps_path.exists() else ""
-        try:
-            text = learn.save(old, p)
-            doc = apps.parse(text, str(apps_path))
-            new = session.catalog.replacing(doc)
-        except apps.AppError as e:
-            raise ScreenError("bad_argument", f"not saved: {e}") from None
-        if not confirm:
-            diff = "".join(
-                difflib.unified_diff(
-                    old.splitlines(keepends=True),
-                    text.splitlines(keepends=True),
-                    str(apps_path),
-                    str(apps_path),
-                    n=1,
-                )
-            )
-            return (
-                f"not saved yet. The change to {apps_path} is below: show it to the user, and "
-                "only once they agree call learn(step='save', confirm=true).\n"
-                + wrap_untrusted(diff or "(no change)")
-            )
-        apps_path.write_text(text, encoding="utf-8")
-        policies = new.policies()
-        session.catalog, session.last = new, None
-        learning.start(None, None)
-        if p.calibration_only:
-            return f"saved the calibration of {p.app.id}.{p.view} to {apps_path} and reloaded"
-        return (
-            f"saved {p.app.id}.{p.view} to {apps_path} and reloaded: jharokha_status names it "
-            f"when it is on screen, and its regions read as {p.app.id}.<region>"
-        )
-
-    def proposal_text(p: learn.Proposal, ver: learn.Verification, what: str) -> str:
-        vw = p.app.views[p.view]
-        regions = ", ".join(
-            f"{p.app.id}.{name}=P{p.regions[name]} {r.label}" + (" focus" if r.focus else "")
-            for name, r in vw.regions.items()
-            if name in p.regions
-        )
-        confs = [c.identity.confidence for c in ver.checks]
-        spots = ", ".join(f"{p.app.id}.{k}" for k in p.app.spots)
-        spots = f"; spots {spots}" if spots else ""
-        head = (
-            f"{what}: {p.app.id}.{p.view} from {len(ver.checks)} scans; regions {regions}"
-            f"{spots}; identified on them {'ok' if ver.ok else 'with problems'}, confidence "
-            f"{min(confs) if confs else 0}"
-        )
-        # Problems name anchors, which are screen text: inside the wrapper with the rest.
-        problems = "\n".join(f"- {x}" for x in ver.problems) or "(none)"
-        hint = (
-            "next: verify on another screen of the view, variant or zoom for other zoom "
-            "levels, then save (it shows the change first)"
-            if ver.ok
-            else "verify again on another screen of the view, or rename regions and propose again"
-        )
-        body = wrap_untrusted(
-            f"problems:\n{problems}\nanchors: {', '.join(p.anchors)}\nready: {vw.ready}\n{p.text}"
-        )
-        return f"{head}\n{body}\n{hint}"
-
-    # Learning with the screen at other zoom levels and sizes, and icons by their tooltips
-
-    def calibrating(app: str | None, view: str | None) -> learn.Proposal:
-        """What variants calibrate: the proposal, or a view already known (a built-in app
-        at the user's zoom), whose definition then stays as it is."""
-        p = learning.proposal
-        if p is not None and app in (None, p.app.id) and view in (None, p.view):
-            return p
-        app_id = app or learning.app
-        known_app = session.catalog.apps.get(app_id or "")
-        if known_app is None:
-            raise ScreenError(
-                "bad_argument",
-                "variant and zoom calibrate a proposal (learn(step='propose') first) or a "
-                f"known app's view (app='teams', view='chat'); no app '{app_id}'",
-            )
-        view_id = view or (learning.view if learning.app == known_app.id else None)
-        view_id = view_id or next(iter(known_app.views))
-        if view_id not in known_app.views:
-            raise ScreenError(
-                "bad_argument", f"{known_app.id} has the views {', '.join(known_app.views)}"
-            )
-        if learning.app != known_app.id or learning.view != view_id:
-            learning.start(known_app.id, view_id)
-        learning.proposal = p = learn.Proposal(known_app, view_id, None, calibration_only=True)
-        learning.variants = []
-        return p
-
-    def on_target(p: learn.Proposal, s: learn.Scan, code: str) -> Identity:
-        """Refuses (code) unless the screen scanned is p's app and view: input meant for
-        it must not reach another app, and a variant of another app would be nonsense."""
-        pool = [a for a in session.catalog.apps.values() if a.id != p.app.id] + [p.app]
-        who = identify(pool, list(s.lines), list(s.raw), s.background, s.width, s.height)
-        try:
-            guard.check_front(f"{p.app.id}.{p.view}", who.app, who.view, who.confidence)
-        except guard.WrongApp as e:
-            raise ScreenError(code, f"{e}; nothing was sent") from None
-        return who
-
-    def recalibrate(p: learn.Proposal, scans: list[tuple[str, learn.Scan]]) -> learn.Proposal:
-        """p with one calibration variant per scan, keeping the focus, prompt and readers
-        set before."""
-        try:
-            cal = learn.variants(p.app, p.view, [s for _, s in scans], [n for n, _ in scans])
-        except apps.AppError as e:
-            raise ScreenError("layout_mismatch", str(e)) from None
-        before = session.catalog.calibration.get((p.app.id, p.view))
-        if before:
-            cal = dataclasses.replace(
-                cal, focus=before.focus, prompt=before.prompt, readers=dict(before.readers)
-            )
-        return dataclasses.replace(p, calibration=cal)
-
-    def variants_text(p: learn.Proposal, head: str) -> str:
-        assert p.calibration is not None
-        rows = [
-            f"{v.name or '(default)'}: anchor at {list(v.anchor_at or ())}, "
-            f"{len(v.regions)} regions" + (f", grids {', '.join(v.grids)}" if v.grids else "")
-            for v in p.calibration.variants
-        ]
-        anchor = p.calibration.variants[0].anchor
-        body = wrap_untrusted(f"anchor: {anchor}\n" + "\n".join(rows))
-        hint = "next: more variants, or save (it shows the change to apps.toml first)"
-        return f"{head}\n{body}\n{hint}"
-
-    def add_variant(title: str | None, app: str | None, view: str | None, name: str | None) -> str:
-        p = calibrating(app, view)
-        frame, _, _ = whole(title)
-        s = learn.scan(frame, screen.lines(frame, None))
-        on_target(p, s, "layout_mismatch")
-        kept = list(learning.variants)
-        if not kept and not p.calibration_only and learning.scans:
-            kept.append(("base", learning.scans[0]))  # the screen the proposal was made on
-        name = name or f"v{len(kept) + 1}"
-        if not re.fullmatch(r"[A-Za-z0-9_+-]{1,16}", name) or name in dict(kept):
-            raise ScreenError(
-                "bad_argument", f"variant '{name}': a new short name such as '-1' or 'wide'"
-            )
-        q = recalibrate(p, [*kept, (name, s)])
-        assert q.calibration is not None
-        *others, new = q.calibration.variants
-        for o in others:
-            a, b = o.anchor_at, new.anchor_at
-            if a and b and max(abs(a[0] - b[0]), abs(a[1] - b[1])) < SAME_VARIANT:
+            if not allow_input:
                 raise ScreenError(
-                    "bad_argument",
-                    f"this screen is laid out as variant {o.name or '(default)'} is: change the "
-                    "zoom or the window size first",
+                    "input_disabled",
+                    "learn(step='name_icons') rests the pointer on each icon and this server "
+                    "was started without --allow-input; ask the user what each icon is",
                 )
-        learning.variants = [*kept, (name, s)]
-        learning.proposal = q
-        return variants_text(q, f"variant {name} of {p.app.id}.{p.view} kept")
-
-    def need_input(what: str) -> None:
-        if not allow_input:
-            raise ScreenError(
-                "input_disabled",
-                f"learn(step='{what}') sends input and this server was started without "
-                "--allow-input. Instead: ask the user to change the zoom and call "
-                "learn(step='variant') at each, or to say what each icon is",
-            )
-
-    def zoom_variants(title: str | None, app: str | None, view: str | None, spec: str) -> str:
-        need_input("zoom")
-        try:
-            order = learn.zoom_steps(spec)
-        except ValueError as e:
-            raise ScreenError("bad_argument", str(e)) from None
-        p = calibrating(app, view)
-        w, frame = screen.frame(title)
-        start = learn.scan(frame, _unlocked(screen.lines(frame, None)))
-        on_target(p, start, "wrong_app")
-        keys = ["ctrl+0", "ctrl+=", "ctrl+-"]
-        irreversible(p.app.input_policy, keys, None, p.app.id)
-        front = f"{p.app.id}.{p.view}"
-
-        def press(combo: str, times: int = 1) -> None:
-            for _ in range(times):
-                with tracing("press", w.title, keys=combo) as rec:
-                    rec["front"] = front
-                    screen.source.press(w, combo)
-            screen.settle(title)
-
-        got: list[tuple[int, learn.Scan]] = []
-        restored, note = 0, ""
-        try:
-            cur: int | None = None
-            for st in order:
-                if cur is not None and abs(st - cur) == 1:
-                    press("ctrl+=" if st > cur else "ctrl+-")
-                else:
-                    press("ctrl+0")
-                    if st:
-                        press("ctrl+=" if st > 0 else "ctrl+-", abs(st))
-                cur = st
-                _, f = screen.frame(title)
-                got.append((st, learn.scan(f, _unlocked(screen.lines(f, None)))))
-        finally:
-            if got:
-                named = [(f"{st:+d}", s) for st, s in sorted(got, reverse=True)]
-                try:
-                    cal = recalibrate(p, named).calibration
-                    var = learn.matching(cal, start) if cal else None
-                    restored = int(var.name) if var else 0
-                except ScreenError:
-                    restored = 0
-                try:
-                    press("ctrl+0")
-                    if restored:
-                        press("ctrl+=" if restored > 0 else "ctrl+-", abs(restored))
-                except ScreenError as e:
-                    note = (
-                        f"the zoom was NOT put back ({e.code}): ask the user to set it to "
-                        f"step {restored:+d} from the default (Ctrl+0)"
-                    )
-        named = [(f"{st:+d}", s) for st, s in sorted(got, reverse=True)]
-        q = recalibrate(p, named)
-        learning.variants, learning.proposal = named, q
-        head = (
-            f"zoomed {p.app.id}.{p.view} through steps {spec} with Ctrl+0, Ctrl+= and Ctrl+-; "
-            + (note or f"back to step {restored:+d}")
-        )
-        return variants_text(q, head)
+            return name_taskbar(window_title)
+        return save_taskbar(confirm)
 
     def taskbar(title: str | None, names: dict[str, str] | None) -> str:
         """The session's taskbar icons T<n>, and with names ({"T2": "teams"}) those named
@@ -1513,7 +1188,6 @@ def build_server(
                 raise ScreenError("region_unknown", "the session's taskbar cannot be placed")
             learning.taskbar = learn.taskbar_icons(frame, lines, placed[0])
             learning.tips, learning.size = {}, (frame.width, frame.height)
-        learning.on_taskbar = True
         w, h = learning.size
         for k, name in (names or {}).items():
             m = re.fullmatch(r"T(\d+)", str(k))
@@ -1600,84 +1274,7 @@ def build_server(
         session.catalog, session.last = new, None
         saved = ", ".join(learning.spots)
         learning.spots, learning.taskbar, learning.tips = {}, [], {}
-        learning.on_taskbar = False
         return f"saved the session spots {saved} to {apps_path} and reloaded"
-
-    def name_icons(title: str | None) -> str:
-        need_input("name_icons")
-        if learning.on_taskbar and learning.taskbar:
-            return name_taskbar(title)
-        if not learning.scans:
-            raise ScreenError("bad_argument", "scan first: learn(step='scan', app=...)")
-        first = learning.scans[0]
-        w, frame = screen.frame(title)
-        lines = _unlocked(screen.lines(frame, None))
-        now = learn.scan(frame, lines)
-        if learning.proposal is not None:
-            on_target(learning.proposal, now, "wrong_app")
-        else:
-            kept = learn.stable_anchors([first, now])
-            if not kept or len(kept) * 2 < len(first.anchors):
-                raise ScreenError(
-                    "wrong_app",
-                    "the screen is not the one scanned (its anchors are gone); bring the app "
-                    "back or scan again; nothing was sent",
-                )
-        todo = [i for i in first.icons if icon_at(i.center, now.elements)][:MAX_HOVER]
-        park = (frame.width - 2, frame.height // 2)  # a scrollbar: no tooltip there
-        found: dict[int, str] = {}
-
-        def hover(at: tuple[int, int]) -> None:
-            with tracing("hover", w.title, point=at) as rec:
-                rec["front"] = learning.front
-                screen.source.hover(w, *at)
-
-        try:
-            for ic in todo:
-                x, y, bw, bh = ic.box
-                near = (max(0, x - TIP_AREA[0]), max(0, y - TIP_AREA[1]))
-                box = (
-                    near[0],
-                    near[1],
-                    min(frame.width, x + bw + TIP_AREA[2]) - near[0],
-                    min(frame.height, y + bh + TIP_AREA[3]) - near[1],
-                )
-                _, base = screen.frame(title)
-                before = screen.lines(base, box)
-                hover(ic.center)
-                changed_from(title, base)
-                screen.settle(title)
-                _, f = screen.frame(title)
-                tip = learn.tooltip(before, screen.lines(f, box), ic.box)
-                if tip:
-                    found[ic.index] = tip
-                hover(park)
-                back_to(title, base)
-        except ScreenError:
-            hover(park)
-            raise
-        rows, suggested = [], {}
-        for ic in todo:
-            tip = found.get(ic.index)
-            slug = learn.icon_name(tip) if tip else None
-            if slug and slug not in suggested.values():
-                suggested[f"I{ic.index}"] = slug
-            rows.append(
-                f"I{ic.index} P{ic.pane} {list(ic.center)} "
-                + (f'tooltip "{tip}" -> {slug}' if tip else "no tooltip")
-            )
-        skipped = len(first.icons) - len(todo)
-        head = (
-            f"rested the pointer on {len(todo)} icons of the first scan, one at a time (no "
-            f"click), then moved it away; {len(found)} showed a tooltip"
-        )
-        if skipped:
-            head += f"; {skipped} not hovered (not on screen now, or past {MAX_HOVER})"
-        body = wrap_untrusted(
-            "\n".join(rows) + f"\nnames: {json.dumps(suggested, ensure_ascii=False)}"
-        )
-        hint = "next: ask the user to agree on the names, then propose with them in names"
-        return f"{head}\n{body}\n{hint}"
 
     def name_taskbar(title: str | None) -> str:
         """Rests the pointer on each taskbar icon (no click) and reads the tooltip above it."""

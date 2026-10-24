@@ -310,4 +310,3 @@ def test_grid_takes_calibrated_pitch_width_and_origin():
     ]
     out = text.grid(lines, (0, 0, 200, 100), pitch=20, char_width=10, origin=(10, 2))
     assert [ln.text for ln in out] == ["ab", "   cd"]
-    assert text.grid_metrics(lines, (0, 0, 200, 100)) == (21.0, 10.0, (13, 2))

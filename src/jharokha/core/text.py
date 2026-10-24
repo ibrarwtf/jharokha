@@ -194,16 +194,6 @@ def _metrics(words: list[Word]) -> tuple[float, float, float, float]:
     return pitch, cw, left, top
 
 
-def grid_metrics(lines: list[Line], box: Box) -> tuple[float, float, tuple[int, int]] | None:
-    """What learning writes for a grid region's calibration: row pitch and character width in
-    pixels, and the first cell's top-left relative to the region. None without text."""
-    words = [w for ln in _within(lines, box) for w in (ln.words or (Word(ln.text, ln.box),))]
-    if len(words) < 2:
-        return None
-    pitch, cw, left, top = _metrics(words)
-    return pitch, cw, (round(left - box[0]), round(top - pitch / 2 - box[1]))
-
-
 def grid(
     lines: list[Line],
     box: Box,

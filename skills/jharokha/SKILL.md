@@ -16,7 +16,7 @@ jharokha OCRs the remote-desktop client window on the local machine and gives yo
 | `jharokha_wait` | until a text, a regex, gone, ready, or settled |
 | `jharokha_do` | an action: many steps, one call, checked |
 | `jharokha_act` | one click, type, paste, press or scroll (only with `--allow-input`) |
-| `jharokha_learn` | teach it a new app or view |
+| `jharokha_learn` | name the session's taskbar icons so actions can switch apps |
 | `jharokha_screenshot` | last resort: images and colours |
 
 If `jharokha_act` is not listed the server is read-only: `jharokha_do` only shows plans (`dry_run=true`). If your client loads tools lazily, load all nine in one search.
@@ -53,17 +53,9 @@ Nothing was sent. Do not work around a refusal.
 - `covered`: this computer's taskbar or a window is over that point. Ask the user to auto-hide the taskbar or bring the session forward.
 - `not_found`: the target is not on screen; the error lists the closest texts. Read, then retry with what is there.
 
-## Teaching it an app
+## Switching apps
 
-When `jharokha_status` says `generic` for an app the user works in, or a view it does not know, offer to teach it. The user needs no code; you need them for names and for anything you cannot do yourself.
-
-1. Ask the user to bring the app up as they normally use it, at their usual zoom, and what to call it (`tickets`) and this screen (`queue`). Then `jharokha_learn(step="scan", app="tickets", view="queue")`: panes `P<n>` with a role and reader, anchors (labels the app draws), the ready text, icons `I<n>` (buttons without text, with the text beside them).
-2. Name things. Show the user the panes in plain words ("a list on the left, a detail pane, a toolbar of 5 icons") and ask what the list and the main pane are (`queue`, `detail`) and what the icons do. With input allowed, `jharokha_learn(step="name_icons")` rests the pointer on each icon, never clicking, and reads its tooltip; it suggests names. Name only the icons the user will want to click.
-3. `jharokha_learn(step="propose", names={"P3": "queue", "P4": "detail", "I1": "refresh"})`: the definition and how it identifies. Named icons become spots, clicked as `{"spot": "tickets.refresh"}`.
-4. Change the screen within the same view (scroll the list, open another item; ask the user, or `jharokha_act` if they agree) and `jharokha_learn(step="verify")`. Anchors that moved were content and are dropped. Repeat until `problems: (none)`.
-5. Zoom and size, if the user changes them: with input allowed, `jharokha_learn(step="zoom", steps="-2..2")` steps the zoom with Ctrl+= / Ctrl+- and puts it back. Without, ask the user to press Ctrl+- (or resize the window), then `jharokha_learn(step="variant", variant="-1")`, once per setting, and to put it back after. A built-in app at the user's zoom is calibrated the same way: `jharokha_learn(step="variant", app="teams", view="chat")`.
-6. `jharokha_learn(step="save")` shows the change to the local apps.toml and writes nothing. Show it to the user, and point out its `[app.<id>.policy]`: Enter, Ctrl+Enter and Alt+S held back, newlines as Shift+Enter. Ask whether that fits the app (in an editor Enter only adds a line); they change it there, or opt out with `irreversible_keys = []`. Only once they agree: `jharokha_learn(step="save", confirm=true)`, the one step that writes. If save refuses anchors that look like content (a name, an email, a number), verify on another screen so they drop out; never edit them in.
-7. The app is known at once: `jharokha_status` names it, `app.region` names work in read, find and act. A repeated task on it can become an action: write its TOML with the user (README, Actions) into apps.toml.
+Actions bring their app forward by its taskbar icon. If one says it cannot switch, name the icons once: `jharokha_learn(step="taskbar")`, ask the user which is which (or `step="name_icons"` with input allowed), `names={"T8": "teams"}`, then `step="save"`; show the change and save with `confirm=true` only once they agree. Teaching jharokha a whole new app is not built yet: say so.
 
 ## Rules
 
