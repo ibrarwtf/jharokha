@@ -15,7 +15,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -108,8 +108,6 @@ LearnStep = Literal["taskbar", "name_icons", "save"]
 TASKBAR_TIP = (120, 110, 120, 0)  # a taskbar icon's tooltip shows above it
 MAX_HOVER = 16  # icons name_icons rests the pointer on, at about a second each
 TIP_WAIT_S = 1.5  # an app shows a tooltip half a second to a second after the pointer stops
-TIP_AREA = (160, 60, 320, 140)  # px left, above, right and below an icon its tooltip may take
-SAME_VARIANT = 0.003  # of the client area: anchors this close are the same zoom and size
 
 
 @dataclass(frozen=True)
@@ -200,11 +198,13 @@ def build_server(
     trace: Trace | None = None,
     actions: Mapping[str, act.Action] | None = None,
     apps_path: Path | None = None,
+    window_title: str | None = None,
 ) -> MCPServer:
     """trace, when enabled, gets a record of every input that reached the input guard: what
     was sent, or the error that stopped it. actions are what jharokha_do runs (default the
     built-ins). apps_path is the apps.toml jharokha_learn saves into; without it, learning
-    shows its proposal and saves nothing."""
+    shows its proposal and saves nothing. window_title (part of the title) picks the session
+    window when more than one is open: one session a server, so no tool takes it."""
     screen = Screen(source)
     # The catalog is session.catalog from here on: learning an app replaces it.
     session = Session(screen, catalog or apps.catalog())
@@ -467,15 +467,14 @@ def build_server(
             out.append("spots: " + "; ".join(spots))
         return "\n".join(out)
 
-    def jharokha_status(window_title: str | None = None) -> str:
+    def jharokha_status() -> str:
         """Call this first. Is there a remote-desktop window and can it be read (state:
         normal, minimized, locked, no_frames, window_not_found)? Where you are: app and
         view (generic when none is known) with a confidence 0-1 and the runner-up, ready
         false while the view loads, facts such as a browser's url (untrusted). warnings:
         what would stop input (this computer's taskbar or a window over the session,
         another agent's lease, the user at the keyboard, a lock screen, calibration that
-        no longer fits). input_allowed says whether act and do can send input. Pass
-        window_title (part of the title) when more than one session is open."""
+        no longer fits). input_allowed says whether act and do can send input."""
         info: dict[str, Any] = {
             "version": v,
             "input_allowed": allow_input,
@@ -623,7 +622,6 @@ def build_server(
         verify: Verify = "none",
         offset: int = 0,
         limit: int = 200,
-        window_title: str | None = None,
     ) -> str:
         """Read the screen as text. Default: the focus region of the app on screen (a Teams
         thread, a mail's reading pane, a terminal's body), or the whole screen when no app
@@ -745,7 +743,6 @@ def build_server(
         all: bool = False,
         locator: dict[str, Any] | None = None,
         verify: Verify = "none",
-        window_title: str | None = None,
     ) -> str:
         """Find one thing on screen, cheaper than reading it all: {text, box, center} per
         match, center being what act clicks. query matches case-insensitively and
@@ -784,7 +781,6 @@ def build_server(
     def jharokha_screenshot(
         region: Region = None,
         max_long_edge: int = 1024,
-        window_title: str | None = None,
     ) -> list[Any]:
         """A PNG of the window or a region: the last resort. Use it only for what text
         cannot tell (images, icons you cannot place with find's locator, colours), or when
@@ -857,7 +853,6 @@ def build_server(
         ready: bool = False,
         region: Region = None,
         timeout_s: float = 10,
-        window_title: str | None = None,
     ) -> str:
         """Wait instead of polling: until text appears (matched as find matches), a regex
         matches (a prompt like '^PS .*>$', 'saved|Error'), a text is gone, or ready=true
@@ -1002,7 +997,6 @@ def build_server(
         until: str | dict[str, Any] | None = None,
         allow: Literal["irreversible"] | None = None,
         show: Show = "changed",
-        window_title: str | None = None,
     ) -> str:
         """One input to the session, when no jharokha_do action fits. op: click,
         double_click, right_click (a target), type (text; a newline is Enter, or the app's
@@ -1099,7 +1093,6 @@ def build_server(
         args: dict[str, Any] | None = None,
         allow: Literal["read", "reversible", "irreversible"] = "reversible",
         dry_run: bool = False,
-        window_title: str | None = None,
     ) -> str:
         """Run an action: a named, checked sequence of steps in one call, with a structured
         result, such as teams.messages {chat, from, to}, teams.draft {chat, text},
@@ -1133,7 +1126,9 @@ def build_server(
         ex = SessionExecutor(session, window_title, do_trace(title, holder, results))
         holder.append(ex)
         start = time.monotonic()
-        r = act.Runner(ex, allow, policies).run(a, args or {}, dry_run)
+        hold = getattr(screen.source, "held", None)
+        with hold(screen.window(window_title)) if hold and not dry_run else nullcontext():
+            r = act.Runner(ex, allow, policies).run(a, args or {}, dry_run)
         ms = int((time.monotonic() - start) * 1000)
         head = f"action={a.id} ok={str(r.ok).lower()} ms={ms}"
         code = (r.failed or {}).get("code")
@@ -1152,7 +1147,6 @@ def build_server(
         step: LearnStep = "taskbar",
         names: dict[str, str] | None = None,
         confirm: bool = False,
-        window_title: str | None = None,
     ) -> str:
         """Teach jharokha the session's taskbar, so focus steps can switch apps. taskbar:
         its icons T<n>; names {"T8": "teams"} makes them the spots taskbar.<app> (app ids as

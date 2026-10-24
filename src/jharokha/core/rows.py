@@ -95,11 +95,6 @@ def spanning(grid: Grid, box: Box) -> Grid:
     return replace(grid, cols=int((box[0] + box[2] - grid.origin_x) / grid.char_w + 0.25))
 
 
-def row_boxes(grid: Grid, which: Sequence[int] | None = None) -> list[Box]:
-    """Full-width strips aligned to the grid, for the rows in which (default all)."""
-    return [grid.row_box(r) for r in (range(grid.rows) if which is None else which)]
-
-
 # ---------------------------------------------------------------------------- calibration
 
 

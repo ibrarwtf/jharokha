@@ -120,7 +120,9 @@ def main() -> None:
 
         catalog = _catalog(args.apps)
         acts = _actions(args.apps)
-        build_server(source, args.allow_input, catalog, trace, acts, apps_path).run("stdio")
+        build_server(
+            source, args.allow_input, catalog, trace, acts, apps_path, args.window_title
+        ).run("stdio")
         return
     if hasattr(source, "wait_idle_s"):
         source.wait_idle_s = WAIT_IDLE_S
@@ -130,7 +132,15 @@ def main() -> None:
     calls = _calls(args, catalog)
     from jharokha.server import build_server
 
-    server = build_server(source, args.allow_input, catalog, trace, _actions(args.apps), apps_path)
+    server = build_server(
+        source,
+        args.allow_input,
+        catalog,
+        trace,
+        _actions(args.apps),
+        apps_path,
+        args.window_title,
+    )
     done, error = asyncio.run(_run(server, calls))
     for text, image in done:
         if args.cmd == "screenshot":
@@ -166,10 +176,9 @@ def _target(v: str | None) -> Any:
 
 def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[str, Any]]]:
     """The tool calls a shell command stands for."""
-    title = {"window_title": args.window_title} if args.window_title else {}
 
     def given(**kw: Any) -> dict[str, Any]:
-        return {k: v for k, v in kw.items() if v not in (None, False)} | title
+        return {k: v for k, v in kw.items() if v not in (None, False)}
 
     cmd = args.cmd
     if cmd in ("status", "apps"):

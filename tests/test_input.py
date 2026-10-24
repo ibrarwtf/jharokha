@@ -180,3 +180,35 @@ def test_every_send_is_noted_as_our_own_input(monkeypatch):
     monkeypatch.setattr(input, "record_own_input", lambda: calls.append("own"))
     input._send(input._mouse(0))
     assert calls == ["send", "own"]
+
+
+def test_an_action_holds_the_session_in_front_and_gives_it_back_once(monkeypatch):
+    from jharokha.win import input
+
+    fronts: list[int] = []
+    state = {"front": OTHER}
+
+    class User32:
+        def GetForegroundWindow(self) -> int:  # noqa: N802
+            return state["front"]
+
+        def GetCursorPos(self, p: object) -> int:  # noqa: N802
+            return 1
+
+        def SetCursorPos(self, x: int, y: int) -> int:  # noqa: N802
+            return 1
+
+    def bring(hwnd: int) -> None:
+        state["front"] = hwnd
+        fronts.append(hwnd)
+
+    monkeypatch.setattr(input, "user32", User32())
+    monkeypatch.setattr(input, "_bring_to_front", bring)
+    monkeypatch.setattr(input.time, "sleep", lambda s: None)
+    with input.held(SESSION):
+        for _ in range(3):
+            with input._active(SESSION):
+                pass
+    # In once for the first scroll, back to the user's window once at the end.
+    assert fronts == [SESSION, SESSION, SESSION, OTHER]
+    assert state["front"] == OTHER

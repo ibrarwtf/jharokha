@@ -44,9 +44,6 @@ class Identity:
         return self.app is not None and self.app != GENERIC
 
 
-LOCKED = Identity(None, None, 1.0)
-
-
 class _Evidence:
     """The screen, and each cue scored on it once."""
 
