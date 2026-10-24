@@ -155,6 +155,27 @@ def _bring_to_front(hwnd: int) -> None:
     user32.AttachThreadInput(me, fg_thread, False)
 
 
+# The window held in front for a run of inputs (an action), and the one in front before it.
+_held: dict[int, int] = {}
+
+
+@contextmanager
+def held(hwnd: int) -> Iterator[None]:
+    """hwnd keeps the foreground across the inputs inside, and the window in front before
+    them gets it back once, at the end: an action's thirty scrolls would otherwise switch
+    the foreground sixty times, at 0.3 s each for the session to take it."""
+    if hwnd in _held:
+        yield
+        return
+    _held[hwnd] = user32.GetForegroundWindow()
+    try:
+        yield
+    finally:
+        prev = _held.pop(hwnd)
+        if prev and prev != hwnd and user32.GetForegroundWindow() == hwnd:
+            _bring_to_front(prev)
+
+
 @contextmanager
 def _active(
     hwnd: int, x: int | None = None, y: int | None = None, park: bool = True
@@ -179,7 +200,7 @@ def _active(
         if moved and park:
             _park(hwnd)
         user32.SetCursorPos(old.x, old.y)
-        if prev and prev != hwnd:
+        if prev and prev != hwnd and hwnd not in _held:
             _bring_to_front(prev)
 
 

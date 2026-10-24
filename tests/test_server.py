@@ -85,7 +85,7 @@ async def test_errors_carry_code_and_next_step(source):
     assert r.is_error and text(r).startswith("region_out_of_bounds:")
     source.present = False
     r = await call(source, "jharokha_read")
-    assert r.is_error and "window_not_found" in text(r) and "window_title" in text(r)
+    assert r.is_error and "window_not_found" in text(r) and "--window-title" in text(r)
     source.present, source.minimized = True, True
     r = await call(source, "jharokha_read")
     assert r.is_error and text(r).startswith("minimized:")

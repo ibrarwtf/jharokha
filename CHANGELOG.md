@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.24.3
+
+- An action keeps the session window in front for all its inputs and gives the foreground back to the window before it once, at the end, instead of switching it twice for every scroll (0.3 s each for the session to take it): about a fifth of each scroll step in `teams.messages`.
+- No tool takes `window_title`: one session window a server, picked with `--window-title` when more than one is open. The tool list is about 240 tokens shorter.
+- Removed what nothing called: `text.command_output`, `rows.row_boxes`, three constants.
+
 ## v0.24.2
 
 Reading a busy Teams chat over several days, which could return more than the MCP size limit:

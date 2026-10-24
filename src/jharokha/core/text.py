@@ -273,32 +273,6 @@ def _pitch(centres: list[float], h: int) -> float:
     return sorted(small)[len(small) // 2]
 
 
-def command_output(lines: list[Line], prompt: str, command: str) -> tuple[list[Line], bool] | None:
-    """What a command typed at a shell prompt printed, once the shell is back at its prompt:
-    the lines between the command's own line (the prompt, then the command) and the first
-    idle prompt below it. None while it runs. prompt is a regex for the prompt at the start
-    of a line. The bool is whether the command's line was found; when it scrolled off the
-    top, the output is everything above the prompt and its start is missing."""
-    pat = re.compile(prompt)
-    first = next((c for c in command.splitlines() if c.strip()), "")
-    want = fold(first)[:30]
-    rows = sorted(lines, key=lambda ln: ln.box[1])
-    echoes, idle = [], []
-    for i, ln in enumerate(rows):
-        t = normalize(ln.text)
-        if not (m := pat.match(t)):
-            continue
-        rest = t[m.end() :].strip()
-        if len(rest) <= 1:  # nothing typed, or the caret read as a character
-            idle.append(i)
-        elif want and difflib.SequenceMatcher(None, fold(rest)[: len(want)], want).ratio() >= 0.75:
-            echoes.append(i)
-    if echoes:
-        after = [i for i in idle if i > echoes[-1]]
-        return (rows[echoes[-1] + 1 : after[0]], True) if after else None
-    return (rows[: idle[-1]], False) if idle else None
-
-
 def lookalike(word: str) -> bool:
     return bool(_LOOKALIKE.search(word))
 

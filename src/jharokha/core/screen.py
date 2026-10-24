@@ -70,7 +70,7 @@ class Screen:
             raise ScreenError(
                 "window_not_found",
                 f"No remote-desktop window found. Candidates: {names}. "
-                "Open the remote session, or pass window_title=<part of its title>.",
+                "Open the remote session, or start jharokha with --window-title <part of it>.",
             )
         if w.minimized:
             raise ScreenError(

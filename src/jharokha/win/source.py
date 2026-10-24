@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Any
 
 from jharokha.core.guard import InputLeased, UserActive, refusal, warnings
@@ -26,6 +27,12 @@ class WindowsSource:
         # refused: 0 for the server (the agent is told), a few seconds in a shell, where the
         # Enter that started the command is the user's own last input.
         self.wait_idle_s = 0.0
+
+    def held(self, w: WindowInfo) -> AbstractContextManager[None]:
+        """The session window kept in front for a run of inputs (core.actions' Runner)."""
+        from jharokha.win import input
+
+        return input.held(w.hwnd)
 
     def window(self, window_title: str | None) -> WindowInfo | None:
         found = window.find_window(window_title, self.processes)
