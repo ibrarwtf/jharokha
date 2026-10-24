@@ -55,6 +55,13 @@ def main() -> None:
         action="store_true",
         help="with --trace, record typed text itself (default: its length and SHA-256)",
     )
+    p.add_argument(
+        "--capture",
+        metavar="DIR",
+        type=Path,
+        help="save each distinct frame read (PNG and its OCR as JSON) into DIR, to replay "
+        "offline; it holds real names, keep it out of the repo; off by default",
+    )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("status")
     sub.add_parser("apps")
@@ -121,7 +128,14 @@ def main() -> None:
         catalog = _catalog(args.apps)
         acts = _actions(args.apps)
         build_server(
-            source, args.allow_input, catalog, trace, acts, apps_path, args.window_title
+            source,
+            args.allow_input,
+            catalog,
+            trace,
+            acts,
+            apps_path,
+            args.window_title,
+            args.capture,
         ).run("stdio")
         return
     if hasattr(source, "wait_idle_s"):
@@ -140,6 +154,7 @@ def main() -> None:
         _actions(args.apps),
         apps_path,
         args.window_title,
+        args.capture,
     )
     done, error = asyncio.run(_run(server, calls))
     for text, image in done:

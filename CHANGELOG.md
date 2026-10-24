@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.24.4
+
+- `--capture DIR` (server and shell verbs): each distinct frame a tool call or action step identifies is saved as `<ts>-<frame_id>.png` with a `.json` beside it (the call and its arguments, the app and view identified, the screen's OCR lines with word boxes, the regions placed), so readers can be fixed and checked offline on real screens. Off unless given; the frames hold real content, so the directory stays out of any repository (`captures/` is git-ignored). Typed text in an `act` or `do` call's arguments is saved as given.
+- README: from 208 lines to about 95, what it does and how to use it; the details live in the code and DEVELOPMENT.md.
+
 ## v0.24.3
 
 - An action keeps the session window in front for all its inputs and gives the foreground back to the window before it once, at the end, instead of switching it twice for every scroll (0.3 s each for the session to take it): about a fifth of each scroll step in `teams.messages`. Not yet measured live.

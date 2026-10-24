@@ -27,6 +27,14 @@ The `jharokha` shell verbs are the tools called in-process, for checking a fix b
 `jharokha status`, `jharokha read --region teams.thread --format items`,
 `jharokha --allow-input do teams.messages --args '{"from": "21/09", "to": "27/09"}'`.
 
+To fix a reader without the session, capture what it read: `--capture DIR` (a global flag,
+for the server and the shell verbs alike) saves each distinct frame a tool call or action
+step identified as `<ts>-<frame_id>.png`, with a `.json` beside it holding the call, the app
+and view identified, the whole screen's OCR lines and the regions placed. Off unless given.
+The frames hold real names and messages: point DIR outside the repo (or at the git-ignored
+`captures/`) and never commit them. A replay test can then run the readers on those lines
+and regions offline.
+
 ## Release
 
 By hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — summary`, tag
