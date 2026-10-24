@@ -106,7 +106,8 @@ OPS = ("click", "double_click", "right_click", "type", "paste", "press", "scroll
 CONDITIONS = ("text", "regex", "gone", "ready")
 MAX_SCANS = 6
 STALE = 0.05  # of the client area: a calibration anchor this far from where it was measured
-LearnStep = Literal["scan", "propose", "verify", "variant", "zoom", "name_icons", "save"]
+LearnStep = Literal["scan", "propose", "verify", "variant", "zoom", "name_icons", "taskbar", "save"]
+TASKBAR_TIP = (120, 110, 120, 0)  # a taskbar icon's tooltip shows above it
 MAX_HOVER = 16  # icons name_icons rests the pointer on, at about a second each
 TIP_WAIT_S = 1.5  # an app shows a tooltip half a second to a second after the pointer stops
 TIP_AREA = (160, 60, 320, 140)  # px left, above, right and below an icon its tooltip may take
@@ -136,10 +137,18 @@ class Learning:
     proposal: learn.Proposal | None = None
     variants: list[tuple[str, learn.Scan]] = field(default_factory=list)
     front: str | None = None  # the app and view identified at the first scan, for traces
+    # The session's taskbar (step="taskbar"): its icons T<n>, their tooltips, and the spots
+    # named so far (`taskbar.teams` -> the icon's centre as fractions), until save.
+    taskbar: list[learn.Icon] = field(default_factory=list)
+    tips: dict[int, str] = field(default_factory=dict)
+    spots: dict[str, tuple[float, float]] = field(default_factory=dict)
+    on_taskbar: bool = False  # the last scan was the taskbar's: name_icons and save are its
+    size: tuple[int, int] = (0, 0)  # the client size the taskbar was scanned at
 
     def start(self, app: str | None, view: str | None) -> None:
         self.app, self.view, self.scans, self.proposal = app, view, [], None
         self.variants, self.front = [], None
+        self.on_taskbar = False
 
 
 def _guard(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -239,12 +248,19 @@ def build_server(
         at = session.where(frame, lines)
         return frame, session.shape(at, lines), at
 
+    def where_now(title: str | None, frame: Frame | None = None) -> Where:
+        """Where you are: the app and view from Windows OCR of the whole screen, without
+        reading a terminal's rows (the second engine's seconds buy nothing for that)."""
+        if frame is None:
+            _, frame = screen.frame(title)
+        return session.where(frame, _unlocked(screen.lines(frame, None)))
+
     def current(title: str | None, frame: Frame) -> Where:
         """Where you are on frame: the last identity while the pixels hold still."""
         last = session.last
         if last is not None and changed_bbox(last.frame, frame) is None:
             return last
-        return whole(title, frame)[2]
+        return where_now(title, frame)
 
     def view_of(ident: Identity, app: str) -> str | None:
         """The view of app on screen: the identified one, or else its best scoring view
@@ -501,7 +517,7 @@ def build_server(
                     if allow_input:
                         info["input"] = inp = state["input"]
                         warnings += input_warnings(inp)
-            at = whole(window_title)[2]
+            at = where_now(window_title)
             ident = at.ident
             info |= {"app": ident.app, "view": ident.view, "confidence": ident.confidence}
             if ident.ready is not None:
@@ -660,6 +676,10 @@ def build_server(
             f"frame_id={frame.frame_id} size={frame.width}x{frame.height} "
             f"{identity_head(at.ident)} region={a.label}{a.note}"
         )
+        if session.pending:
+            # Terminal rows past the second engine's budget for one read: Windows OCR's
+            # words for now, read exactly by the next read of the same screen.
+            head += f" rows_pending={session.pending} (Windows OCR only; read again to refine)"
         if fmt == "items":
             alt, note = second_reading(frame, lines, verify, range(len(lines)))
             its: list[Any]
@@ -901,13 +921,13 @@ def build_server(
             known(expect)
         elif not always:
             return Policy()
-        ident = whole(title)[2].ident
+        ident = where_now(title).ident
         rec["front"] = f"{ident.app}.{ident.view}" if ident.app else None
         if expect is not None:
             try:
                 guard.check_front(expect, ident.app, ident.view, ident.confidence)
             except guard.WrongApp as e:
-                raise ScreenError(*guard.refusal(e)) from None
+                raise ScreenError(*guard.refusal(e, session.catalog.spots)) from None
         a = session.catalog.apps.get(ident.app or "")
         return a.input_policy if a else Policy()
 
@@ -1008,7 +1028,8 @@ def build_server(
         locator as jharokha_find takes ({"right_of": "To"}, {"icon": true, ...},
         {"spot": "taskbar.teams"}); for type, paste and press it is clicked first. Guarded,
         nothing sent when refused: pass expect, the app or app.view it is meant for
-        ('terminal', 'teams.chat'): it must be in front at confidence 0.6 (wrong_app). The
+        ('terminal', 'teams.chat', or 'generic' for an app no definition knows): it must be
+        in front at confidence 0.6 (wrong_app). The
         app's policy applies: in Teams a newline is Shift+Enter, and keys that send or
         submit (Enter in Teams or a browser, Ctrl+Enter or Alt+S in Outlook) are refused
         unless allow='irreversible', which you pass only when the user asked for exactly
@@ -1163,11 +1184,17 @@ def build_server(
         (Ctrl+= / Ctrl+-) or window size and call it at each; also calibrates a known view
         (app, view). With input allowed: name_icons rests the pointer on each icon (no
         click) to read its tooltip; zoom (steps '-3..2') keeps a variant per Ctrl+= /
-        Ctrl+- step, then restores the zoom. save shows the change to the local apps.toml:
+        Ctrl+- step, then restores the zoom. taskbar: the session's taskbar icons T<n>;
+        names {"T1": "teams"} makes them the spots taskbar.<app> that switch apps
+        (name_icons after it reads their tooltips). save shows the change to the local apps.toml:
         show it to the user, and only once they agree save with confirm=true, the one step
         that writes; anchors that look like content (sentences, emails, phone numbers, many
         digits) are refused."""
         nonlocal policies
+        if step == "taskbar":
+            return taskbar(window_title, names)
+        if step == "save" and learning.on_taskbar:
+            return save_taskbar(confirm)
         if step == "scan":
             frame, _, at = whole(window_title)
             s = learn.scan(frame, screen.lines(frame, None))
@@ -1472,8 +1499,114 @@ def build_server(
         )
         return variants_text(q, head)
 
+    def taskbar(title: str | None, names: dict[str, str] | None) -> str:
+        """The session's taskbar icons T<n>, and with names ({"T2": "teams"}) those named
+        as the session spots `taskbar.<name>` that focus steps and {"spot": ...} click."""
+        if not names or not learning.taskbar:
+            frame, lines = screen.read(title, None)
+            _unlocked(lines)
+            at = session.where(frame, lines)
+            placed = session.catalog.session_box(
+                f"{apps.SESSION}.taskbar", at.panes, frame.width, frame.height
+            )
+            if placed is None:
+                raise ScreenError("region_unknown", "the session's taskbar cannot be placed")
+            learning.taskbar = learn.taskbar_icons(frame, lines, placed[0])
+            learning.tips, learning.size = {}, (frame.width, frame.height)
+        learning.on_taskbar = True
+        w, h = learning.size
+        for k, name in (names or {}).items():
+            m = re.fullmatch(r"T(\d+)", str(k))
+            if not m or int(m[1]) >= len(learning.taskbar):
+                raise ScreenError(
+                    "bad_argument",
+                    f"names: '{k}' is no taskbar icon (T0 to T{len(learning.taskbar) - 1})",
+                )
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                raise ScreenError(
+                    "bad_argument", f"names: '{name}' must be letters, digits, - or _"
+                )
+            cx, cy = learning.taskbar[int(m[1])].center
+            learning.spots[f"taskbar.{name}"] = (cx / w, cy / h)
+        return taskbar_listing()
+
+    def taskbar_listing() -> str:
+        w, h = learning.size
+        have = {
+            k.removeprefix(f"{apps.SESSION}."): spot_px(p, w, h)[:2]
+            for k, p in session.catalog.spots.items()
+        }
+        rows, suggested = [], {}
+        for ic in learning.taskbar:
+            mine = {k: (round(fx * w), round(fy * h)) for k, (fx, fy) in learning.spots.items()}
+            named = [k for k, p in {**have, **mine}.items() if icon_at(p, [ic.box])]
+            tip = learning.tips.get(ic.index)
+            guess = learn.taskbar_name(tip, session.catalog.apps.values()) if tip else None
+            if guess and not named:
+                suggested[f"T{ic.index}"] = guess
+            rows.append(
+                f"T{ic.index} {list(ic.center)}"
+                + (f' tooltip "{tip}"' if tip else "")
+                + (f" = {', '.join(dict.fromkeys(named))}" if named else "")
+            )
+        head = f"the session's taskbar: {len(learning.taskbar)} icons, left to right"
+        body = wrap_untrusted(
+            "\n".join(rows) + (f"\nsuggested: {json.dumps(suggested)}" if suggested else "")
+        )
+        hint = (
+            "next: name them as the apps they open, learn(step='taskbar', names={'T1': "
+            "'teams'}) (app ids as jharokha_apps lists them; ask the user, or with input "
+            "allowed learn(step='name_icons') reads their tooltips), then learn(step='save')"
+            if not learning.spots
+            else f"named so far: {', '.join(learning.spots)}; next: learn(step='save') shows "
+            "the change to apps.toml"
+        )
+        return f"{head}\n{body}\n{hint}"
+
+    def save_taskbar(confirm: bool) -> str:
+        nonlocal policies
+        if not learning.spots:
+            raise ScreenError(
+                "bad_argument", "no taskbar icon named yet: learn(step='taskbar', names=...)"
+            )
+        if apps_path is None:
+            raise ScreenError(
+                "bad_argument",
+                "this server has no apps.toml to save into (start it with --apps PATH)",
+            )
+        old = apps_path.read_text(encoding="utf-8") if apps_path.exists() else ""
+        try:
+            text = learn.save_spots(old, learning.spots)
+            new = session.catalog.replacing(apps.parse(text, str(apps_path)))
+        except apps.AppError as e:
+            raise ScreenError("bad_argument", f"not saved: {e}") from None
+        if not confirm:
+            diff = "".join(
+                difflib.unified_diff(
+                    old.splitlines(keepends=True),
+                    text.splitlines(keepends=True),
+                    str(apps_path),
+                    str(apps_path),
+                    n=1,
+                )
+            )
+            return (
+                f"not saved yet. The change to {apps_path} is below: show it to the user, and "
+                "only once they agree call learn(step='save', confirm=true).\n"
+                + wrap_untrusted(diff or "(no change)")
+            )
+        apps_path.write_text(text, encoding="utf-8")
+        policies = new.policies()
+        session.catalog, session.last = new, None
+        saved = ", ".join(learning.spots)
+        learning.spots, learning.taskbar, learning.tips = {}, [], {}
+        learning.on_taskbar = False
+        return f"saved the session spots {saved} to {apps_path} and reloaded"
+
     def name_icons(title: str | None) -> str:
         need_input("name_icons")
+        if learning.on_taskbar and learning.taskbar:
+            return name_taskbar(title)
         if not learning.scans:
             raise ScreenError("bad_argument", "scan first: learn(step='scan', app=...)")
         first = learning.scans[0]
@@ -1545,6 +1678,41 @@ def build_server(
         )
         hint = "next: ask the user to agree on the names, then propose with them in names"
         return f"{head}\n{body}\n{hint}"
+
+    def name_taskbar(title: str | None) -> str:
+        """Rests the pointer on each taskbar icon (no click) and reads the tooltip above it."""
+        w, frame = screen.frame(title)
+        park = (frame.width - 2, frame.height // 2)
+        learning.tips = {}
+
+        def hover(at: tuple[int, int]) -> None:
+            with tracing("hover", w.title, point=at) as rec:
+                rec["front"] = "session.taskbar"
+                screen.source.hover(w, *at)
+
+        try:
+            for ic in learning.taskbar[:MAX_HOVER]:
+                x, y, bw, bh = ic.box
+                x0, y0 = max(0, x - TASKBAR_TIP[0]), max(0, y - TASKBAR_TIP[1])
+                box = (x0, y0, min(frame.width, x + bw + TASKBAR_TIP[2]) - x0, y - y0)
+                _, base = screen.frame(title)
+                before = screen.lines(base, box)
+                hover(ic.center)
+                changed_from(title, base)
+                screen.settle(title)
+                _, f = screen.frame(title)
+                if tip := learn.tooltip(before, screen.lines(f, box), ic.box):
+                    learning.tips[ic.index] = tip
+                hover(park)
+                back_to(title, base)
+        except ScreenError:
+            hover(park)
+            raise
+        head = (
+            f"rested the pointer on {min(len(learning.taskbar), MAX_HOVER)} taskbar icons, one "
+            f"at a time (no click), then moved it away; {len(learning.tips)} showed a tooltip"
+        )
+        return head + "\n" + taskbar_listing()
 
     def changed_from(title: str | None, base: Frame, timeout_s: float = TIP_WAIT_S) -> None:
         """Until the screen differs from base (a tooltip shows after a delay), or timeout_s."""

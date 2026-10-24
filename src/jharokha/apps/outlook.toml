@@ -23,19 +23,23 @@ irreversible_keys = ["ctrl+enter", "alt+s"]
 [app.outlook.view.mail]
 ready = "Inbox"
 
+# With the folder pane collapsed only the list's header names the folder, and no other
+# folder shows; the button reads "New mail" or "New email" by version. The mail ribbon's
+# labels stay either way.
 [[app.outlook.view.mail.cue]]
 text = "Inbox"
 weight = 2
 
 [[app.outlook.view.mail.cue]]
-text = "New mail"
+text = ["New mail", "New email", "New message"]
 weight = 2
 
 [[app.outlook.view.mail.cue]]
-text = "Sent Items"
+text = ["Sent Items", "Deleted Items", "Junk Email", "Drafts"]
 
 [[app.outlook.view.mail.cue]]
-text = "Deleted Items"
+text = ["Reply all", "Forward", "Mark all as read", "Sweep", "Move to", "Report"]
+weight = 1.5
 
 [app.outlook.view.mail.region.ribbon]
 at = [0.5, 0.11]

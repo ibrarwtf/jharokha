@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.23.1
+
+Fixes for Windows 365 sessions.
+
+- Terminal rows: a scrollbar, border or mark down the right of the terminal is no longer read as text or as a grid column; columns end at the text's own edge, and rows join only when their text runs to that edge. Reads had collapsed the lower rows into one very long line.
+- Outlook: identified with the folder pane collapsed and with either "New mail" or "New email" on its button (it read as generic).
+- `expect="generic"`: input can be guarded for a screen no definition recognises, instead of only `expect="any"`. Session taskbar spots are not built in; calibrate your own locally.
+- `terminal.run`: the result carries `exit_code` as documented.
+- `teams.new_messages`: `chat` is optional; without it, or when that chat is already open (header matched as a name, ellipsis and icon glyphs tolerated), it reads the open chat and clicks nothing in the chat list, which would mark it read.
+- Known issue: a Teams message from someone else that quotes a reply is still split into several items; a generated thread screen reproduces it in the reader evals.
+
 ## v0.23.0
 
 

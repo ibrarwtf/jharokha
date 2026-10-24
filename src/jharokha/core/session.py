@@ -70,6 +70,8 @@ class Session:
         self._grids: dict[tuple[Any, ...], rows.Grid] = {}
         self._reads: dict[tuple[Any, ...], rows.RowRead] = {}
         self._lock = threading.Lock()  # the watcher reads from its own thread
+        # Grid rows the last shape() left to Windows OCR (core.rows' budget).
+        self.pending = 0
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
         """The app and view on a frame, from the whole screen's lines. The screen's cache
@@ -116,24 +118,40 @@ class Session:
         f = at.frame
         return self.catalog.nested(app, view, name, at.panes, at.ident.found, f.width, f.height)
 
-    def shape(self, at: Where, lines: list[Line], region: Box | None = None) -> list[Line]:
+    def grids(self, at: Where) -> list[Box]:
+        """Where the view on screen has terminal grids."""
+        ident, out = at.ident, []
+        if ident.app is None or ident.view is None:
+            return out
+        for name in self.catalog.apps[ident.app].views[ident.view].grids:
+            if placed := self.place(at, ident.app, ident.view, name):
+                out.append(placed[0])
+        return out
+
+    def shape(
+        self, at: Where, lines: list[Line], region: Box | None = None, exact: Box | None = None
+    ) -> list[Line]:
         """Grid regions of the view on screen read row by row (core.rows), or, where the
-        second engine cannot read rows, Windows OCR's words snapped to the grid."""
+        second engine cannot read rows, Windows OCR's words snapped to the grid. Rows inside
+        exact are read by the second engine whatever Windows OCR made of them."""
         ident, f = at.ident, at.frame
+        self.pending = 0
         if ident.app is None or ident.view is None:
             return lines
         for name in self.catalog.apps[ident.app].views[ident.view].grids:
             placed = self.place(at, ident.app, ident.view, name)
             if placed and (region is None or iou(placed[0], region) > 0):
                 g = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
-                got = self._by_rows(at, name, placed[0], g)
+                got = self._by_rows(at, name, placed[0], g, exact)
                 if got is None:
                     lines = grid(lines, placed[0], g.pitch, g.char_width, g.origin)
                 else:
                     lines = _swap(lines, placed[0], region, got)
         return lines
 
-    def _by_rows(self, at: Where, name: str, box: Box, cal: apps.Grid) -> list[Line] | None:
+    def _by_rows(
+        self, at: Where, name: str, box: Box, cal: apps.Grid, exact: Box | None = None
+    ) -> list[Line] | None:
         f, ident = at.frame, at.ident
         key = (ident.app, ident.view, name, f.width, f.height, box)
         source = self.screen.source
@@ -147,15 +165,19 @@ class Session:
                 g = rows.calibrate(f, at.lines, box)
                 if g is None:
                     return None
+                # Kept across the region's width: each read ends it at that frame's text
+                # edge, which a scrollbar appearing later or a mark going away moves.
+                g = rows.spanning(g, box)
                 if len(inside(at.lines, box)) >= 3:
                     self._grids[key] = g
             try:
-                got = rows.read_rows(f, box, reread, g, at.lines, self._reads.get(key))
+                got = rows.read_rows(f, box, reread, g, at.lines, self._reads.get(key), exact)
             except ScreenError:
                 return None
             if got is None:
                 return None
             self._reads[key] = got
+            self.pending += got.pending
         return [ln for ln in rows.unwrap(got.lines, got.grid) if ln.text]
 
     def focus_box(self, at: Where) -> tuple[str, Box] | None:

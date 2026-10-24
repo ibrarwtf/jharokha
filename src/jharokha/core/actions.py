@@ -16,7 +16,9 @@ $JHAROKHA_ACTIONS names). Built-in ones ship in jharokha/apps/actions/.
     expect = { text = "{chat}", region = "header" }
 
 Steps (`do`), each with `risk` (read, reversible, irreversible; required on click, type,
-press, run and put_file), `expect` (a condition that must hold after it) and `timeout_s`:
+press, run and put_file), `expect` (a condition that must hold after it), `unless` (a
+condition under which it is skipped, checked before it: no click on a chat already open)
+and `timeout_s`:
 
     focus     app, view, switch (by the session spot `taskbar.<app>`), else check it is in front
     click     target (a locator, core.locate), button, double
@@ -37,11 +39,13 @@ messages: sender, time, text); `fields = { who = "sender" }` renames their field
 marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again in the
 rows read up close, then by the second engine, once the screen holds still.
 
-Conditions: text, regex, gone (in region), app, view, ready, before (an item of a list
-region at or before this time). Arguments fill `{name}` in step values; in a regex they are
-escaped. Only arguments and repeat variables fill placeholders, never text read off the
-screen: what is on screen goes into the result, and never becomes a step, a click target or
-typed text.
+Conditions: text, regex, gone (in region), name (a name as a header shows it: cut short
+with an ellipsis, icon glyphs beside it, a letter misread; core.actions.name_on), app,
+view, ready, before (an item of a list region at or before this time). An empty text or
+name (an optional argument left out) holds. Arguments fill `{name}` in step values; in a
+regex they are escaped. Only arguments and repeat variables fill placeholders, never text
+read off the screen: what is on screen goes into the result, and never becomes a step, a
+click target or typed text.
 
 The guard is core.guard's, as for the input tools, with the same codes: before every input
 step the app in front must be the action's (wrong_app), a key its policy calls irreversible
@@ -94,8 +98,8 @@ Risk = Literal["read", "reversible", "irreversible"]
 NEWLINES = ("enter", "shift+enter", "forbid")
 ARG_TYPES = ("text", "number", "list", "base64", "choice")
 SHELLS = ("powershell", "cmd", "bash")
-COND_KEYS = ("text", "regex", "gone", "region", "app", "view", "ready", "before")
-COMMON = ("do", "risk", "expect", "timeout_s", "label")
+COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before")
+COMMON = ("do", "risk", "expect", "unless", "timeout_s", "label")
 INPUT = ("click", "type", "press", "scroll", "run", "put_file")
 DECLARED = ("click", "type", "press", "run", "put_file")  # risk must be stated
 # Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
@@ -150,6 +154,7 @@ class Step:
     timeout_s: float = TIMEOUT_S
     label: str = ""
     steps: tuple[Step, ...] = ()  # a repeat's
+    unless: dict[str, Any] | None = None  # skipped when this holds before it
 
 
 @dataclass(frozen=True)
@@ -286,7 +291,8 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         if need not in params:
             raise ActionError(f"{where}: a {kind} step needs {need}")
     expect = _check_condition(t["expect"], f"{where}.expect") if "expect" in t else None
-    for name in _placeholders([params, expect]):
+    unless = _check_condition(t["unless"], f"{where}.unless") if "unless" in t else None
+    for name in _placeholders([params, expect, unless]):
         if name not in names:
             raise ActionError(f"{where}: '{{{name}}}' is not an argument of this action")
     risk = _risk(t["risk"], where) if "risk" in t else None
@@ -304,7 +310,8 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
     timeout = t.get("timeout_s", TIMEOUT_S)
     if not isinstance(timeout, int | float) or timeout <= 0:
         raise ActionError(f"{where}.timeout_s must be a number of seconds")
-    return Step(kind, params, risk, expect, float(timeout), str(t.get("label", "")), steps)
+    label = str(t.get("label", ""))
+    return Step(kind, params, risk, expect, float(timeout), label, steps, unless)
 
 
 def _placeholders(v: Any) -> set[str]:
@@ -619,6 +626,14 @@ class Runner:
             label = f"{prefix}{i + 1}" + (f" {s.label}" if s.label else "")
             self._at = f"{label}:{s.kind}"
             t0 = self.ex.now()
+            if s.unless:
+                snap = self._look()
+                cond = fill(s.unless, env)
+                if _holds(cond, snap, self._regions(snap), self._info(snap))[0]:
+                    ms = int((self.ex.now() - t0) * 1000)
+                    note = f"skipped: {_describe(cond)} holds"
+                    self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, "read", ms, note))
+                    continue
             p = fill(s.params, env)
             note = getattr(self, f"_{s.kind}")(s, p, env, f"{prefix}{i + 1}.")
             if s.expect:
@@ -668,7 +683,7 @@ class Runner:
         try:
             guard.check_front(want, snap.app, snap.view, snap.confidence)
         except guard.WrongApp as e:
-            raise _Refuse(*guard.refusal(e)) from None
+            raise _Refuse(*guard.refusal(e, snap.spots)) from None
 
     def _keys(self, snap: Snapshot, chords: list[str]) -> None:
         """core.guard.check_keys under the policy of the app in front: a key it calls
@@ -943,8 +958,13 @@ class Runner:
             box = self._shell_box(snap, p)
             r = sh.read_reply(inside(snap.lines, box), token)
             if r and r.echoed:
-                return r
+                exact = self._exact_reply(snap, box, token)
+                return exact if exact and exact.echoed else r
             if snap.frame_id == last:
+                # Held still without it: the rows below the echo read exactly, where a read
+                # within the second engine's budget left them to Windows OCR.
+                if exact := self._exact_reply(snap, box, token):
+                    return exact
                 close = sh.read_reply(self._zoom_rows(snap, box), token)
                 if close and (close.echoed or r is None):
                     return close
@@ -963,6 +983,22 @@ class Runner:
                     "(press ctrl+c), or it went somewhere else"
                 )
             self.ex.wait(POLL_S * 3)
+
+    def _exact_reply(self, snap: Snapshot, box: Box, token: str) -> sh.Reply | None:
+        """The reply with the rows below the command's echo (all of the shell's rows when
+        the echo is not found) read by the second engine: the output a run returns, and
+        only that, read exactly. None when the executor reads no rows exactly or the marker
+        is not among them."""
+        exact = getattr(self.ex, "exact", None)
+        if exact is None:
+            return None
+        lines = inside(snap.lines, box)
+        y = sh.echo_bottom(lines, token)
+        top = box[1] if y is None else max(box[1], y)
+        got = inside(exact((box[0], top, box[2], box[1] + box[3] - top)), box)
+        above = [ln for ln in lines if ln.box[1] + ln.box[3] / 2 < top]
+        below = [ln for ln in got if ln.box[1] + ln.box[3] / 2 >= top]
+        return sh.read_reply(above + below, token)
 
     def _send(self, line: str) -> None:
         snap = self._look()
@@ -987,6 +1023,10 @@ class Runner:
         self._send(line)
         reply = self._reply(p, token, s.timeout_s)
         ok, code = sh.status(reply.payload, shell)
+        if code is None and ok is not None:
+            # $LASTEXITCODE is empty until a native program has run in the session: a
+            # cmdlet's success is PowerShell's own exit code, 0, or 1 when it failed.
+            code = 0 if ok else 1
         out = row_texts(reply.output)
         if not reply.echoed:
             out = _drop_echo(out, line)
@@ -1115,9 +1155,12 @@ def _holds(
         pool = inside(snap.lines, regions[cond["region"]])
     if "text" in cond:
         # Of typed text over several lines, a box that scrolls shows the last line at least.
-        last = [t for t in str(cond["text"]).splitlines() if t.strip()][-1:] or [""]
-        if not find(pool, last[0]):
+        # An empty text (an optional argument left out) asks for nothing.
+        last = [t for t in str(cond["text"]).splitlines() if t.strip()][-1:]
+        if last and not find(pool, last[0]):
             return False, f"'{last[0]}' is not on screen"
+    if "name" in cond and not name_on(pool, str(cond["name"])):
+        return False, f"'{cond['name']}' is not the name shown"
     if "regex" in cond and not find(pool, str(cond["regex"]), regex=True):
         return False, "the regex matches nothing on screen"
     if "gone" in cond and find(pool, str(cond["gone"])):
@@ -1135,6 +1178,40 @@ def _holds(
         except ValueError as e:
             return False, str(e)
     return True, ""
+
+
+_ELLIPSIS = re.compile(r"(?:\.{2,}|…)$")
+NAME_RATIO = 0.85  # how alike a name and what a header shows of it must read
+
+
+def name_on(lines: list[Line], want: str) -> bool:
+    """Whether a row shows the name want as a header does: whole, or cut short at its end
+    (`Ana Ald…`), with an avatar's initials or an icon OCR read as a stray glyph or two in
+    front, and a character or two misread. An empty name is always shown."""
+    w = _compact(want)
+    if not w:
+        return True
+    for row in row_texts(lines):
+        if w in _compact(row):
+            return True
+        tokens = row.split()
+        for j, tok in enumerate(tokens):
+            cut = bool(_ELLIPSIS.search(tok))
+            if not cut and j < len(tokens) - 1:
+                continue  # a cut name ends at its ellipsis, a whole one anywhere
+            for i in range(j + 1):
+                got = _compact(" ".join(tokens[i : j + 1]))
+                if not got:
+                    continue
+                if difflib.SequenceMatcher(None, got, w, autojunk=False).ratio() >= NAME_RATIO:
+                    return True
+                if cut and len(got) >= max(4, len(w) // 2) and w.startswith(got):
+                    return True
+    return False
+
+
+def _compact(s: str) -> str:
+    return re.sub(r"[\W_]+", "", fold(_ELLIPSIS.sub("", s.strip()))).lower()
 
 
 def _merge(older: list[Any], newer: list[Any]) -> list[Any]:
@@ -1213,11 +1290,12 @@ def _plan(
         risk = _command(s, p)[0] if s.kind == "run" else s.risk
         row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind, "risk": risk}
         row |= {k: v for k, v in p.items()}
-        if s.expect:
-            try:
-                row["expect"] = fill(s.expect, env)
-            except KeyError:
-                row["expect"] = s.expect
+        for k, cond in (("unless", s.unless), ("expect", s.expect)):
+            if cond:
+                try:
+                    row[k] = fill(cond, env)
+                except KeyError:
+                    row[k] = cond
         if s.steps:
             row["steps"] = _plan(action, s.steps, env, f"{prefix}{i + 1}.")
         out.append(row)

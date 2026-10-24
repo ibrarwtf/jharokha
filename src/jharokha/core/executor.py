@@ -112,6 +112,14 @@ class SessionExecutor:
         at = s.where(frame, s.screen.lines(frame, None))
         return elements(frame, at.lines, at.panes)
 
+    def exact(self, box: Box) -> list[Line]:
+        """The frame's lines as read() has them, with the terminal rows inside box read by
+        the second engine whatever the read's budget left to Windows OCR."""
+        frame = self._frame()
+        s = self.session
+        lines = s.screen.lines(frame, None)
+        return s.shape(s.where(frame, lines), lines, None, box)
+
     def reread(self, boxes: list[Box]) -> list[str]:
         try:
             return self.session.screen.source.reread(self._frame(), boxes)
