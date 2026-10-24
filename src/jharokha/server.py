@@ -29,6 +29,7 @@ from jharokha import version
 from jharokha.core import actions as act
 from jharokha.core import apps, guard, learn, listread, readers
 from jharokha.core.apps import Catalog
+from jharokha.core.capture import Capture
 from jharokha.core.elements import elements
 from jharokha.core.executor import SessionExecutor
 from jharokha.core.guard import Policy
@@ -144,6 +145,17 @@ def _guard(fn: Callable[..., Any]) -> Callable[..., Any]:
     return inner
 
 
+def _captured(fn: Callable[..., Any], frames: Capture) -> Callable[..., Any]:
+    """fn with the frames it reads captured under its name and arguments."""
+
+    @functools.wraps(fn)
+    def inner(*a: Any, **kw: Any) -> Any:
+        with frames.during(fn.__name__, kw):
+            return fn(*a, **kw)
+
+    return inner
+
+
 def _box(region: list[int]) -> Box:
     if len(region) != 4:
         raise ScreenError("region_out_of_bounds", "region must be [x, y, width, height]")
@@ -199,15 +211,18 @@ def build_server(
     actions: Mapping[str, act.Action] | None = None,
     apps_path: Path | None = None,
     window_title: str | None = None,
+    capture: Path | None = None,
 ) -> MCPServer:
     """trace, when enabled, gets a record of every input that reached the input guard: what
     was sent, or the error that stopped it. actions are what jharokha_do runs (default the
     built-ins). apps_path is the apps.toml jharokha_learn saves into; without it, learning
     shows its proposal and saves nothing. window_title (part of the title) picks the session
-    window when more than one is open: one session a server, so no tool takes it."""
+    window when more than one is open: one session a server, so no tool takes it. capture,
+    a directory, gets each distinct frame a tool or action step read (core.capture)."""
     screen = Screen(source)
+    frames = Capture(capture)
     # The catalog is session.catalog from here on: learning an app replaces it.
-    session = Session(screen, catalog or apps.catalog())
+    session = Session(screen, catalog or apps.catalog(), frames)
     actions = dict(actions if actions is not None else act.builtin())
     policies = session.catalog.policies()
     trace = trace or Trace(None)
@@ -220,7 +235,12 @@ def build_server(
 
     def tool(fn: Callable[..., Any], annotations: ToolAnnotations = READ_ONLY) -> None:
         fn.__doc__ = " ".join((fn.__doc__ or "").split()) + " " + UNTRUSTED
-        mcp.add_tool(_guard(fn), name=fn.__name__, annotations=annotations, structured_output=False)
+        mcp.add_tool(
+            _guard(_captured(fn, frames) if frames.enabled else fn),
+            name=fn.__name__,
+            annotations=annotations,
+            structured_output=False,
+        )
 
     # Reading
 

@@ -10,6 +10,7 @@ from typing import Any
 
 from jharokha.core import apps, rows
 from jharokha.core.apps import Catalog
+from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
 from jharokha.core.models import Box, Frame, Line, iou
 from jharokha.core.panes import background, panes
@@ -61,8 +62,9 @@ def _swap(lines: list[Line], area: Box, within: Box | None, new: list[Line]) -> 
 
 
 class Session:
-    def __init__(self, screen: Screen, catalog: Catalog) -> None:
+    def __init__(self, screen: Screen, catalog: Catalog, capture: Capture | None = None) -> None:
         self.screen, self.catalog = screen, catalog
+        self.capture = capture
         self.last: Where | None = None  # the frame identified last, so a call does it once
         # A grid calibrated from the pixels, per app, view, region, window size and box, kept
         # once it was measured on three rows of text or more; and the last read of each, so
@@ -107,7 +109,22 @@ class Session:
             self.catalog.apps.values(), lines, found, background(frame), frame.width, frame.height
         )
         self.last = Where(frame, ident, found, lines, partial)
+        if self.capture is not None and self.capture.enabled:
+            self.capture.save(frame, ident, lines, self._placed(self.last), partial)
         return self.last
+
+    def _placed(self, at: Where) -> dict[str, Box]:
+        """The session's regions and the view's, placed on at, as an action's read has them."""
+        f, ident, cat = at.frame, at.ident, self.catalog
+        out: dict[str, Box] = {}
+        for name in dict.fromkeys([*cat.session_cal, *cat.session]):
+            if p := cat.session_box(name, at.panes, f.width, f.height):
+                out[name] = p[0]
+        if ident.app and ident.view:
+            for name in cat.apps[ident.app].views[ident.view].regions:
+                if p := self.place(at, ident.app, ident.view, name):
+                    out[f"{ident.app}.{name}"] = p[0]
+        return out
 
     def place(self, at: Where, app: str, view: str, name: str) -> tuple[Box, str] | None:
         f = at.frame

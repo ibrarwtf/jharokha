@@ -6,3 +6,4 @@ __pycache__/
 !tests/fixtures/**/*.png
 layouts.toml
 apps.toml
+captures/
