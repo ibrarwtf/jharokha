@@ -19,8 +19,8 @@ command = "{command}"
 shell = "{shell}"
 region = "body"
 clear = true  # Ctrl+L first, so the reply starts at the top whatever OCR makes of its echo
-# A command that only reads (core.readonly: Get-ChildItem, git log, ...) is reversible, so
-# it runs under the default allow; any other stays irreversible.
+# Every command is irreversible: which ones only read is not told from their text (an
+# allowlist passed none of a live day's 93 commands). A user's allow for commands comes later.
 risk = "irreversible"
 timeout_s = 30
 

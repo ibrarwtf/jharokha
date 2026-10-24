@@ -65,7 +65,7 @@ Every input, from `act`, an action or the shell, passes these checks first; a re
 |---|---|---|
 | The expected app is in front (`expect`; actions expect their own) | `wrong_app` | A command typed into a browser and searched for on the web |
 | The app's policy: sending keys (Enter in Teams, Ctrl+Enter in Outlook, Enter in a browser) need `allow="irreversible"`; a typed newline in Teams is Shift+Enter | `irreversible` | A half-written message sent |
-| A shell command is irreversible unless it only reads (an allowlist, `core/readonly.py`) | `irreversible` | A command that writes or deletes, run without your say-so |
+| Every shell command is irreversible: it needs `allow="irreversible"` | `irreversible` | A command run without your say-so |
 | One agent at a time per session window | `input_leased` | Two agents typing into one session |
 | You haven't used this computer's keyboard or mouse in the last 3 s, and stop it while text is sent | `user_active` | Your keystrokes mixing into the agent's |
 | The point is not covered by another window | `covered` | Clicks lost under this computer's taskbar |

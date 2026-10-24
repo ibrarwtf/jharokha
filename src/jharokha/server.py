@@ -1120,8 +1120,7 @@ def build_server(
         command's output and exit code), terminal.put_file {path, content_base64};
         jharokha_apps lists them all with their arguments and risk. args is a JSON object.
         allow caps every step's risk: read, reversible (default: clicks, scrolls, drafts)
-        or irreversible (sends, submits, writes a file, runs a command that is not
-        read-only: Get-*, Select-String, git log/status/diff run as reversible); a riskier step is
+        or irreversible (sends, submits, writes a file, runs any command); a riskier step is
         refused before anything is sent (irreversible). Pass allow='irreversible' only when
         the user asked for exactly that. Guarded as act: wrong_app, input_leased,
         user_active. dry_run=true shows the plan and sends nothing; it is all that works
