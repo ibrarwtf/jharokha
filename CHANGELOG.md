@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.24.1
+
+- `teams.messages` from a day (`from = "05/10"`) stopped scrolling back at the first message of that day it saw (05/10 11:25), so the day's earlier messages were left out. A day without a clock is now its start for `before`: a message later that day is not before it.
+- A collecting scroll that fails (out of scrolls, or stopped moving) returns what it read, with the failure saying where it stopped. `teams.messages` steps down 7 ticks at a time (a busy week, 355 items, read in 4 m 37 s live) with room for 400 steps.
+
 ## v0.24.0
 
 From use on the live session instead of imagined ones: a Teams group chat read a week at a time into a timeline by a fresh headless Claude Code with jharokha as its only tools. Week 1 on v0.23.1: 22 calls, 2 m 47 s, 4 lost to errors. The same week on this release: one `teams.messages` call, about 30 s.

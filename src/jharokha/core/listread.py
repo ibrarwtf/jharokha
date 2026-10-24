@@ -575,6 +575,8 @@ def after(items: list[Item], when: datetime | str, now: datetime) -> bool:
 
 def before(items: list[Item], when: datetime | str, now: datetime) -> bool:
     """Whether an item is at or before when: a list scrolled back far enough to hold every
-    item since then."""
-    start = _start(when, now)
+    item since then. A day without a clock is its start, so a message later that day is not
+    before it: scrolled back to 05/10 11:25, 05/10's earlier messages are still to come."""
+    day, clock = _start(when, now)
+    start = (day, True) if clock else (day.replace(hour=0, minute=0), True)
     return any(_cmp(at, start) <= 0 for _, at in _timed(items, now))

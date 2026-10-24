@@ -836,12 +836,14 @@ class Runner:
             if still >= STILL_ENDS:
                 # Only history loads late; the newest end of a list is all there.
                 if until and ticks > 0:
+                    self._partial(got, p)
                     raise _Fail(f"the list stopped moving before {_describe(until)} held")
                 break
             if still:
                 self.ex.settle()  # give a list that is loading more a moment longer
             if n == most:
                 if until:
+                    self._partial(got, p)
                     raise _Fail(f"scrolled {most} times and {_describe(until)} did not hold")
                 break
             box = self._box(snap, p["region"])
@@ -852,6 +854,12 @@ class Runner:
         if p.get("collect"):
             self._store(p["collect"], got, p)
         return f"{n} scrolls"
+
+    def _partial(self, got: list[Any], p: dict[str, Any]) -> None:
+        """What a collecting scroll read before it failed: a long read cut short still
+        returns the part it has, with the failure saying where it stopped."""
+        if p.get("collect"):
+            self._store(p["collect"], got, p)
 
     def _box(self, snap: Snapshot, region: str) -> Box:
         regions = self._regions(snap)
