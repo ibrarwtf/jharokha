@@ -5,18 +5,15 @@ $JHAROKHA_ACTIONS names). Built-in ones ship in jharokha/apps/actions/.
     format = 1
     [action.teams.draft]                  # the action teams.draft; its app is teams
     summary = "Type a draft into a chat's compose box; never sends."
-    max_risk = "reversible"               # a step declared riskier is refused before anything
     args.chat = { type = "text" }
     args.text = { type = "text", max_len = 2000 }
 
     [[action.teams.draft.step]]
     do = "click"
     target = { text = "{chat}", region = "list" }
-    risk = "reversible"
     expect = { text = "{chat}", region = "header" }
 
-Steps (`do`), each with `risk` (read, reversible, irreversible; required on click, type,
-press, run and put_file), `expect` (a condition that must hold after it), `unless` (a
+Steps (`do`), each with `expect` (a condition that must hold after it), `unless` (a
 condition under which it is skipped, checked before it: no click on a chat already open)
 and `timeout_s`:
 
@@ -51,13 +48,13 @@ read off the screen: what is on screen goes into the result, and never becomes a
 click target or typed text.
 
 The guard is core.guard's, as for the input tools, with the same codes: before every input
-step the app in front must be the action's (wrong_app), a key its policy calls irreversible
-makes its step irreversible (and a typed newline is the policy's newline, Shift+Enter in
-Teams); a step riskier than the action's
-max_risk or the call's allow is refused before any input (irreversible), and the Source
-refuses input while another agent holds the window (input_leased) or someone uses this
-computer (user_active). Typed text never carries a raw newline, so Enter is only ever a
-declared key."""
+step the app in front must be the action's (wrong_app); a step that presses a key the
+app's policy calls irreversible (Enter in Teams sends), or types a newline that is one, is
+refused before any input unless the call allows it (irreversible); and the Source refuses
+input while another agent holds the window (input_leased) or someone uses this computer
+(user_active). A typed newline is the policy's newline (Shift+Enter in Teams), and typed
+text never carries a raw newline, so Enter is only ever a declared key. A terminal command
+is none of the guard's business: its app's policy names no key."""
 
 from __future__ import annotations
 
@@ -71,7 +68,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
 from importlib import resources
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from jharokha.core import glyphs, guard, listread, readers
 from jharokha.core import shell as sh
@@ -93,15 +90,12 @@ from jharokha.core.screen import ScreenError
 from jharokha.core.text import find, fold
 
 FORMAT = 1
-RISKS = ("read", "reversible", "irreversible")
-Risk = Literal["read", "reversible", "irreversible"]
 NEWLINES = ("enter", "shift+enter", "forbid")
 ARG_TYPES = ("text", "number", "list", "base64", "choice")
 SHELLS = ("powershell", "cmd", "bash")
 COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before", "after")
-COMMON = ("do", "risk", "expect", "unless", "timeout_s", "label")
+COMMON = ("do", "expect", "unless", "timeout_s", "label")
 INPUT = ("click", "type", "press", "scroll", "run", "put_file")
-DECLARED = ("click", "type", "press", "run", "put_file")  # risk must be stated
 # Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
 REFUSALS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked")
 PARAMS: dict[str, tuple[str, ...]] = {
@@ -163,7 +157,6 @@ class Arg:
 class Step:
     kind: str
     params: dict[str, Any]
-    risk: Risk
     expect: dict[str, Any] | None = None
     timeout_s: float = TIMEOUT_S
     label: str = ""
@@ -178,34 +171,14 @@ class Action:
     summary: str
     args: dict[str, Arg]
     steps: tuple[Step, ...]
-    max_risk: Risk = "irreversible"
     newline: str | None = None  # a typed newline: None is the app's policy, else forbidden
     source: str = "built-in"
-
-    @property
-    def risk(self) -> Risk:
-        """The riskiest step it declares."""
-        return _max(s.risk for s in _walk(self.steps))
-
-
-def _walk(steps: tuple[Step, ...]) -> list[Step]:
-    return [x for s in steps for x in (s, *_walk(s.steps))]
-
-
-def _max(risks: Any) -> Risk:
-    return max(risks, key=RISKS.index, default="read")
 
 
 def _only(t: Mapping[str, Any], allowed: tuple[str, ...], where: str) -> None:
     extra = sorted(set(t) - set(allowed))
     if extra:
         raise ActionError(f"{where}: unknown key {', '.join(extra)}")
-
-
-def _risk(v: Any, where: str) -> Risk:
-    if v not in RISKS:
-        raise ActionError(f"{where}.risk must be one of {', '.join(RISKS)}")
-    return v
 
 
 def _arg(name: str, t: Any, where: str) -> Arg:
@@ -255,8 +228,6 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
     if kind not in PARAMS:
         raise ActionError(f"{where}.do must be one of {', '.join(PARAMS)}")
     _only(t, COMMON + PARAMS[kind], where)
-    if kind in DECLARED and "risk" not in t:
-        raise ActionError(f"{where}: a {kind} step declares its risk")
     params = {k: v for k, v in t.items() if k not in COMMON and k != "step"}
     inner_names = set(names)
     if kind == "repeat":
@@ -311,23 +282,11 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
     for name in _placeholders([params, expect, unless]):
         if name not in names:
             raise ActionError(f"{where}: '{{{name}}}' is not an argument of this action")
-    risk = _risk(t["risk"], where) if "risk" in t else None
-    if risk is None:
-        if kind == "repeat":
-            risk = _max(s.risk for s in steps)
-        elif kind == "focus" and t.get("switch"):
-            risk = "reversible"
-        elif kind == "scroll":
-            risk = "reversible"
-        else:
-            risk = "read"
-    elif kind == "repeat" and RISKS.index(risk) < RISKS.index(_max(s.risk for s in steps)):
-        raise ActionError(f"{where}: repeat risk is below a step inside it")
     timeout = t.get("timeout_s", TIMEOUT_S)
     if not isinstance(timeout, int | float) or timeout <= 0:
         raise ActionError(f"{where}.timeout_s must be a number of seconds")
     label = str(t.get("label", ""))
-    return Step(kind, params, risk, expect, float(timeout), label, steps, unless)
+    return Step(kind, params, expect, float(timeout), label, steps, unless)
 
 
 def _placeholders(v: Any) -> set[str]:
@@ -360,7 +319,7 @@ def parse(text: str, source: str = "actions", origin: str = "local") -> dict[str
                 raise ActionError(f"{where}: names are letters, digits, - or _")
             if not isinstance(t, dict):
                 raise ActionError(f"{where} must be a table")
-            _only(t, ("summary", "max_risk", "args", "step", "newline"), where)
+            _only(t, ("summary", "args", "step", "newline"), where)
             args = {k: _arg(k, a, f"{where}.args.{k}") for k, a in t.get("args", {}).items()}
             steps = t.get("step", [])
             if not isinstance(steps, list) or not steps:
@@ -375,7 +334,6 @@ def parse(text: str, source: str = "actions", origin: str = "local") -> dict[str
                 str(t.get("summary", "")),
                 args,
                 parsed,
-                _risk(t.get("max_risk", "irreversible"), f"{where}.max_risk"),
                 newline,
                 origin,
             )
@@ -444,7 +402,6 @@ class Executor(Protocol):
 class StepReport:
     label: str
     kind: str
-    risk: str
     ms: int
     note: str = ""
 
@@ -461,8 +418,7 @@ class Result:
     output: list[str] | None = None
     exit_code: int | None = None
     steps: list[StepReport] = field(default_factory=list)
-    failed: dict[str, Any] | None = None  # step, reason, candidates (untrusted)
-    safety: list[dict[str, str]] = field(default_factory=list)  # kind, step, detail
+    failed: dict[str, Any] | None = None  # step, reason, code, candidates (untrusted)
     plan: list[dict[str, Any]] | None = None
     dry_run: bool = False
 
@@ -470,7 +426,7 @@ class Result:
         """brief leaves out steps_done when the action succeeded: what it found is the
         answer, and how it got there costs a few dozen tokens a step."""
         out: dict[str, Any] = {"action": self.action, "ok": self.ok}
-        for k in ("fields", "items", "lines", "output", "exit_code", "failed", "safety", "plan"):
+        for k in ("fields", "items", "lines", "output", "exit_code", "failed", "plan"):
             v = getattr(self, k)
             if v not in (None, {}, []):
                 out[k] = v
@@ -479,8 +435,7 @@ class Result:
         if brief and self.ok and not self.dry_run:
             return out
         out["steps_done"] = [
-            {"step": s.label, "do": s.kind, "risk": s.risk, "ms": s.ms}
-            | ({"note": s.note} if s.note else {})
+            {"step": s.label, "do": s.kind, "ms": s.ms} | ({"note": s.note} if s.note else {})
             for s in self.steps
         ]
         return out
@@ -563,15 +518,15 @@ def fill(v: Any, env: Mapping[str, Any], regex: bool = False) -> Any:
 
 
 class Runner:
-    """Runs one action against an executor. allow caps the risk of any step, below the
-    action's own max_risk: a `do` call's allow. policies are the apps' input policies
-    (core.guard.Policy, from apps.Catalog.policies()), applied as the input tools apply
-    them."""
+    """Runs one action against an executor. allow is a `do` call's: 'irreversible' lets a
+    step press a key the app's policy calls irreversible (Enter in Teams). policies are the
+    apps' input policies (core.guard.Policy, from apps.Catalog.policies()), applied as the
+    input tools apply them."""
 
     def __init__(
         self,
         ex: Executor,
-        allow: Risk = "irreversible",
+        allow: str | None = None,
         policies: Mapping[str, Policy] | None = None,
     ) -> None:
         self.ex, self.allow = ex, allow
@@ -584,28 +539,21 @@ class Runner:
         except ActionError as e:
             res.ok, res.failed = False, {"step": None, "reason": str(e), "code": "bad_argument"}
             return res
-        cap = min(action.max_risk, self.allow, key=RISKS.index)
         policy = self.policies.get(action.app, Policy())
-        for label, s, risk, why in _risks(action, action.steps, env, "", policy):
-            if RISKS.index(risk) > RISKS.index(cap):
-                detail = (
-                    f"step {label} ({s.kind}{why}) is {risk}, above what {action.id} may do "
-                    f"here ({cap}); nothing was sent"
-                )
-                if cap == action.max_risk:
-                    detail += ". The action itself goes no further; nothing can allow it"
-                else:
-                    detail += (
-                        f". Only if the user asked for exactly this, call again with allow='{risk}'"
-                    )
-                res.ok = False
-                res.failed = {"step": label, "reason": detail, "code": "irreversible"}
-                res.safety.append({"kind": "irreversible", "step": label, "detail": detail})
-                return res
+        hit = _sends(action, action.steps, env, "", policy)
+        if hit and self.allow != guard.ALLOW_IRREVERSIBLE:
+            label, why = hit
+            detail = (
+                f"step {label} {why}: it sends or submits, so nothing was sent. Only if the "
+                "user asked for exactly this, call again with allow='irreversible'"
+            )
+            res.ok = False
+            res.failed = {"step": label, "reason": detail, "code": "irreversible"}
+            return res
         if dry_run:
             res.plan = _plan(action, action.steps, env, "")
             return res
-        self.action, self.res, self.cap = action, res, cap
+        self.action, self.res = action, res
         self._last: str | None = None  # the last app recognised during this run
         self._close: dict[tuple[int, str], list[Line]] = {}  # rows read again, per frame
         try:
@@ -618,7 +566,6 @@ class Runner:
         except _Refuse as e:
             res.ok = False
             res.failed = {"step": self._at, "reason": e.reason, "code": e.kind}
-            res.safety.append({"kind": e.kind, "step": self._at, "detail": e.reason})
         except ScreenError as e:
             # The Source's own guards (input_leased, user_active) and errors (covered, ...)
             reason = str(e).removeprefix(f"{e.code}: ")
@@ -626,8 +573,6 @@ class Runner:
                 reason += f" ({len(self.res.steps)} steps were done before; see steps_done)"
             res.ok = False
             res.failed = {"step": self._at, "reason": reason, "code": e.code}
-            if e.code in REFUSALS:
-                res.safety.append({"kind": e.code, "step": self._at, "detail": reason})
         return res
 
     # Steps
@@ -643,14 +588,14 @@ class Runner:
                 if _holds(cond, snap, self._regions(snap), self._info(snap))[0]:
                     ms = int((self.ex.now() - t0) * 1000)
                     note = f"skipped: {_describe(cond)} holds"
-                    self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, "read", ms, note))
+                    self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, ms, note))
                     continue
             p = fill(s.params, env)
             note = getattr(self, f"_{s.kind}")(s, p, env, f"{prefix}{i + 1}.")
             if s.expect:
                 self._until(fill(s.expect, env), s.timeout_s, "expected")
             ms = int((self.ex.now() - t0) * 1000)
-            self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, s.risk, ms, note or ""))
+            self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, ms, note or ""))
 
     def _focus(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         app, view = p.get("app", self.action.app), p.get("view")
@@ -720,9 +665,8 @@ class Runner:
         """core.guard.check_keys under the policy of the app in front: a key it calls
         irreversible needs a call that allows irreversible steps."""
         policy = self.policies.get(snap.app or "", Policy())
-        allow = guard.ALLOW_IRREVERSIBLE if self.cap == "irreversible" else None
         try:
-            guard.check_keys(policy, chords, allow, f"{snap.app}.{snap.view}")
+            guard.check_keys(policy, chords, self.allow, f"{snap.app}.{snap.view}")
         except guard.Irreversible as e:
             raise _Refuse(*guard.refusal(e)) from None
 
@@ -1205,25 +1149,12 @@ def _newline(s: Step, action: Action, policy: Policy) -> str:
     return s.params.get("newline") or action.newline or policy.newline or "forbid"
 
 
-def _effective(s: Step, p: dict[str, Any], action: Action, policy: Policy) -> tuple[Risk, str]:
-    """A step's risk with what its filled values and the app's policy show, and why when
-    that is above what was declared: a key the policy calls irreversible (Enter in Teams),
-    or typed text with a newline that is Enter."""
-    if s.kind == "press" and policy.irreversible(str(p.get("keys", ""))):
-        return "irreversible", f", {p['keys']} is irreversible in {action.app}"
-    if s.kind == "type":
-        text = str(p.get("text", ""))
-        newline = _newline(s, action, policy)
-        if ("\n" in text or "\r" in text) and newline != "forbid":
-            if newline == "enter" or policy.irreversible(newline):
-                return "irreversible", f", a newline typed as {newline}"
-    return s.risk, ""
-
-
-def _risks(
+def _sends(
     action: Action, steps: tuple[Step, ...], env: Mapping[str, Any], prefix: str, policy: Policy
-) -> list[tuple[str, Step, Risk, str]]:
-    out = []
+) -> tuple[str, str] | None:
+    """The first step that would send or submit, with why: a press of a key the app's
+    policy calls irreversible (Enter in Teams), or typed text with a newline that is Enter
+    or such a key. None when no step would."""
     for i, s in enumerate(steps):
         label = f"{prefix}{i + 1}:{s.kind}"
         try:
@@ -1231,11 +1162,19 @@ def _risks(
         except KeyError:
             p = s.params  # a repeat variable, filled per pass
         try:
-            out.append((label, s, *_effective(s, p, action, policy)))
-        except ValueError:  # a key that is no key: refused when pressed
-            out.append((label, s, s.risk, ""))
-        out += _risks(action, s.steps, env, f"{prefix}{i + 1}.", policy)
-    return out
+            if s.kind == "press" and policy.irreversible(str(p.get("keys", ""))):
+                return label, f"({p['keys']} is irreversible in {action.app})"
+            if s.kind == "type":
+                text = str(p.get("text", ""))
+                newline = _newline(s, action, policy)
+                if ("\n" in text or "\r" in text) and newline != "forbid":
+                    if newline == "enter" or policy.irreversible(newline):
+                        return label, f"(a newline typed as {newline})"
+        except ValueError:
+            pass  # a key that is no key: refused when pressed
+        if inner := _sends(action, s.steps, env, f"{prefix}{i + 1}.", policy):
+            return inner
+    return None
 
 
 def _plan(
@@ -1250,7 +1189,7 @@ def _plan(
         p.pop("step", None)
         if s.kind == "put_file":
             p["content_base64"] = f"<{len(str(p.get('content_base64', '')))} characters>"
-        row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind, "risk": s.risk}
+        row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind}
         row |= {k: v for k, v in p.items()}
         for k, cond in (("unless", s.unless), ("expect", s.expect)):
             if cond:
@@ -1265,12 +1204,10 @@ def _plan(
 
 
 def describe(action: Action) -> dict[str, Any]:
-    """What an `apps`/`do` tool lists for an action: its arguments and its riskiest step."""
+    """What an `apps`/`do` tool lists for an action: its arguments."""
     return {
         "action": action.id,
         "summary": action.summary,
-        "risk": action.risk,
-        "max_risk": action.max_risk,
         "args": {
             k: {"type": a.type, "required": a.required}
             | ({"doc": a.doc} if a.doc else {})
