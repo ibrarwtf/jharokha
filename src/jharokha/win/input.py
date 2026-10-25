@@ -148,7 +148,10 @@ Watch = Callable[[], AbstractContextManager[Seen]]
 
 def _bring_to_front(hwnd: int) -> None:
     """A process without a window may not take the foreground; attaching to the current
-    foreground thread lifts that restriction."""
+    foreground thread lifts that restriction most of the time. When it does not (the user
+    typed into another window moments ago, which locks the foreground to it), a key tap of
+    our own makes this process the one that sent the last input, which Windows lets take
+    the foreground: Shift alone does nothing in any app it could land in."""
     if user32.SetForegroundWindow(hwnd) and user32.GetForegroundWindow() == hwnd:
         return
     fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
@@ -156,6 +159,11 @@ def _bring_to_front(hwnd: int) -> None:
     user32.AttachThreadInput(me, fg_thread, True)
     user32.SetForegroundWindow(hwnd)
     user32.AttachThreadInput(me, fg_thread, False)
+    if user32.GetForegroundWindow() == hwnd:
+        return
+    _send(_key(KEYS["shift"], False), _key(KEYS["shift"], True))
+    time.sleep(0.05)
+    user32.SetForegroundWindow(hwnd)
 
 
 # The window held in front for a run of inputs (an action), and the one in front before it.

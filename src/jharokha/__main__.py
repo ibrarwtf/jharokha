@@ -19,10 +19,6 @@ from jharokha.core import actions, apps
 from jharokha.core.apps import Catalog
 from jharokha.core.trace import Trace
 
-# In a shell the user's own Enter started the command: input waits this long for the
-# keyboard and mouse to go idle (3 s) before it is refused as user_active.
-WAIT_IDLE_S = 10.0
-
 
 def _source():  # noqa: ANN202
     if sys.platform != "win32":
@@ -126,8 +122,6 @@ def main() -> None:
             source, args.allow_input, catalog, trace, acts, args.window_title, args.capture
         ).run("stdio")
         return
-    if hasattr(source, "wait_idle_s"):
-        source.wait_idle_s = WAIT_IDLE_S
     if args.cmd == "act" and not args.allow_input:
         sys.exit(f"input_disabled: '{args.cmd}' sends real input; add --allow-input.")
     catalog = _catalog(args.apps)
