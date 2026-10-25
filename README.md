@@ -54,6 +54,7 @@ An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/app
 | `teams.open_chat {name}`, `teams.draft {chat, text}` | Open a chat; type a draft and never send. |
 | `outlook.unread {folder}`, `outlook.open {subject}` | A folder's unread mails; one mail's reading pane. |
 | `terminal.run {command}` | A command's output and exit code, read up to an end marker it prints. |
+| `terminal.glyphs` | Prints the ASCII alphabet once and learns the terminal's font, so terminal reads are exact cell by cell instead of OCR. |
 | `terminal.put_file`, `browser.goto`, `browser.click_sequence` | Write a file through the shell; go to a URL; click buttons in order. |
 
 ## Input safety
@@ -78,7 +79,7 @@ On a live Windows 365 session, a week of a Teams group chat read into a timeline
 ## Limits
 
 - RDP sends no frames to a minimized window; covered is fine.
-- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine.
+- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (run `terminal.glyphs` once a session), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
 - Keep the session window one size: calibration and spots hold at the size and zoom they were measured at.
 - Apps are recognised by their English UI text.
 - Windows only; a port would sit beside `src/jharokha/win/` and reuse `core/`.

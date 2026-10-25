@@ -32,7 +32,8 @@ and `timeout_s`:
     extract   regex on a region into result fields, or a field of collected items
     repeat    times | each (a list argument) | until, max; steps inside
     run       command in the shell in front, ended by core.shell's marker; exit code;
-              clear (Ctrl+L) first
+              clear (cls) first; learn = "glyphs" prints the alphabet instead and learns
+              the terminal's glyphs from it (core.glyphs)
     put_file  path, content_base64; per-chunk confirmation, then the SHA-256 checked
 
 Items are what jharokha_read format=items gives for the region (a Teams thread's
@@ -72,7 +73,7 @@ from functools import cache
 from importlib import resources
 from typing import Any, Literal, Protocol
 
-from jharokha.core import guard, listread, readers
+from jharokha.core import glyphs, guard, listread, readers
 from jharokha.core import shell as sh
 from jharokha.core.apps import GENERIC
 from jharokha.core.guard import Policy
@@ -124,13 +125,12 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "read": ("region", "as", "into", "fields", "exclude", "since", "zoom"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
-    "run": ("command", "shell", "region", "clear"),
+    "run": ("command", "shell", "region", "clear", "learn"),
     "put_file": ("path", "content_base64", "shell", "region"),
 }
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
 POLL_S = 0.1
-FULL_S = 1.0  # between full reads while a shell's marker is not found
 MAX_REPEAT = 50  # passes of a repeat, whatever times says
 STILL_ENDS = 3  # scrolls in a row that change nothing: the end of a list
 # Characters pasted as one line: Windows Terminal asks before pasting more than 5 KiB.
@@ -293,11 +293,13 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
     if kind in ("run", "put_file") and params.get("shell", "powershell") not in SHELLS:
         if not _PLACEHOLDER.fullmatch(str(params.get("shell"))):
             raise ActionError(f"{where}.shell must be one of {', '.join(SHELLS)}")
+    if kind == "run" and params.get("learn") not in (None, "glyphs"):
+        raise ActionError(f"{where}.learn must be 'glyphs'")
     for need in {
         "type": ("text",),
         "press": ("keys",),
         "click": ("target",),
-        "run": ("command",),
+        "run": () if params.get("learn") else ("command",),
         "put_file": ("path", "content_base64"),
         "read": ("region", "into"),
         "scroll": ("region",),
@@ -964,25 +966,14 @@ class Runner:
         return regions[region] if region and region in regions else (0, 0, *snap.size)
 
     def _reply(self, p: dict[str, Any], token: str, timeout: float) -> sh.Reply:
-        """The reply to the line marked with token: the shell's text as Windows OCR reads it,
-        polled until the end marker is on screen. The marker is what tells a finished
-        command, never the prompt, which OCR misreads. Windows OCR drops whole short rows
-        at times, the marker among them, so a full read (rows by the second engine) looks
-        once a second when the quick ones find nothing, and the reply returned is a full
-        read's when it has the marker."""
+        """The reply to the line marked with token: the shell's rows as the executor reads
+        them (a terminal's by its glyphs), polled until the end marker is on screen. The
+        marker is what tells a finished command, never the prompt."""
         end = self.ex.now() + timeout
-        full_at = self.ex.now() + FULL_S
         while True:
-            full = self.ex.now() >= full_at
-            snap = self._look(fast=not full)
-            r = sh.read_reply(inside(snap.lines, self._shell_box(snap, p)), token)
-            if r and not full:
-                snap = self._look()
-                r = sh.read_reply(inside(snap.lines, self._shell_box(snap, p)), token) or r
-            if r:
+            snap = self._look()
+            if r := sh.read_reply(inside(snap.lines, self._shell_box(snap, p)), token):
                 return r
-            if full:
-                full_at = self.ex.now() + FULL_S
             if self.ex.now() >= end:
                 raise _Fail(
                     f"no end marker within {timeout:g} s: the command may still be running "
@@ -1016,7 +1007,8 @@ class Runner:
 
     def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         shell = p.get("shell", "powershell")
-        command = str(p["command"])
+        learn = bool(p.get("learn"))
+        command = glyphs.COMMAND[shell] if learn else str(p["command"])
         if "\n" in command or "\r" in command:
             raise _Fail("a command is one line; nothing was typed")
         token = sh.new_token()
@@ -1033,6 +1025,13 @@ class Runner:
         self.res.output = unwrapped(reply.output, box[0] + box[2])
         self.res.exit_code = code
         self.res.fields["ok"] = ok
+        if learn:
+            learner = getattr(self.ex, "learn_glyphs", None)
+            n = learner() if learner else 0
+            self.res.fields["glyphs"] = n
+            if not n:
+                raise _Fail("the alphabet lines were not found on screen; nothing was learned")
+            return f"exit {code}, {n} glyphs learned"
         return f"exit {code}"
 
     def _put_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:

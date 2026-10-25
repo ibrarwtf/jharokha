@@ -24,6 +24,27 @@ clear = true  # cls on the same line, so the reply starts at the top whatever OC
 risk = "irreversible"
 timeout_s = 30
 
+# Prints every printable ASCII glyph in a known order and learns what each looks like in
+# this terminal's font, so later reads match cells instead of running OCR (core.glyphs).
+[action.terminal.glyphs]
+summary = """Learn the terminal's font: prints the printable ASCII alphabet (two lines, nothing
+else) and remembers each glyph, so terminal reads are exact and fast from then on. Once per
+session, before terminal work; again after a zoom or font change."""
+max_risk = "irreversible"
+args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+
+[[action.terminal.glyphs.step]]
+do = "focus"
+
+[[action.terminal.glyphs.step]]
+do = "run"
+learn = "glyphs"
+shell = "{shell}"
+region = "body"
+clear = true
+risk = "irreversible"
+timeout_s = 20
+
 [action.terminal.put_file]
 summary = """Write a file in the shell in front: its bytes as base64 typed in short chunks, each
 confirmed, then decoded there and its SHA-256 checked against the one sent."""

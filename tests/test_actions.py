@@ -27,6 +27,7 @@ def test_builtin_actions_parse_and_declare_their_risk():
     acts = actions.builtin()
     assert set(acts) == {
         "terminal.run",
+        "terminal.glyphs",
         "terminal.put_file",
         "teams.open_chat",
         "teams.messages",
