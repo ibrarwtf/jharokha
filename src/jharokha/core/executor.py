@@ -106,6 +106,16 @@ class SessionExecutor:
             self._snap = snap
         return snap
 
+    def learn_glyphs(self) -> int:
+        """The terminal glyphs learned from the alphabet lines on screen now
+        (Session.learn_glyphs); the next read reads with them."""
+        frame = self._frame()
+        s = self.session
+        n = s.learn_glyphs(s.where(frame, s.screen.lines(frame, None)))
+        if n:
+            self._snap = None
+        return n
+
     def zoom(self, box: Box) -> list[Line]:
         """box read on its own: a Source upscales a small one, as for a region read."""
         frame = self._frame()

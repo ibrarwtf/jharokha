@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.25.0
+
+A terminal is read by matching its cells against glyphs learned from the screen, not by OCR. A terminal draws one font at one size on a fixed grid, and the RDP codec leaves its glyphs nearly untouched (the same glyph in two places differs far less than from the nearest other glyph), so each cell is a nearest-neighbour lookup over about a hundred templates: exact where OCR confused `l`, `I` and `1` or `O` and `0`, and tens of milliseconds for a screen where the second engine took seconds.
+
+- `core/glyphs.py`: cells cut on the grid `core/rows.py` measures, each compared as its ink against its own background (so foreground colours and inverse video read as the same glyph); a template store per font and size; a cell no template is close to goes to the second engine for that run of cells, is counted as unknown in the read's header (`unknown_cells=N`), and becomes a template when Windows OCR read the row the same way. A read whose cells all sit far from the templates means the grid drifted, and the grid is searched back onto its cells.
+- `terminal.glyphs`, a built-in action: prints the printable ASCII alphabet (two lines, nothing else) and learns every glyph from it. Once before terminal work; again after a zoom or font change. Without it the templates build up from engine reads, a screen or two slower.
+- `terminal.run` polls with an exact read every 0.1 s: the end marker is never left to Windows OCR, and no row of a result is. The 500-cell engine budget, pending rows, the engine's row alignment and shape heuristics are gone (`rows.py` keeps grid calibration only).
+
 ## v0.24.7
 
 Trimmed to what use has needed.

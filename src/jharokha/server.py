@@ -627,10 +627,10 @@ def build_server(
             f"frame_id={frame.frame_id} size={frame.width}x{frame.height} "
             f"{identity_head(at.ident)} region={a.label}{a.note}"
         )
-        if session.pending:
-            # Terminal rows past the second engine's budget for one read: Windows OCR's
-            # words for now, read exactly by the next read of the same screen.
-            head += f" rows_pending={session.pending} (Windows OCR only; read again to refine)"
+        if session.unknown:
+            # Terminal cells no known glyph matched: the second engine's reading of them,
+            # or blank. terminal.glyphs teaches the font once.
+            head += f" unknown_cells={session.unknown} (run terminal.glyphs once to learn the font)"
         if fmt == "items":
             alt, note = second_reading(frame, lines, verify, range(len(lines)))
             its: list[Any]

@@ -1,13 +1,14 @@
 """A frame as the tools and actions see it: which app and view it shows, where that view's
-named regions are, and its terminal grids read row by row (core.rows). The server's read
-tools and the actions' executor share one Session, so both read a screen the same way."""
+named regions are, and its terminal grids read cell by cell (core.glyphs on a grid from
+core.rows). The server's read tools and the actions' executor share one Session, so both
+read a screen the same way."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
 
-from jharokha.core import apps, rows
+from jharokha.core import apps, glyphs, rows
 from jharokha.core.apps import Catalog
 from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
@@ -59,9 +60,11 @@ class Session:
         # once it was measured on three rows of text or more; and the last read of each, so
         # only rows whose pixels changed are read again.
         self._grids: dict[tuple[Any, ...], rows.Grid] = {}
-        self._reads: dict[tuple[Any, ...], rows.RowRead] = {}
-        # Grid rows the last shape() left to Windows OCR (core.rows' budget).
-        self.pending = 0
+        self._reads: dict[tuple[Any, ...], glyphs.Read] = {}
+        # The glyphs known per font and size (core.glyphs.store_key).
+        self._stores: dict[tuple[int, int], glyphs.Store] = {}
+        # Inked cells the last shape() found no glyph for.
+        self.unknown = 0
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
         """The app and view on a frame, from the whole screen's lines. The screen's cache
@@ -133,48 +136,31 @@ class Session:
                 out.append(placed[0])
         return out
 
-    def shape(
-        self,
-        at: Where,
-        lines: list[Line],
-        region: Box | None = None,
-        exact: Box | None = None,
-        budget: int = rows.BUDGET,
-    ) -> list[Line]:
-        """Grid regions of the view on screen read row by row (core.rows), or, where the
-        second engine cannot read rows, Windows OCR's words snapped to the grid. Rows inside
-        exact are read by the second engine whatever Windows OCR made of them."""
+    def shape(self, at: Where, lines: list[Line], region: Box | None = None) -> list[Line]:
+        """Grid regions of the view on screen read cell by cell (core.glyphs), or, where no
+        grid can be measured, Windows OCR's words snapped to the grid calibration gives."""
         ident, f = at.ident, at.frame
-        self.pending = 0
+        self.unknown = 0
         if ident.app is None or ident.view is None:
             return lines
         for name in self.catalog.apps[ident.app].views[ident.view].grids:
             placed = self.place(at, ident.app, ident.view, name)
             if placed and (region is None or iou(placed[0], region) > 0):
                 g = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
-                got = self._by_rows(at, name, placed[0], g, exact, budget)
+                got = self._by_cells(at, name, placed[0], g)
                 if got is None:
                     lines = grid(lines, placed[0], g.pitch, g.char_width, g.origin)
                 else:
                     lines = _swap(lines, placed[0], region, got)
         return lines
 
-    def _by_rows(
-        self,
-        at: Where,
-        name: str,
-        box: Box,
-        cal: apps.Grid,
-        exact: Box | None = None,
-        budget: int = rows.BUDGET,
-    ) -> list[Line] | None:
+    def _grid(self, at: Where, name: str, box: Box, cal: apps.Grid) -> rows.Grid | None:
+        """The grid of region name on this frame: the one the glyphs were learned on while
+        they fit; else from calibration, else measured once from the pixels, snapped to
+        whole pixels and kept. A read whose cells nearly all sit far from the templates
+        means the grid is off (a zoom step, a resize), and it is searched back onto them."""
         f, ident = at.frame, at.ident
-        key = (ident.app, ident.view, name, f.width, f.height, box)
-        source = self.screen.source
-
-        def reread(boxes: list[Box]) -> list[str]:
-            return source.reread(f, boxes, 0)
-
+        key = (ident.app, ident.view, name, f.width, f.height)
         g = rows.measured(box, cal.pitch, cal.char_width, cal.origin) or self._grids.get(key)
         if g is None:
             g = rows.calibrate(f, at.lines, box)
@@ -182,18 +168,67 @@ class Session:
                 return None
             # Kept across the region's width: each read ends it at that frame's text edge,
             # which a scrollbar appearing later or a mark going away moves.
-            g = rows.spanning(g, box)
+            g = glyphs.snapped(glyphs.refine(f, rows.spanning(g, box), box))
             if len(inside(at.lines, box)) >= 3:
                 self._grids[key] = g
-        try:
-            got = rows.read_rows(f, box, reread, g, at.lines, self._reads.get(key), exact, budget)
-        except ScreenError:
+        store = self._stores.get(glyphs.store_key(g))
+        if store is not None and store.grid is not None:
+            last = self._reads.get(key)
+            if last is not None and last.distance > glyphs.OFF_GRID:
+                moved = glyphs.snapped(glyphs.refine(f, store.grid, box, store))
+                if moved != store.grid:
+                    store.grid = moved
+                    self._reads.pop(key, None)
+            g = rows.spanning(store.grid, box)
+        return g
+
+    def _by_cells(self, at: Where, name: str, box: Box, cal: apps.Grid) -> list[Line] | None:
+        f, ident = at.frame, at.ident
+        key = (ident.app, ident.view, name, f.width, f.height)
+        g = self._grid(at, name, box, cal)
+        if g is None:
             return None
-        if got is None:
-            return None
+        g = rows.bounded(g, f, box)
+        store = self._stores.setdefault(glyphs.store_key(g), glyphs.Store())
+        source = self.screen.source
+        no_engine = False
+
+        def engine(boxes: list[Box]) -> list[str]:
+            nonlocal no_engine
+            try:
+                return source.reread(f, boxes, 0)
+            except ScreenError:
+                no_engine = True
+                return [""] * len(boxes)
+
+        got = glyphs.read(f, g, box, store, engine, self._reads.get(key))
+        if no_engine and not len(store):
+            return None  # nothing can name a cell yet: Windows OCR's words on the grid
         self._reads[key] = got
-        self.pending += got.pending
+        self.unknown += got.unknown
         return [ln for ln in rows.unwrap(got.lines, got.grid) if ln.text]
+
+    def learn_glyphs(self, at: Where) -> int:
+        """Templates from the two alphabet lines on screen (core.glyphs.learn_alphabet) in
+        each grid region of the view in front; how many glyphs were learned."""
+        ident, f = at.ident, at.frame
+        if ident.app is None or ident.view is None:
+            return 0
+        learned = 0
+        for name in self.catalog.apps[ident.app].views[ident.view].grids:
+            placed = self.place(at, ident.app, ident.view, name)
+            if not placed:
+                continue
+            cal = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
+            g = self._grid(at, name, placed[0], cal)
+            if g is None:
+                continue
+            g = rows.bounded(g, f, placed[0])
+            store = self._stores.setdefault(glyphs.store_key(g), glyphs.Store())
+            learned += glyphs.learn_alphabet(glyphs.cells(f, g, placed[0]), store)
+        if learned:
+            self._reads.clear()
+        return learned
 
     def focus_box(self, at: Where) -> tuple[str, Box] | None:
         ident = at.ident
