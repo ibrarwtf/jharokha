@@ -161,25 +161,6 @@ def test_locators_resolve_to_a_box_or_a_clear_miss():
         locator({"spot": "x", "text": "y"})
 
 
-def test_icons_are_located_beside_text_or_by_order():
-    lines = screen_lines()
-    icons = [(170, 38, 16, 16), (10, 300, 20, 20), (600, 40, 16, 16)]
-    regions = {"folders": (0, 30, 190, 80)}
-
-    def at(**t: object) -> Hit | Miss:
-        return locate(locator(t), lines, regions, {}, SCREEN, icons=icons)
-
-    left = at(icon=True, left_of="To")
-    assert isinstance(left, Hit) and left.box == icons[0] and left.how == "icon left of 'To'"
-    assert at(icon=True, right_of="Ana Silva").box == icons[2]  # type: ignore[union-attr]
-    assert at(icon=True, nth=2).box == icons[2]  # type: ignore[union-attr]
-    assert at(icon=True, region="folders").box == icons[0]  # type: ignore[union-attr]
-    miss = at(icon=True, region="folders", nth=2)
-    assert isinstance(miss, Miss) and "1 icons in folders" in miss.reason
-    with pytest.raises(ValueError, match="icon has no text"):
-        locator({"icon": True, "text": "x"})
-
-
 def test_a_brief_result_is_its_answer_and_a_failure_keeps_its_steps():
     r = actions.Result("x", fields={"n": 1}, steps=[actions.StepReport("1", "read", "read", 5)])
     assert "steps_done" not in r.to_dict(brief=True) and "steps_done" in r.to_dict()

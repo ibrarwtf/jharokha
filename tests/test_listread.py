@@ -2,8 +2,9 @@ from datetime import datetime
 
 import pytest
 
-from jharokha.core.listread import Item, format_items, items, merge, parse_when, since
+from jharokha.core.listread import Item, items, merge, parse_when, since
 from jharokha.core.models import Line
+from jharokha.core.readers import format_items
 
 from .conftest import lines_for
 

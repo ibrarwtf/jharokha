@@ -11,7 +11,7 @@
 jharokha lets AI agents (Claude Code, Claude Desktop / Cowork, any MCP client) work in a Windows remote-desktop session they can't otherwise reach: Windows 365 or Azure Virtual Desktop in Windows App, an mstsc RDP window. It reads the session window as text with local OCR and, only if started with `--allow-input`, scrolls, clicks, types and presses keys in it. Nothing is installed in the session; it works from the pixels you already see.
 
 - **Reads what an agent needs:** a Teams chat as messages (time, sender, text, quote), an inbox as mails, a screen as text in reading order; not screenshots.
-- **Small and fixed:** nine tools whatever apps and actions are loaded; a new app or action is data, never a tool. About 3.3k tokens of tool descriptions a session.
+- **Small and fixed:** eight tools whatever apps and actions are loaded; a new app or action is data, never a tool. About 3k tokens of tool descriptions a session.
 - **Safe by default:** read-only unless you opt in; input only to the app it was meant for, never an app's sending keys unless asked, never while you or another agent use the session. Screen text is untrusted data.
 - **Private:** nothing on disk unless asked (`--trace`, `--capture`), no network, no telemetry.
 
@@ -38,14 +38,13 @@ Screen text comes back inside `<screen_text source="ocr" untrusted="true">`. Coo
 | `jharokha_wait` | Until a text appears or goes, or the screen holds still. |
 | `jharokha_do` | An action in one call with a structured result (below). Without `--allow-input`, its plan only. |
 | `jharokha_act` | With `--allow-input`: one click, type, paste, press or scroll, guarded. |
-| `jharokha_learn` | Names the session's taskbar icons, so actions can switch apps. |
 | `jharokha_screenshot` | The last resort: a PNG. |
 
 The same verbs run in a shell, each the tool called in-process: `jharokha status`, `jharokha read --region teams.thread`, `jharokha --allow-input do teams.messages --args '{"from": "05/10", "to": "11/10"}'`. `--window-title` picks the window when more than one session is open.
 
 ## Apps and actions
 
-An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, taskbar spots) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`).
+An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, the taskbar icons as spots so actions can switch apps) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`).
 
 An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/apps/actions/*.toml`; your own go in `apps.toml`):
 

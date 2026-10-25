@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 from mcp import Client
 from mcp.types import TextContent
-from PIL import ImageDraw
 
 from jharokha.core import apps
 from jharokha.core.models import Frame
@@ -19,7 +18,6 @@ READ_ONLY_TOOLS = [
     "jharokha_apps",
     "jharokha_do",  # its plan only, dry_run=true
     "jharokha_find",
-    "jharokha_learn",  # writes apps.toml only when asked to save
     "jharokha_read",
     "jharokha_screenshot",
     "jharokha_status",
@@ -41,9 +39,7 @@ async def test_a_small_fixed_set_of_tools(source):
     async with Client(build_server(source)) as c:
         tools = (await c.list_tools()).tools
     assert sorted(t.name for t in tools) == READ_ONLY_TOOLS
-    assert all(
-        t.annotations and t.annotations.read_only_hint for t in tools if t.name != "jharokha_learn"
-    )
+    assert all(t.annotations and t.annotations.read_only_hint for t in tools)
     assert all("untrusted" in (t.description or "") for t in tools)
     async with Client(build_server(source, allow_input=True)) as c:
         tools = (await c.list_tools()).tools
@@ -115,35 +111,6 @@ async def test_find_by_locator_names_a_target_by_where_it_is(source):
     assert r["matches"] == [] and "not on screen" in r["miss"]
     r = await call(source, "jharokha_find", locator={"spot": "x", "text": "y"})
     assert r.is_error and "spot stands alone" in text(r)
-
-
-class Icons(FakeSource):
-    """A screen with two square buttons beside the text, as a compose bar has."""
-
-    def frame(self, w):  # noqa: ANN001, ANN201
-        f = super().frame(w)
-        img = f.image().copy()
-        d = ImageDraw.Draw(img)
-        for x in (500, 560):
-            d.rectangle((x, 8, x + 16, 24), fill=(40, 90, 200))
-        return Frame(f.width, f.height, img.tobytes("raw", "BGRA"), f.frame_id, f.ts)
-
-
-async def test_icons_are_targets_without_text():
-    source = Icons([("second column", 300, 10), ("Order AB12 shipped", 10, 70)])
-    r = json.loads(text(await call(source, "jharokha_find", locator={"icon": True}, all=True)))
-    boxes = [m["box"] for m in r["matches"]]
-    assert [b[0] for b in boxes] == [500, 560] and all(m["how"] == "icon" for m in r["matches"])
-    loc = {"icon": True, "right_of": "second column"}
-    r = json.loads(text(await call(source, "jharokha_find", locator=loc)))
-    assert r["matches"][0]["box"][0] == 500 and r["matches"][0]["how"].startswith("icon right of")
-    loc = {"icon": True, "nth": 2}
-    r = json.loads(text(await call(source, "jharokha_find", locator=loc)))
-    assert r["matches"][0]["box"][0] == 560
-    async with Client(build_server(source, allow_input=True)) as c:
-        r = text(await c.call_tool("jharokha_act", {"op": "click", "target": {"icon": True}}))
-        assert " op=click at=icon [508,16] " in r and "clicked left at 508,16" in r
-    assert source.items[-1][0] == "clicked left at 508,16"
 
 
 async def test_screenshot_region_and_scale(source):
@@ -469,7 +436,7 @@ async def test_status_says_when_calibration_no_longer_fits(source):
     assert s["app"] == "browser" and s["warnings"] == []
     s = await status("[0.031, 0.42]")  # measured lower down: the window was zoomed since
     assert s["app"] == "browser" and s["warnings"][0]["kind"] == "calibration_stale"
-    assert "step='variant'" in s["warnings"][0]["detail"]
+    assert "variant in apps.toml" in s["warnings"][0]["detail"]
 
 
 async def test_version_of_the_running_code_in_status_and_instructions(source):

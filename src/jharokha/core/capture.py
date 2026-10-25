@@ -9,7 +9,6 @@ Those frames hold real names and messages: the directory is the user's, never th
 from __future__ import annotations
 
 import json
-import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -59,7 +58,6 @@ class Capture:
     def __init__(self, directory: str | Path | None) -> None:
         self.dir = Path(directory) if directory is not None else None
         self.call: dict[str, Any] | None = None
-        self._lock = threading.Lock()  # the watcher identifies frames from its own thread
         # The frame saved last, its file stem and whether its lines were partial: the same
         # pixels come back under new frame ids while the screen holds still.
         self._last: tuple[Frame, str, bool] | None = None
@@ -89,22 +87,21 @@ class Capture:
         screen's read of them replaces a partial one's sidecar. Returns the PNG written."""
         if self.dir is None:
             return None
-        with self._lock:
-            last = self._last
-            if last is not None and (
-                last[0].frame_id == frame.frame_id or changed_bbox(last[0], frame) is None
-            ):
-                if last[2] and not partial:
-                    self._write_json(last[1], record(frame, ident, lines, regions, self.call))
-                    self._last = (last[0], last[1], False)
-                return None
-            stem = f"{int(frame.ts * 1000)}-{frame.frame_id}"
-            self.dir.mkdir(parents=True, exist_ok=True)
-            png = self.dir / f"{stem}.png"
-            frame.image().convert("RGB").save(png)
-            self._write_json(stem, record(frame, ident, lines, regions, self.call, partial))
-            self._last = (frame, stem, partial)
-            return png
+        last = self._last
+        if last is not None and (
+            last[0].frame_id == frame.frame_id or changed_bbox(last[0], frame) is None
+        ):
+            if last[2] and not partial:
+                self._write_json(last[1], record(frame, ident, lines, regions, self.call))
+                self._last = (last[0], last[1], False)
+            return None
+        stem = f"{int(frame.ts * 1000)}-{frame.frame_id}"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        png = self.dir / f"{stem}.png"
+        frame.image().convert("RGB").save(png)
+        self._write_json(stem, record(frame, ident, lines, regions, self.call, partial))
+        self._last = (frame, stem, partial)
+        return png
 
     def _write_json(self, stem: str, data: dict[str, Any]) -> None:
         assert self.dir is not None

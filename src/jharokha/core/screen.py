@@ -47,10 +47,6 @@ class Source(Protocol):
         """One line pasted, no Enter, once it is on screen; True when a paste warning was
         accepted. Raises ScreenError("paste_failed") when it never arrived."""
         ...
-    def hover(self, w: WindowInfo, x: int, y: int) -> None:
-        """The session's pointer to (x, y), no button, and left there: what a tooltip
-        needs. Guarded as the other input is."""
-        ...
 
     def guard_state(self, w: WindowInfo) -> dict[str, Any]:
         """{"warnings": [...], "input": {...}}: parts of the client hidden from view

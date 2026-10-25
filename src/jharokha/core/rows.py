@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from jharokha.core.lazy import LazyNumpy
 from jharokha.core.models import Box, Frame, Line, Word
+from jharokha.core.models import centre_in as _inside
 from jharokha.core.text import _ZERO_IN_NUMBER, _ZEROS, clean
 
 if TYPE_CHECKING:
@@ -369,11 +370,6 @@ def _clip(box: Box, frame: Frame) -> Box:
     x0, y0 = max(0, box[0]), max(0, box[1])
     x1, y1 = min(frame.width, box[0] + box[2]), min(frame.height, box[1] + box[3])
     return (x0, y0, max(0, x1 - x0), max(0, y1 - y0))
-
-
-def _inside(b: Box, box: Box) -> bool:
-    cx, cy = b[0] + b[2] / 2, b[1] + b[3] / 2
-    return box[0] <= cx < box[0] + box[2] and box[1] <= cy < box[1] + box[3]
 
 
 @dataclass(frozen=True)
@@ -799,10 +795,6 @@ class RowRead:
     pending: int = 0  # inked rows left to Windows OCR by the budget: the next read takes them
 
 
-# TODO(live 2026-10-24): the first read of a new terminal frame re-reads every inked row with
-# the second engine (~7 s, 16 s CPU on a live Windows Terminal; status and terminal.run felt it).
-# Read only the rows Windows OCR got wrong or the caller needs (a run's new rows), and verify
-# the fix on the live session before trusting the generated screens.
 def read_rows(
     frame: Frame,
     box: Box,

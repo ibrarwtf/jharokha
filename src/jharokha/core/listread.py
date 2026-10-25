@@ -29,14 +29,13 @@ names are read either way round (`16 October`, `Oct 16`)."""
 from __future__ import annotations
 
 import difflib
-import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from jharokha.core.models import Box, Line, union
-from jharokha.core.text import clean, normalize, wrap_untrusted
+from jharokha.core.text import clean, normalize
 
 KINDS = ("messages", "entries", "mails")
 
@@ -139,13 +138,6 @@ class Item:
         return out
 
 
-def format_items(items: list[Item]) -> str:
-    return wrap_untrusted(json.dumps([it.as_dict() for it in items], separators=(",", ":")))
-
-
-# TODO(live 2026-10-24): another person's Teams message that quotes a reply is split into
-# several items (a header without text, the quote as its own message marked own, a body
-# without sender).
 def items(lines: list[Line], box: Box, kind: str) -> list[Item]:
     """The items in the region box: kind is messages (a chat thread), entries (a chat list or
     any list) or mails (an inbox). See the module docstring for how lines become items."""

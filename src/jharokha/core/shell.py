@@ -1,9 +1,8 @@
 """Run commands in a remote shell and read the result back by OCR.
 
 A typed command gets a suffix that prints `<token>:<status>` once it has finished; the
-prompt is no use for that, as OCR misreads it. Files go in as base64 typed in short
-chunks (paste is blocked by policy, and JSON escaping mangles raw text) and come back
-checked by their SHA-256.
+prompt is no use for that, as OCR misreads it. Files go in as base64 in short chunks (JSON
+escaping would mangle raw text) and come back checked by their SHA-256.
 
 No get_file: reading a file back means OCR of base64, which is case-sensitive while
 terminal OCR confuses case and lookalikes on every few lines, so it needs an
@@ -21,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from jharokha.core.models import Line
+from jharokha.core.models import rows as _rows
 
 Shell = Literal["powershell", "cmd", "bash"]
 
@@ -72,15 +72,6 @@ class Reply:
     above the marker and its start may be missing."""
 
 
-@dataclass(frozen=True)
-class Run:
-    output: list[Line]
-    echoed: bool
-    ok: bool | None
-    """PowerShell's $?; for cmd and bash, exit code 0. None when OCR left it unreadable."""
-    code: int | None
-
-
 def _scan(
     lines: list[Line], token: str
 ) -> tuple[list[list[Line]], list[tuple[int, str]], list[int]]:
@@ -103,22 +94,6 @@ def _scan(
     return rows, markers, echoes
 
 
-def echo_bottom(lines: list[Line], token: str) -> int | None:
-    """The y just below the last row of the command's echo: its output starts there."""
-    rows, _, echoes = _scan(lines, token)
-    if not echoes:
-        return None
-    return max(ln.box[1] + ln.box[3] for ln in rows[echoes[-1]])
-
-
-def marker_bottom(lines: list[Line], token: str) -> int | None:
-    """The y just below the command's end marker row: the reply ends there."""
-    rows, markers, _ = _scan(lines, token)
-    if not markers:
-        return None
-    return max(ln.box[1] + ln.box[3] for ln in rows[markers[-1][0]])
-
-
 def read_reply(lines: list[Line], token: str) -> Reply | None:
     """The reply to the command marked with token, or None while its marker is not on
     screen. Tolerates case, one misread token character, lookalikes OCR reads for the
@@ -138,18 +113,6 @@ def read_reply(lines: list[Line], token: str) -> Reply | None:
         return None
     out = [ln for r in rows[start:m] for ln in r]
     return Reply(out, payload, bool(echoes))
-
-
-# TODO(live 2026-10-24): once on a live terminal the end marker read as `XXXXXX:Xxxx:` and the
-# run waited out its 30 s timeout although the command had finished; find out why on the live
-# session (row not re-read? token letters confusable at that size?).
-def read_run(lines: list[Line], token: str, shell: Shell) -> Run | None:
-    """read_reply for a command from marked(), with its status parsed."""
-    reply = read_reply(lines, token)
-    if reply is None:
-        return None
-    ok, code = status(reply.payload, shell)
-    return Run(reply.output, reply.echoed, ok, code)
 
 
 def status(payload: str, shell: Shell) -> tuple[bool | None, int | None]:
@@ -248,20 +211,6 @@ def _write(shell: Shell, path: str, n: int, token: str, tag: str) -> str:
         f' && certutil -hashfile "{path}" SHA256'
     )
     return marked(cmd, token, shell) + f' & del {tmp}*.b64"'
-
-
-def _rows(lines: list[Line]) -> list[list[Line]]:
-    """Lines on one screen row (centres closer than half a line height), left to right."""
-    rows: list[list[Line]] = []
-    for ln in sorted(lines, key=lambda ln: ln.box[1]):
-        cy = ln.box[1] + ln.box[3] / 2
-        if rows:
-            r = rows[-1][0]
-            if abs(cy - (r.box[1] + r.box[3] / 2)) < max(r.box[3], ln.box[3]) / 2:
-                rows[-1].append(ln)
-                continue
-        rows.append([ln])
-    return [sorted(r, key=lambda ln: ln.box[0]) for r in rows]
 
 
 def _near(a: str, b: str) -> bool:

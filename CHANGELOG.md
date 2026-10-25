@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.24.7
+
+Trimmed to what live use has needed. About 1,000 lines fewer; no behaviour live tasks used has changed.
+
+- `jharokha_learn` is gone (eight tools now, about 3k tokens of descriptions a session): the taskbar spots it wrote are one line in `apps.toml`, which is where yours already were. `core/learn.py` stays as a stub with a TODO; v0.24.6 in git has the taskbar version. With it go the pointer hover path (`Source.hover`, `win/input.hover`, the `hover` trace record) and the `jharokha learn` shell verb.
+- Icons from pixels (`core/elements.py`) and the `{"icon": true, ...}` locator are gone: no live click has needed a text-less target. The file stays as a stub with a TODO. An app's spots are plain points now (no icon-size check).
+- Dead code removed: `View.prompt`, `Calibration.prompt` and `Catalog.prompt` (set, never read; `prompt` is no longer a key in apps.toml), the reserved `[app.x.action]` table, `Catalog.replacing` and `Doc.name`, `Executor.reread`, `SessionExecutor.exact` and `reread`, `shell.read_run`, `Run`, `echo_bottom` and `marker_bottom`, `listread.format_items`, `Lease.release`, `actions.ZOOM_AREA`, and two locks left from the watcher removed in 0.21.
+- One helper each for lines inside a box (`models.inside`), a box inside a box (`models.within`), a box's centre in a box (`models.centre_in`) and lines by screen row (`models.rows`), in place of six and four copies.
+- Stale notes removed: the `TODO(live)` in `rows.py` (the budget does it since 0.24.6), in `shell.py` (full reads find the marker since 0.24.6) and in `listread.py` (quotes read as live Teams draws them since 0.24.2); `shell.py` no longer says paste is blocked (laptop to session works).
+
 ## v0.24.6
 
 Terminal I/O, from the live 23 Oct day (80% of jharokha's time was the terminal: 71 of 78 runs timed out, typing ran at 62 characters a second):

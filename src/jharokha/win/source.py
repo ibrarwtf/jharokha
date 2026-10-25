@@ -165,9 +165,6 @@ class WindowsSource:
 
         return bool(self._input(w, "paste_line", text, arrived, warning))
 
-    def hover(self, w: WindowInfo, x: int, y: int) -> None:
-        self._input(w, "hover", x, y)
-
 
 def _round(v: float | None) -> float | None:
     return None if v is None else round(v, 1)

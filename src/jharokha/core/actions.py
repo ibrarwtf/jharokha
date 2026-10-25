@@ -82,14 +82,12 @@ from jharokha.core.locate import (
     Miss,
     RegionInfo,
     Spot,
-    app_spot,
-    inside,
     locate,
     locator,
     row_texts,
     unwrapped,
 )
-from jharokha.core.models import Box, Line
+from jharokha.core.models import Box, Line, inside
 from jharokha.core.screen import ScreenError
 from jharokha.core.text import find, fold
 
@@ -140,9 +138,6 @@ PASTE_MAX = 4000
 # A line this short is typed: under 1.6 s at about 126 characters a second, what a paste
 # takes to arrive and settle.
 TYPE_MAX = 200
-# A band of terminal rows read up close: a quarter of the screen's area or less is what a
-# Source upscales, and Windows OCR drops short tokens on Cascadia rows at 1x.
-ZOOM_AREA = 0.24
 
 
 class ActionError(ValueError):
@@ -430,7 +425,6 @@ class Executor(Protocol):
 
     def read(self) -> Snapshot: ...
     def zoom(self, box: Box) -> list[Line]: ...  # the box read up close, client coordinates
-    def reread(self, boxes: list[Box]) -> list[str]: ...  # by the second engine; [] if none
     def click(self, x: int, y: int, button: str = "left", double: bool = False) -> None: ...
     def type(self, text: str) -> None: ...  # never holds a newline
     def press(self, keys: str) -> None: ...
@@ -669,8 +663,8 @@ class Runner:
             hit = locate(Locator(spot=spot), [], {}, snap.spots, (0, 0, *snap.size))
             if isinstance(hit, Miss):
                 raise _Fail(
-                    f"cannot switch to {app}: {hit.reason}. Name the taskbar icons once with "
-                    "jharokha_learn(step='taskbar'), or bring the app forward yourself"
+                    f"cannot switch to {app}: {hit.reason}. Add its taskbar icon as the spot "
+                    f"taskbar.{app} in apps.toml, or bring the app forward yourself"
                 )
             self.ex.click(*hit.center)
             self.ex.settle()
@@ -743,11 +737,7 @@ class Runner:
         screen = (0, 0, *snap.size)
         regions, info = self._regions(snap), self._info(snap)
         spots = self._short(snap.spots)
-        # Text-less elements are found from the pixels only when a step asks for an icon, or
-        # for an app's spot, which holds only while its icon is there.
-        icons = getattr(self.ex, "icons", None)
-        found = icons() if (loc.icon or app_spot(loc, spots)) and icons else []
-        hit = locate(loc, snap.lines, regions, spots, screen, info, found)
+        hit = locate(loc, snap.lines, regions, spots, screen, info)
         if isinstance(hit, Miss):
             raise _Fail(f"{loc.describe()}: {hit.reason}", hit.candidates)
         return hit
