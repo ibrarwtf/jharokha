@@ -108,7 +108,7 @@ def main() -> None:
     d = sub.add_parser("do", help="run an action (see `jharokha apps`)")
     d.add_argument("action")
     d.add_argument("--args", type=json.loads, default={}, help='JSON, e.g. {"folder": "Inbox"}')
-    d.add_argument("--allow", choices=["read", "reversible", "irreversible"], default="reversible")
+    d.add_argument("--allow", choices=["irreversible"], help="let a step press a key that sends")
     d.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     source = _source()

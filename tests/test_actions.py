@@ -23,7 +23,7 @@ SCREEN: Box = (0, 0, 640, 400)
 # Definitions
 
 
-def test_builtin_actions_parse_and_declare_their_risk():
+def test_builtin_actions_parse():
     acts = actions.builtin()
     assert set(acts) == {
         "terminal.run",
@@ -37,11 +37,8 @@ def test_builtin_actions_parse_and_declare_their_risk():
         "browser.goto",
         "browser.click_sequence",
     }
-    assert acts["terminal.run"].risk == "irreversible"
-    assert acts["teams.draft"].risk == "reversible" and acts["teams.draft"].newline is None
+    assert acts["teams.draft"].newline is None
     assert acts["teams.draft"].steps[-1].params["newline"] == "shift+enter"
-    assert acts["outlook.unread"].max_risk == "reversible"
-    assert acts["browser.goto"].risk == "irreversible"  # Enter in a browser, as its policy says
     d = actions.describe(acts["teams.draft"])
     assert d["args"]["chat"] == {"type": "text", "required": True}
 
@@ -49,12 +46,11 @@ def test_builtin_actions_parse_and_declare_their_risk():
 @pytest.mark.parametrize(
     ("body", "error"),
     [
-        ('[[action.x.a.step]]\ndo = "press"\nkeys = "enter"', "declares its risk"),
-        ('[[action.x.a.step]]\ndo = "type"\ntext = "{who}"\nrisk = "read"', "'{who}' is not an"),
+        ('[[action.x.a.step]]\ndo = "type"\ntext = "{who}"', "'{who}' is not an"),
         ('[[action.x.a.step]]\ndo = "jump"', "do must be one of"),
         ('[[action.x.a.step]]\ndo = "focus"\nnope = 1', "unknown key nope"),
-        ('[[action.x.a.step]]\ndo = "click"\ntarget = { near = "x" }\nrisk = "read"', "locator"),
-        ('[[action.x.a.step]]\ndo = "type"\ntext = "a"\nrisk = "maybe"', "risk must be"),
+        ('[[action.x.a.step]]\ndo = "click"\ntarget = { near = "x" }', "locator"),
+        ('[[action.x.a.step]]\ndo = "type"\ntext = "a"\nrisk = "maybe"', "unknown key risk"),
         ('[action.x.a]\nsummary = "no steps"', "needs [["),
     ],
 )
@@ -80,8 +76,8 @@ def test_arguments_are_checked_and_filled_literally_into_a_regex():
 def test_apps_toml_holds_local_actions_beside_app_definitions():
     text = (
         'format = 1\n[app.x]\nname = "X"\n[app.x.view.main]\n'
-        '[action.x.hello]\nsummary = "Say hello"\nmax_risk = "reversible"\n'
-        '[[action.x.hello.step]]\ndo = "type"\ntext = "hello"\nrisk = "reversible"\n'
+        '[action.x.hello]\nsummary = "Say hello"\n'
+        '[[action.x.hello.step]]\ndo = "type"\ntext = "hello"\n'
     )
     acts = actions.load(text)
     assert acts["x.hello"].source == "local" and "teams.draft" in acts
@@ -163,12 +159,10 @@ def test_locators_resolve_to_a_box_or_a_clear_miss():
 
 
 def test_a_brief_result_is_its_answer_and_a_failure_keeps_its_steps():
-    r = actions.Result("x", fields={"n": 1}, steps=[actions.StepReport("1", "read", "read", 5)])
+    r = actions.Result("x", fields={"n": 1}, steps=[actions.StepReport("1", "read", 5)])
     assert "steps_done" not in r.to_dict(brief=True) and "steps_done" in r.to_dict()
     r.ok = False
-    assert r.to_dict(brief=True)["steps_done"] == [
-        {"step": "1", "do": "read", "risk": "read", "ms": 5}
-    ]
+    assert r.to_dict(brief=True)["steps_done"] == [{"step": "1", "do": "read", "ms": 5}]
 
 
 def test_the_nth_item_of_a_region_is_its_readers_item():
@@ -257,51 +251,35 @@ def one(text: str, app: str = "chat") -> actions.Action:
     return next(iter(actions.parse(f"format = 1\n[action.{app}.a]\n{text}").values()))
 
 
-def test_a_step_riskier_than_the_action_allows_is_refused_before_any_input():
+def test_a_step_that_sends_is_refused_before_any_input_unless_allowed():
     a = one(
-        'max_risk = "reversible"\n'
-        '[[action.chat.a.step]]\ndo = "type"\ntext = "hi"\nrisk = "reversible"\n'
-        '[[action.chat.a.step]]\ndo = "press"\nkeys = "enter"\nrisk = "irreversible"'
+        '[[action.chat.a.step]]\ndo = "type"\ntext = "hi"\n'
+        '[[action.chat.a.step]]\ndo = "press"\nkeys = "Return"'
     )
     ex = Scripted({"chat": [("Type a message", 10, 300)]}, "chat")
-    r = Runner(ex).run(a, {})
-    assert not r.ok and ex.inputs == [] and r.failed["code"] == "irreversible"  # type: ignore[index]
-    assert r.safety == [{"kind": "irreversible", "step": "2:press", "detail": r.failed["reason"]}]  # type: ignore[index]
-    # A call's allow caps it the same way, below the action's own.
-    draft = actions.builtin()["teams.draft"]
-    r = Runner(ex, allow="read").run(draft, {"chat": "Ana", "text": "x"})
-    assert not r.ok and r.safety[0]["kind"] == "irreversible" and ex.inputs == []
-    assert "allow='reversible'" in r.failed["reason"]  # type: ignore[index]
-
-
-def test_a_key_the_apps_policy_calls_irreversible_makes_its_step_irreversible():
-    a = one(
-        'max_risk = "irreversible"\n'
-        '[[action.chat.a.step]]\ndo = "press"\nkeys = "Return"\nrisk = "reversible"'
-    )
-    ex = Scripted({"chat": []}, "chat")
     policies = {"chat": Policy(irreversible_keys=frozenset({"enter"}))}
-    r = Runner(ex, allow="reversible", policies=policies).run(a, {})
-    assert not r.ok and r.failed["code"] == "irreversible" and ex.inputs == []  # type: ignore[index]
-    assert "Return is irreversible in chat" in r.failed["reason"]  # type: ignore[index]
+    r = Runner(ex, policies=policies).run(a, {})
+    assert not r.ok and ex.inputs == [] and r.failed["code"] == "irreversible"  # type: ignore[index]
+    assert r.failed["step"] == "2:press" and "Return is irreversible in chat" in r.failed["reason"]  # type: ignore[index]
+    assert "allow='irreversible'" in r.failed["reason"]  # type: ignore[index]
     assert Runner(ex, allow="irreversible", policies=policies).run(a, {}).ok
-    assert ex.inputs == ["press Return"]
+    assert ex.inputs == ["type hi", "press Return"]
+    # Without a policy naming the key, nothing is gated: a terminal command is just a step.
+    ex = Scripted({"chat": [("Type a message", 10, 300)]}, "chat")
+    assert Runner(ex).run(a, {}).ok and ex.inputs == ["type hi", "press Return"]
 
 
-def test_a_newline_that_is_enter_makes_typing_irreversible():
+def test_a_newline_that_is_enter_makes_typing_send():
     a = one(
-        'max_risk = "reversible"\nnewline = "enter"\nargs.text = { type = "text" }\n'
-        '[[action.chat.a.step]]\ndo = "type"\ntext = "{text}"\nrisk = "reversible"'
+        'newline = "enter"\nargs.text = { type = "text" }\n'
+        '[[action.chat.a.step]]\ndo = "type"\ntext = "{text}"'
     )
     ex = Scripted({"chat": []}, "chat")
     assert Runner(ex).run(a, {"text": "one line"}).ok
     r = Runner(ex).run(a, {"text": "line one\nline two"})
-    assert not r.ok and r.safety[0]["kind"] == "irreversible"
+    assert not r.ok and r.failed["code"] == "irreversible"  # type: ignore[index]
     assert ex.inputs == ["type one line"]
-    b = one(
-        'args.text = { type = "text" }\n'
-        '[[action.chat.a.step]]\ndo = "type"\ntext = "{text}"\nrisk = "reversible"'
-    )
+    b = one('args.text = { type = "text" }\n[[action.chat.a.step]]\ndo = "type"\ntext = "{text}"')
     r = Runner(ex).run(b, {"text": "a\nb"})  # no newline policy: forbidden at run time
     assert not r.ok and "newline" in r.failed["reason"]  # type: ignore[index]
 
@@ -323,9 +301,9 @@ def test_terminal_run_with_another_app_in_front_is_refused():
     r = Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-ChildItem"})
     assert not r.ok and ex.inputs == []
     assert r.failed["step"] == "1:focus" and r.failed["code"] == "wrong_app"  # type: ignore[index]
-    detail = r.safety[0]["detail"]
+    detail = r.failed["reason"]  # type: ignore[index]
     assert detail.startswith("expected terminal in front, but the screen shows browser main")
-    assert r.safety[0]["kind"] == "wrong_app" and "nothing was sent" in detail
+    assert "nothing was sent" in detail
 
 
 def test_steps_check_their_outcome_and_report_where_they_failed():
@@ -352,7 +330,6 @@ def test_extract_and_repeat():
         'args.words = { type = "list" }\n'
         '[[action.chat.a.step]]\ndo = "repeat"\neach = "words"\nas = "w"\n'
         '[[action.chat.a.step.step]]\ndo = "click"\ntarget = { text = "{w}" }\n'
-        'risk = "reversible"\n'
         "[[action.chat.a.step]]\ndo = \"extract\"\nregex = 'Inbox\\s+(?P<unread>\\d+)'"
     )
     ex = Scripted({"chat": [("Inbox 16", 10, 10), ("Drafts", 10, 40)]}, "chat")
@@ -393,7 +370,7 @@ def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():
         ex.fail = fail
         r = Runner(ex, "irreversible")
         r.action = actions.builtin()["terminal.run"]
-        r.res, r.cap = actions.Result("terminal.run"), "irreversible"
+        r.res = actions.Result("terminal.run")
         r._send(line)
         return ex.inputs, r.res.fields["input"]
 

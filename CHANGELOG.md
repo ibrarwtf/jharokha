@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.25.2
+
+- The risk scheme is gone: no `risk` on steps, no `max_risk` on actions, no `allow` of read, reversible or irreversible capping them, no `safety` list in results. Every command had been "irreversible" since 0.24.5, so every call carried the flag and it guarded nothing, and "reversible" on a terminal step would have been a lie. What stays is the one gate that has done real work: a step that presses a key the app's policy calls irreversible (Enter in Teams or a browser, Ctrl+Enter or Alt+S in Outlook), or types a newline that is one, is refused before any input unless the call says `allow="irreversible"`. The terminal has no such key: commands, the alphabet run and `put_file` run under `--allow-input` alone. About 100 lines fewer.
+
 ## v0.25.1
 
 From the first use of 0.25.0 by an agent in another session:

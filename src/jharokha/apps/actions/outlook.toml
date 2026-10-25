@@ -5,7 +5,6 @@ format = 1
 [action.outlook.unread]
 summary = """A folder's unread count, as its folder pane shows it, and the messages its list
 shows (sender, subject, time, preview: screen text)."""
-max_risk = "reversible"
 args.folder = { type = "text", default = "Inbox", max_len = 100 }
 
 [[action.outlook.unread.step]]
@@ -15,13 +14,11 @@ switch = true
 [[action.outlook.unread.step]]
 do = "press"
 keys = "ctrl+1"
-risk = "reversible"
 expect = { view = "mail", ready = true }
 
 [[action.outlook.unread.step]]
 do = "click"
 target = { text = "{folder}", region = "folders" }
-risk = "reversible"
 
 [[action.outlook.unread.step]]
 do = "read"
@@ -39,7 +36,6 @@ required = false
 
 [action.outlook.open]
 summary = "Open the message with this subject from the list and return its reading pane."
-max_risk = "reversible"
 args.subject = { type = "text", max_len = 300 }
 
 [[action.outlook.open.step]]
@@ -49,13 +45,11 @@ switch = true
 [[action.outlook.open.step]]
 do = "press"
 keys = "ctrl+1"
-risk = "reversible"
 expect = { view = "mail", ready = true }
 
 [[action.outlook.open.step]]
 do = "click"
 target = { text = "{subject}", region = "list" }
-risk = "reversible"
 expect = { text = "{subject}", region = "reading" }
 
 [[action.outlook.open.step]]

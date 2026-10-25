@@ -6,7 +6,6 @@ format = 1
 
 [action.browser.goto]
 summary = "Bring the browser forward and go to a URL through its address bar."
-max_risk = "irreversible"
 args.url = { type = "text", max_len = 2000, pattern = '(https?://)?([\w-]+\.)+[A-Za-z]{2,}(:\d+)?(/\S*)?' }
 
 [[action.browser.goto.step]]
@@ -16,26 +15,22 @@ switch = true
 [[action.browser.goto.step]]
 do = "click"
 target = { region = "address" }
-risk = "reversible"
 
 [[action.browser.goto.step]]
 do = "type"
 text = "{url}"
-risk = "reversible"
 
 [[action.browser.goto.step]]
 do = "press"
 keys = "enter"
-risk = "irreversible"
 expect = { text = "{url}", region = "address" }
 timeout_s = 15
 
-# A named button on a page can submit or buy: each click is declared irreversible, so a
-# session guard that allows only reversible steps refuses the whole sequence up front.
+# A named button on a page can submit or buy: a click is no key the policy knows, so the
+# user names the buttons and the agent reads the page before each click.
 [action.browser.click_sequence]
 summary = """Click buttons or links by their text in order, the whole sequence a number of
 times, checking each is on screen before it is clicked."""
-max_risk = "irreversible"
 args.buttons = { type = "list", max_len = 100 }
 args.times = { type = "number", default = 1 }
 
@@ -55,4 +50,3 @@ as = "button"
 [[action.browser.click_sequence.step.step.step]]
 do = "click"
 target = { text = "{button}" }
-risk = "irreversible"

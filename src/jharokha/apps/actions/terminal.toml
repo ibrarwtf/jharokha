@@ -1,12 +1,13 @@
-# Terminal actions, built in. Both work only in a terminal already in front: they never
+# Terminal actions, built in. They work only in a terminal already in front: they never
 # switch to one, since a command typed anywhere else goes somewhere else (a browser's
-# address bar searches the web for it).
+# address bar searches the web for it). A command runs under the default allow: which
+# commands only read cannot be told from their text (an allowlist passed none of a live
+# day's 93), and a flag every call carries guards nothing. --allow-input is the opt-in.
 format = 1
 
 [action.terminal.run]
 summary = """Run one command in the shell in front and return what it printed and its exit
 code, read up to an end marker the command prints (not the prompt, which OCR misreads)."""
-max_risk = "irreversible"
 args.command = { type = "text", max_len = 2000, doc = "one line" }
 args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
 
@@ -19,9 +20,6 @@ command = "{command}"
 shell = "{shell}"
 region = "body"
 clear = true  # cls on the same line, so the reply starts at the top whatever OCR makes of its echo
-# Every command is irreversible: which ones only read is not told from their text (an
-# allowlist passed none of a live day's 93 commands). A user's allow for commands comes later.
-risk = "irreversible"
 timeout_s = 30
 
 # Prints every printable ASCII glyph in a known order and learns what each looks like in
@@ -30,7 +28,6 @@ timeout_s = 30
 summary = """Learn the terminal's font: prints the printable ASCII alphabet (two lines, nothing
 else) and remembers each glyph, so terminal reads are exact and fast from then on. Once per
 session, before terminal work; again after a zoom or font change."""
-max_risk = "irreversible"
 args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
 
 [[action.terminal.glyphs.step]]
@@ -42,13 +39,11 @@ learn = "glyphs"
 shell = "{shell}"
 region = "body"
 clear = true
-risk = "irreversible"
 timeout_s = 20
 
 [action.terminal.put_file]
 summary = """Write a file in the shell in front: its bytes as base64 typed in short chunks, each
 confirmed, then decoded there and its SHA-256 checked against the one sent."""
-max_risk = "irreversible"
 args.path = { type = "text", max_len = 260 }
 args.content_base64 = { type = "base64", max_len = 200000 }
 args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
@@ -62,5 +57,4 @@ path = "{path}"
 content_base64 = "{content_base64}"
 shell = "{shell}"
 region = "body"
-risk = "irreversible"
 timeout_s = 15

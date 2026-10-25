@@ -550,7 +550,7 @@ def build_server(
         the screen: each app's views and their named regions (reader: what read gives for
         it; focus: what read and act report by default), its input policy (the newline it
         sends, keys refused unless allowed), the session's regions and spots (taskbar
-        icons, as act targets), and every action jharokha_do runs: its arguments, risk and
+        icons, as act targets), and every action jharokha_do runs: its arguments and
         summary. Read it once per session; prefer an action to act."""
         out_apps = []
         for a in session.catalog.apps.values():
@@ -1054,18 +1054,18 @@ def build_server(
     def jharokha_do(
         action: str,
         args: dict[str, Any] | None = None,
-        allow: Literal["read", "reversible", "irreversible"] = "reversible",
+        allow: Literal["irreversible"] | None = None,
         dry_run: bool = False,
     ) -> str:
         """Run an action: a named, checked sequence of steps in one call, with a structured
         result, such as teams.messages {chat, from, to}, teams.draft {chat, text},
         outlook.unread {folder}, browser.goto {url}, terminal.run {command, shell} (a
         command's output and exit code), terminal.put_file {path, content_base64};
-        jharokha_apps lists them all with their arguments and risk. args is a JSON object.
-        allow caps every step's risk: read, reversible (default: clicks, scrolls, drafts)
-        or irreversible (sends, submits, writes a file, runs any command); a riskier step is
-        refused before anything is sent (irreversible). Pass allow='irreversible' only when
-        the user asked for exactly that. Guarded as act: wrong_app, input_leased,
+        jharokha_apps lists them all with their arguments. args is a JSON object. A step
+        that would send or submit (Enter in Teams or a browser, Ctrl+Enter or Alt+S in
+        Outlook: the app's policy) is refused before anything is sent (irreversible) unless
+        allow='irreversible', which you pass only when the user asked for exactly that;
+        commands and file writes need nothing. Guarded as act: wrong_app, input_leased,
         user_active. dry_run=true shows the plan and sends nothing; it is all that works
         without --allow-input. Returns JSON: ok, fields, items, lines, output, exit_code;
         on failure failed {step, reason, code, candidates} and the steps done (read the

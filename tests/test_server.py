@@ -288,13 +288,11 @@ async def test_terminal_run_through_do_reads_its_end_marker_and_exit_code():
     shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
     async with Client(build_server(shell, allow_input=True)) as c:
 
-        async def run(command: str, allow: str = "irreversible") -> Any:
-            args = {"action": "terminal.run", "args": {"command": command}, "allow": allow}
+        async def run(command: str) -> Any:
+            args = {"action": "terminal.run", "args": {"command": command}}
             return await c.call_tool("jharokha_do", args)
 
-        r = await run("Remove-Item old.txt", "reversible")
-        assert r.is_error and text(r).startswith("irreversible:")  # one that writes needs allow
-        r = text(await run("Get-Date"))
+        r = text(await run("Get-Date"))  # under the default allow: no flag for a command
         body = json.loads(r.split('untrusted="true">\n', 1)[1].rsplit("\n</screen_text>", 1)[0])
         assert body["ok"] and body["output"] == ["Friday 23 October"] and body["exit_code"] == 0
         assert "steps_done" not in body  # a success is its answer
