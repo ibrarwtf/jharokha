@@ -16,16 +16,12 @@ do = "press"
 keys = "ctrl+1"
 expect = { view = "mail", ready = true }
 
+# The folders are a flyout over the list: open it, take the count beside the folder's
+# name, and click the name, which opens the folder and closes the flyout.
 [[action.outlook.unread.step]]
 do = "click"
-target = { text = "{folder}", region = "folders" }
-
-[[action.outlook.unread.step]]
-do = "read"
-region = "list"
-as = "items"
-fields = { sender = "title", subject = "subtitle", preview = "text" }
-into = "messages"
+target = { region = "menu" }
+expect = { text = "{folder}", region = "folders" }
 
 [[action.outlook.unread.step]]
 do = "extract"
@@ -33,6 +29,18 @@ region = "folders"
 regex = '{folder}\s+(?P<unread>\d+)'
 zoom = true  # the count is small digits beside the name
 required = false
+
+[[action.outlook.unread.step]]
+do = "click"
+target = { text = "{folder}", region = "folders" }
+expect = { gone = "Add account", region = "folders" }
+
+[[action.outlook.unread.step]]
+do = "read"
+region = "list"
+as = "items"
+fields = { sender = "title", subject = "subtitle", preview = "text" }
+into = "messages"
 
 [action.outlook.open]
 summary = "Open the message with this subject from the list and return its reading pane."

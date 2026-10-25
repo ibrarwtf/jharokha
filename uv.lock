@@ -300,7 +300,7 @@ wheels = [
 
 [[package]]
 name = "jharokha"
-version = "0.25.2"
+version = "0.25.3"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
