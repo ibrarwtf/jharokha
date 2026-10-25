@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.25.1
+
+From the first use of 0.25.0 by an agent in another session:
+
+- The session window takes the foreground where it used to refuse with `not_foreground`: when the user typed into another window moments ago Windows locks the foreground to it, and attaching to its thread is not always enough; a Shift tap of our own (nothing in any app) makes this process the last to send input, which may take the foreground. The refusal, when it still happens, no longer tells an action to pass `focus_at` (only `act` takes it): click into the session once and retry.
+- The server waits up to 10 s for the user's keyboard and mouse to go idle before refusing `user_active`, as the shell verbs already did: an agent acts right after the user's Enter, and refusing at once sent it into retries.
+
 ## v0.25.0
 
 A terminal is read by matching its cells against glyphs learned from the screen, not by OCR. A terminal draws one font at one size on a fixed grid, and the RDP codec leaves its glyphs nearly untouched (measured live: the same glyph in two places differs by 0.01, the nearest other glyph is 2 away), so each cell is a nearest-neighbour lookup over about a hundred templates: exact where OCR confused `l`, `I` and `1` or `O` and `0`, and tens of milliseconds for a screen where the second engine took seconds.

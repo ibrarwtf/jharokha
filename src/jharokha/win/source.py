@@ -16,6 +16,7 @@ from jharokha.core.watch import changed_bbox
 from jharokha.win import capture, ocr, recognize, window
 
 ARRIVED_PX = 40  # a change at least this wide or tall is the pasted text, not the caret
+WAIT_IDLE_S = 10.0
 
 
 class WindowsSource:
@@ -27,10 +28,10 @@ class WindowsSource:
         )
         self._ocr: ocr.Ocr | None = None
         self._recognizer: recognize.Recognizer | None = None
-        # How long input waits for this laptop's keyboard and mouse to go idle before it is
-        # refused: 0 for the server (the agent is told), a few seconds in a shell, where the
-        # Enter that started the command is the user's own last input.
-        self.wait_idle_s = 0.0
+        # How long input waits for this laptop's keyboard and mouse to go idle (3 s) before
+        # it is refused: the agent acts right after the user's Enter, and in a shell that
+        # Enter is the user's own last input.
+        self.wait_idle_s = WAIT_IDLE_S
 
     def held(self, w: WindowInfo) -> AbstractContextManager[None]:
         """The session window kept in front for a run of inputs (core.actions' Runner)."""
@@ -109,7 +110,8 @@ class WindowsSource:
         except input.NotForeground as e:
             raise ScreenError(
                 "not_foreground",
-                f"{e} ('{w.title}'). Pass focus_at, a blank point in the session to click first.",
+                f"{e} ('{w.title}'). Click into the session window once (jharokha_act "
+                "op='click' on a blank point of it, or by hand) and retry.",
             ) from e
         except input.ClipboardBusy as e:
             raise ScreenError("clipboard_busy", f"{e}; nothing was sent. Retry.") from e
