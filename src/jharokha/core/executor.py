@@ -30,6 +30,7 @@ class SessionExecutor:
         self.on_input = on_input
         self._frame_seen: Frame | None = None
         self._snap: Snapshot | None = None
+        self._glanced: Snapshot | None = None  # a fast read: Windows OCR's text only
         self.reads = 0  # screens OCR'd and identified
         self.inputs: list[str] = []  # what was sent, in order
 
@@ -51,10 +52,18 @@ class SessionExecutor:
         self._frame_seen = f
         return f
 
-    def read(self) -> Snapshot:
+    def glance(self) -> Snapshot:
+        """The screen identified and its regions placed, its text Windows OCR's alone: what
+        polling for a marker or checking the app in front needs, at a tenth of a read that
+        also reads a terminal's rows with the second engine."""
+        return self.read(fast=True)
+
+    def read(self, fast: bool = False) -> Snapshot:
         frame = self._frame()
         if self._snap and self._snap.frame_id == frame.frame_id:
             return self._snap
+        if fast and self._glanced and self._glanced.frame_id == frame.frame_id:
+            return self._glanced
         self.reads += 1
         s = self.session
         cat = s.catalog
@@ -71,7 +80,7 @@ class SessionExecutor:
             snap = Snapshot(frame.frame_id, size, lines, None, None, None, regions, spots, True)
         else:
             ident = at.ident
-            lines = s.shape(at, lines)
+            lines = lines if fast else s.shape(at, lines)
             info: dict[str, RegionInfo] = {}
             if ident.app and ident.view:
                 for name, reg in cat.apps[ident.app].views[ident.view].regions.items():
@@ -92,7 +101,10 @@ class SessionExecutor:
                 confidence=ident.confidence,
                 info=info,
             )
-        self._snap = snap
+        if fast:
+            self._glanced = snap
+        else:
+            self._snap = snap
         return snap
 
     def zoom(self, box: Box) -> list[Line]:
@@ -118,7 +130,7 @@ class SessionExecutor:
         frame = self._frame()
         s = self.session
         lines = s.screen.lines(frame, None)
-        return s.shape(s.where(frame, lines), lines, None, box)
+        return s.shape(s.where(frame, lines), lines, None, box, budget=0)
 
     def reread(self, boxes: list[Box]) -> list[str]:
         try:
@@ -150,6 +162,13 @@ class SessionExecutor:
             raise ValueError("a newline is a key, pressed on its own")
         src = self.session.screen.source
         self._send("type", text, {"text": text}, lambda w: src.type_text(w, text))
+
+    def paste(self, text: str) -> bool:
+        """One line pasted, no Enter, once it is on screen (Source.paste_line)."""
+        src = self.session.screen.source
+        got: list[bool] = []
+        self._send("paste", text, {"text": text}, lambda w: got.append(src.paste_line(w, text)))
+        return bool(got and got[0])
 
     def press(self, keys: str) -> None:
         src = self.session.screen.source

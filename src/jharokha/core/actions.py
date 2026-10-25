@@ -87,9 +87,9 @@ from jharokha.core.locate import (
     locate,
     locator,
     row_texts,
+    unwrapped,
 )
-from jharokha.core.locate import rows as screen_rows
-from jharokha.core.models import Box, Line, Word
+from jharokha.core.models import Box, Line
 from jharokha.core.screen import ScreenError
 from jharokha.core.text import find, fold
 
@@ -132,8 +132,14 @@ PARAMS: dict[str, tuple[str, ...]] = {
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
 POLL_S = 0.1
+FULL_S = 1.0  # between full reads while a shell's marker is not found
 MAX_REPEAT = 50  # passes of a repeat, whatever times says
 STILL_ENDS = 3  # scrolls in a row that change nothing: the end of a list
+# Characters pasted as one line: Windows Terminal asks before pasting more than 5 KiB.
+PASTE_MAX = 4000
+# A line this short is typed: under 1.6 s at about 126 characters a second, what a paste
+# takes to arrive and settle.
+TYPE_MAX = 200
 # A band of terminal rows read up close: a quarter of the screen's area or less is what a
 # Source upscales, and Windows OCR drops short tokens on Cascadia rows at 1x.
 ZOOM_AREA = 0.24
@@ -652,7 +658,7 @@ class Runner:
 
     def _focus(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         app, view = p.get("app", self.action.app), p.get("view")
-        snap = self._look()
+        snap = self._look(fast=True)
         if snap.locked:
             raise _Refuse("locked", "the session is locked; nothing was sent")
         switched = snap.app != app and app != guard.ANY
@@ -676,8 +682,11 @@ class Runner:
             self._until({"ready": True}, s.timeout_s, f"{app} {snap.view} to load")
         return f"switched to {app}" if switched else f"{app} in front"
 
-    def _look(self) -> Snapshot:
-        snap: Snapshot = self.ex.read()
+    def _look(self, fast: bool = False) -> Snapshot:
+        """The screen now; fast, Windows OCR's text alone where the executor can (finding
+        a marker, checking the app in front), never for what a step returns."""
+        glance = getattr(self.ex, "glance", None) if fast else None
+        snap: Snapshot = glance() if glance else self.ex.read()
         if snap.app not in (None, GENERIC):
             self._last = snap.app
         return snap
@@ -964,120 +973,65 @@ class Runner:
         regions = self._regions(snap)
         return regions[region] if region and region in regions else (0, 0, *snap.size)
 
-    def _reread_rows(self, snap: Snapshot, box: Box) -> list[Line]:
-        """The shell's rows read by the second engine, each as a full-width strip, so text
-        Windows OCR dropped from a row is read too; once per frame."""
-        key = (snap.frame_id, "reread")
-        if key not in self._close:
-            strips = []
-            for r in screen_rows(inside(snap.lines, box)):
-                top = min(ln.box[1] for ln in r) - 3
-                bottom = max(ln.box[1] + ln.box[3] for ln in r) + 3
-                strips.append((box[0], max(box[1], top), box[2], bottom - max(box[1], top)))
-            texts = self.ex.reread(strips) if strips else []
-            self._close[key] = [
-                Line(t, b, (Word(t, b),)) for t, b in zip(texts, strips, strict=False) if t
-            ]
-        return self._close[key]
-
-    def _zoom_rows(self, snap: Snapshot, box: Box) -> list[Line]:
-        """The shell's rows read up close, in bands cut between rows, once per frame."""
-        key = (snap.frame_id, "zoom")
-        if key in self._close:
-            return self._close[key]
-        rs = screen_rows(inside(snap.lines, box))
-        most = max(1, int(ZOOM_AREA * snap.size[0] * snap.size[1] / max(1, box[2])))
-        bands: list[tuple[int, int]] = []
-        for r in rs:
-            top = min(ln.box[1] for ln in r) - 3
-            bottom = max(ln.box[1] + ln.box[3] for ln in r) + 3
-            if bands and bottom - bands[-1][0] <= most:
-                bands[-1] = (bands[-1][0], bottom)
-            else:
-                bands.append((top, bottom))
-        out: list[Line] = []
-        for i, (top, bottom) in enumerate(bands):
-            # Cut halfway to the next band, so no row is read twice.
-            nxt = bands[i + 1][0] if i + 1 < len(bands) else bottom
-            prev = bands[i - 1][1] if i else top
-            y0, y1 = max(box[1], (top + prev) // 2), min(box[1] + box[3], (bottom + nxt) // 2)
-            if y1 > y0:
-                out += self.ex.zoom((box[0], y0, box[2], y1 - y0))
-        self._close[key] = out
-        return out
-
     def _reply(self, p: dict[str, Any], token: str, timeout: float) -> sh.Reply:
-        """The reply to the line marked with token. Read at 1x first; once the screen holds
-        still without it (or without the command's echo), read the rows up close."""
+        """The reply to the line marked with token: the shell's text as Windows OCR reads it,
+        polled until the end marker is on screen. The marker is what tells a finished
+        command, never the prompt, which OCR misreads. Windows OCR drops whole short rows
+        at times, the marker among them, so a full read (rows by the second engine) looks
+        once a second when the quick ones find nothing, and the reply returned is a full
+        read's when it has the marker."""
         end = self.ex.now() + timeout
-        last = None
+        full_at = self.ex.now() + FULL_S
         while True:
-            snap = self._look()
-            box = self._shell_box(snap, p)
-            r = sh.read_reply(inside(snap.lines, box), token)
-            if r and r.echoed:
-                exact = self._exact_reply(snap, box, token)
-                return exact if exact and exact.echoed else r
-            if snap.frame_id == last:
-                # Held still without it: the rows below the echo read exactly, where a read
-                # within the second engine's budget left them to Windows OCR.
-                if exact := self._exact_reply(snap, box, token):
-                    return exact
-                close = sh.read_reply(self._zoom_rows(snap, box), token)
-                if close and (close.echoed or r is None):
-                    return close
-                if r or close:
-                    return r or close  # type: ignore[return-value]
-                # The second engine finds a marker Windows OCR dropped at both scales, but
-                # reads prose worse: its rows place the reply, Windows OCR's give the text.
-                far = sh.read_reply(self._reread_rows(snap, box), token)
-                if far:
-                    text = _band(inside(snap.lines, box), far.output)
-                    return sh.Reply(text, far.payload, far.echoed)
-            last = snap.frame_id
+            full = self.ex.now() >= full_at
+            snap = self._look(fast=not full)
+            r = sh.read_reply(inside(snap.lines, self._shell_box(snap, p)), token)
+            if r and not full:
+                snap = self._look()
+                r = sh.read_reply(inside(snap.lines, self._shell_box(snap, p)), token) or r
+            if r:
+                return r
+            if full:
+                full_at = self.ex.now() + FULL_S
             if self.ex.now() >= end:
                 raise _Fail(
                     f"no end marker within {timeout:g} s: the command may still be running "
                     "(press ctrl+c), or it went somewhere else"
                 )
-            self.ex.wait(POLL_S * 3)
-
-    def _exact_reply(self, snap: Snapshot, box: Box, token: str) -> sh.Reply | None:
-        """The reply with the rows below the command's echo (all of the shell's rows when
-        the echo is not found) read by the second engine: the output a run returns, and
-        only that, read exactly. None when the executor reads no rows exactly or the marker
-        is not among them."""
-        exact = getattr(self.ex, "exact", None)
-        if exact is None:
-            return None
-        lines = inside(snap.lines, box)
-        y = sh.echo_bottom(lines, token)
-        top = box[1] if y is None else max(box[1], y)
-        got = inside(exact((box[0], top, box[2], box[1] + box[3] - top)), box)
-        above = [ln for ln in lines if ln.box[1] + ln.box[3] / 2 < top]
-        below = [ln for ln in got if ln.box[1] + ln.box[3] / 2 >= top]
-        return sh.read_reply(above + below, token)
+            self.ex.wait(POLL_S)
 
     def _send(self, line: str) -> None:
-        snap = self._look()
+        """line into the shell, then Enter. A short line is typed (faster than a paste,
+        which waits about a second for the session to fetch the clipboard); a long one is
+        pasted, and typed when the paste never arrives."""
+        snap = self._look(fast=True)
         self._guard(snap)
         self._keys(snap, ["enter"])
-        self.ex.type(line)
+        paste = getattr(self.ex, "paste", None)
+        how = "typed"
+        if paste is not None and TYPE_MAX < len(line) <= PASTE_MAX:
+            try:
+                how = "pasted after its warning" if paste(line) else "pasted"
+                self.ex.settle()  # all of it in before Enter
+            except ScreenError as e:
+                if e.code != "paste_failed":
+                    raise
+                self.ex.press("escape")  # whatever part of it came in
+                self.ex.type(line)
+                how = "typed: the paste did not arrive"
+        else:
+            self.ex.type(line)
         self.ex.press("enter")
+        self.res.fields["input"] = how
 
     def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         shell = p.get("shell", "powershell")
         command = str(p["command"])
         if "\n" in command or "\r" in command:
             raise _Fail("a command is one line; nothing was typed")
-        if p.get("clear"):
-            # Then a reply whose echo OCR garbled starts at the top, not at older output.
-            snap = self._look()
-            self._guard(snap)
-            self._press_key(snap, "ctrl+l")
-            self.ex.settle()
         token = sh.new_token()
-        line = sh.marked(command, token, shell)
+        # Cleared by the line itself: the reply is then all the text above the marker.
+        line = (sh.CLEAR[shell] if p.get("clear") else "") + sh.marked(command, token, shell)
         self._send(line)
         reply = self._reply(p, token, s.timeout_s)
         ok, code = sh.status(reply.payload, shell)
@@ -1085,12 +1039,8 @@ class Runner:
             # $LASTEXITCODE is empty until a native program has run in the session: a
             # cmdlet's success is PowerShell's own exit code, 0, or 1 when it failed.
             code = 0 if ok else 1
-        out = row_texts(reply.output)
-        if not reply.echoed:
-            out = _drop_echo(out, line)
-            if not p.get("clear"):
-                self.res.fields["start_missing"] = True
-        self.res.output = out
+        box = self._shell_box(self._look(fast=True), p)
+        self.res.output = unwrapped(reply.output, box[0] + box[2])
         self.res.exit_code = code
         self.res.fields["ok"] = ok
         return f"exit {code}"
@@ -1118,9 +1068,6 @@ class Runner:
         reply = self._reply(p, last.token, s.timeout_s)
         ok, code = sh.status(reply.payload, shell)
         check = sh.check_hash(reply.output, plan.sha256)
-        if check == "mismatch":
-            snap = self._look()
-            check = sh.check_hash(self._zoom_rows(snap, self._shell_box(snap, p)), plan.sha256)
         self.res.fields.update({"sha256": plan.sha256, "size": plan.size, "hash_check": check})
         self.res.exit_code = code
         if check == "mismatch" or ok is False:
@@ -1141,15 +1088,6 @@ class Runner:
             self.ex.wait(POLL_S)
 
 
-def _band(lines: list[Line], strips: list[Line]) -> list[Line]:
-    """lines from the rows strips cover."""
-    if not strips:
-        return []
-    top = min(s.box[1] for s in strips)
-    bottom = max(s.box[1] + s.box[3] for s in strips)
-    return [ln for ln in lines if top <= ln.box[1] + ln.box[3] / 2 < bottom]
-
-
 def _retoken(step: sh.Step, shell: str) -> sh.Step:
     """step with a new token, for a retry: a reply read under the old one could be the
     failed attempt's."""
@@ -1168,20 +1106,6 @@ def _confirmed(payload: str, expect: str) -> bool:
         return True
     digits = re.sub(r"\D", "", payload.translate(sh._DIGIT))
     return digits == expect.replace(":", "")
-
-
-def _drop_echo(rows_: list[str], typed: str) -> list[str]:
-    """rows without the leading ones that are the typed line's echo (prompt and command,
-    wrapped), for a reply whose echo OCR garbled past recognising."""
-    want = fold(typed).replace(" ", "")
-    out = list(rows_)
-    while out:
-        row = fold(out[0]).replace(" ", "")
-        sm = difflib.SequenceMatcher(None, row, want, autojunk=False)
-        if not row or sum(b.size for b in sm.get_matching_blocks()) < 0.6 * len(row):
-            break
-        out.pop(0)
-    return out
 
 
 def _on(snap: Snapshot) -> str:

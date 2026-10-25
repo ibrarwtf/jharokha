@@ -184,6 +184,25 @@ def row_texts(lines: list[Line]) -> list[str]:
     return ["  ".join(clean(ln.text) for ln in r) for r in rows(lines)]
 
 
+def unwrapped(lines: list[Line], right: int) -> list[str]:
+    """row_texts of a terminal, with a row the terminal wrapped joined to the next: one that
+    ends within a few characters of right (the pane's edge) and as far right as any row,
+    since a row that merely ends near the edge is not cut."""
+    rs = rows(lines)
+    edge = max((r[-1].box[0] + r[-1].box[2] for r in rs), default=0)
+    out: list[str] = []
+    carry = False
+    for r in rs:
+        text = "  ".join(clean(ln.text) for ln in r)
+        if carry:
+            out[-1] += text
+        else:
+            out.append(text)
+        end, h = r[-1].box[0] + r[-1].box[2], r[-1].box[3]
+        carry = end >= right - 3 * h and end >= edge - h / 2
+    return out
+
+
 def _center(b: Box) -> Point:
     return (b[0] + b[2] // 2, b[1] + b[3] // 2)
 

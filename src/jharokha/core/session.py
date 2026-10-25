@@ -146,7 +146,12 @@ class Session:
         return out
 
     def shape(
-        self, at: Where, lines: list[Line], region: Box | None = None, exact: Box | None = None
+        self,
+        at: Where,
+        lines: list[Line],
+        region: Box | None = None,
+        exact: Box | None = None,
+        budget: int = rows.BUDGET,
     ) -> list[Line]:
         """Grid regions of the view on screen read row by row (core.rows), or, where the
         second engine cannot read rows, Windows OCR's words snapped to the grid. Rows inside
@@ -159,7 +164,7 @@ class Session:
             placed = self.place(at, ident.app, ident.view, name)
             if placed and (region is None or iou(placed[0], region) > 0):
                 g = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
-                got = self._by_rows(at, name, placed[0], g, exact)
+                got = self._by_rows(at, name, placed[0], g, exact, budget)
                 if got is None:
                     lines = grid(lines, placed[0], g.pitch, g.char_width, g.origin)
                 else:
@@ -167,7 +172,13 @@ class Session:
         return lines
 
     def _by_rows(
-        self, at: Where, name: str, box: Box, cal: apps.Grid, exact: Box | None = None
+        self,
+        at: Where,
+        name: str,
+        box: Box,
+        cal: apps.Grid,
+        exact: Box | None = None,
+        budget: int = rows.BUDGET,
     ) -> list[Line] | None:
         f, ident = at.frame, at.ident
         key = (ident.app, ident.view, name, f.width, f.height, box)
@@ -188,7 +199,9 @@ class Session:
                 if len(inside(at.lines, box)) >= 3:
                     self._grids[key] = g
             try:
-                got = rows.read_rows(f, box, reread, g, at.lines, self._reads.get(key), exact)
+                got = rows.read_rows(
+                    f, box, reread, g, at.lines, self._reads.get(key), exact, budget
+                )
             except ScreenError:
                 return None
             if got is None:

@@ -293,12 +293,16 @@ class Marked(Shell):
 
     def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
         self.items = [(f"PS C:\\a> {text}", 10, 10)]
-        if text.startswith("cmd /c exit 2"):
+        if "cmd /c exit 2;" in text:
             out, status = [], "False:2"
         else:
             out, status = [("Friday 23 October", 10, 30)], "True:"
         a, b = re.search(r'"(\w\w)"\+"(\w{4}):', text).groups()  # type: ignore[union-attr]
         self.pending = [*out, (f"{a}{b}:{status}", 10, 50), ("PS C:\\a>", 10, 70)]
+
+    def paste_line(self, w, text):  # noqa: ANN001, ANN201
+        self.type_text(w, text)
+        return False
 
     def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
         if combo == "ctrl+l":

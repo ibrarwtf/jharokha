@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.24.6
+
+Terminal I/O: most runs timed out, and typing was slow.
+
+- Typing is faster: each character goes as one unicode event (no shift, whatever the session's keyboard layout) with 2 ms between them, against scan codes with shift and 10 ms. Named keys and chords still go as scan codes.
+- A line longer than 200 characters (up to 4,000) is pasted as one line: it waits until the text has arrived and clicks Windows Terminal's "Paste anyway" when it asks, then sends Enter, and types the line when the paste never arrives. The clipboard is put back after.
+- The end marker is shorter and resets `$LASTEXITCODE` first, so a cmdlet after a native program's `exit 3` no longer reports 3. The screen is cleared on the same line.
+- A run polls Windows OCR's text every 0.1 s and reads the rows with the second engine once a second while the marker is missing: Windows OCR could drop the marker row, and the run waited out its 30 s. The output returned is the second engine's.
+- Rows the terminal wrapped come back joined.
+
+
 ## v0.24.5
 
 - Every shell command is irreversible again: `core/readonly.py`, the allowlist that ran read-only commands under the default allow, is gone. It passed almost no real commands: agents write script blocks, `python -c`, subexpressions and parentheses. A user's allow for commands comes later, designed from use.
