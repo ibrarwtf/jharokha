@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from jharokha.core.models import Box, Line, Word, union
+from jharokha.core.models import Box, Line, Word, inside, rows, union
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏ -‮⁠-⁤﻿]")
 _LOOKALIKE = re.compile(r"[A-Za-z]\d|\d[A-Za-z]")
@@ -144,18 +144,8 @@ def _cut(lines: list[Line], axis: int, min_gap: float) -> Cut | None:
 
 
 def _rows(lines: list[Line]) -> list[Line]:
-    """Two lines share a row when their vertical centres are closer than half a line height."""
-    rows: list[list[Line]] = []
-    for ln in sorted(lines, key=lambda ln: ln.box[1]):
-        cy = ln.box[1] + ln.box[3] / 2
-        for row in rows:
-            r = row[-1]
-            if abs(cy - (r.box[1] + r.box[3] / 2)) < max(r.box[3], ln.box[3]) / 2:
-                row.append(ln)
-                break
-        else:
-            rows.append([ln])
-    return [ln for row in rows for ln in _join(sorted(row, key=lambda ln: ln.box[0]))]
+    """Row by row, the pieces of each row joined (see _join)."""
+    return [ln for row in rows(lines) for ln in _join(row)]
 
 
 def _join(row: list[Line]) -> list[Line]:
@@ -171,15 +161,6 @@ def _join(row: list[Line]) -> list[Line]:
         else:
             out.append(ln)
     return out
-
-
-def _within(lines: list[Line], box: Box) -> list[Line]:
-    x0, y0, bw, bh = box
-    return [
-        ln
-        for ln in lines
-        if x0 <= ln.box[0] + ln.box[2] / 2 < x0 + bw and y0 <= ln.box[1] + ln.box[3] / 2 < y0 + bh
-    ]
 
 
 def _metrics(words: list[Word]) -> tuple[float, float, float, float]:
@@ -212,8 +193,8 @@ def grid(
     edge continues on the next one and is joined to it. Zeros read as e, @ or o inside a
     number (slashed or dotted zeros) become 0."""
     x0, y0, bw, bh = box
-    inside = _within(lines, box)
-    words = [w for ln in inside for w in (ln.words or (Word(ln.text, ln.box),))]
+    mine = inside(lines, box)
+    words = [w for ln in mine for w in (ln.words or (Word(ln.text, ln.box),))]
     if len(words) < 2:
         return lines
     seen = _metrics(words)
@@ -248,7 +229,7 @@ def grid(
             out.append(line)
         prev_row = r
         wrapped = ws[-1].box[0] + ws[-1].box[2] >= x0 + bw - 2.5 * cw
-    keep = set(map(id, inside))
+    keep = set(map(id, mine))
     first = next(i for i, ln in enumerate(lines) if id(ln) in keep)
     rest = [ln for ln in lines if id(ln) not in keep]
     return rest[:first] + out + rest[first:]

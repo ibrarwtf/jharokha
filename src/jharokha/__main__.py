@@ -1,5 +1,5 @@
 """`jharokha` runs the MCP server on stdio. In a shell the same verbs as the tools:
-`jharokha status|apps|read|find|wait|screenshot|do|learn`, with --allow-input `act`. Each
+`jharokha status|apps|read|find|wait|screenshot|do`, with --allow-input `act`. Each
 verb is the server's tool, called in-process, so a shell command is guarded and answers
 exactly as the tool does."""
 
@@ -114,28 +114,16 @@ def main() -> None:
     d.add_argument("--args", type=json.loads, default={}, help='JSON, e.g. {"folder": "Inbox"}')
     d.add_argument("--allow", choices=["read", "reversible", "irreversible"], default="reversible")
     d.add_argument("--dry-run", action="store_true")
-    le = sub.add_parser("learn", help="name the session's taskbar icons as spots that switch apps")
-    le.add_argument("--names", type=json.loads, help='JSON, e.g. {"T8": "teams"}')
-    le.add_argument("--name-icons", action="store_true", help="read the icons' tooltips")
-    le.add_argument("--save", action="store_true", help="write the spots into apps.toml")
     args = p.parse_args()
     source = _source()
     trace = Trace(args.trace, include_text=args.trace_text)
-    apps_path = _apps_path(args.apps)[0]
     if args.cmd is None:
         from jharokha.server import build_server
 
         catalog = _catalog(args.apps)
         acts = _actions(args.apps)
         build_server(
-            source,
-            args.allow_input,
-            catalog,
-            trace,
-            acts,
-            apps_path,
-            args.window_title,
-            args.capture,
+            source, args.allow_input, catalog, trace, acts, args.window_title, args.capture
         ).run("stdio")
         return
     if hasattr(source, "wait_idle_s"):
@@ -152,7 +140,6 @@ def main() -> None:
         catalog,
         trace,
         _actions(args.apps),
-        apps_path,
         args.window_title,
         args.capture,
     )
@@ -226,8 +213,6 @@ def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[s
     if cmd == "do":
         d = given(action=args.action, args=args.args, allow=args.allow, dry_run=args.dry_run)
         return [("jharokha_do", d)]
-    if cmd == "learn":
-        return _learn_calls(args, given)
     # act
     text = args.text
     if args.stdin:
@@ -251,24 +236,6 @@ def _calls(args: argparse.Namespace, catalog: Catalog) -> list[tuple[str, dict[s
     return [("jharokha_act", a)]
 
 
-def _learn_calls(args: argparse.Namespace, given: Any) -> list[tuple[str, dict[str, Any]]]:
-    """The taskbar scanned, its tooltips read with --name-icons, and with --names the spots
-    shown as a change to apps.toml, written with --save: typed by the user. Icons are
-    numbered left to right each scan, so names given with it hold for it."""
-    if args.name_icons and not args.allow_input:
-        sys.exit("input_disabled: --name-icons rests the pointer on each icon; add --allow-input.")
-    tool = "jharokha_learn"
-    calls = [(tool, given(step="taskbar"))]
-    if args.name_icons:
-        calls.append((tool, given(step="name_icons")))
-    if not args.names:
-        return calls
-    return calls + [
-        (tool, given(step="taskbar", names=args.names)),
-        (tool, given(step="save", confirm=args.save)),
-    ]
-
-
 async def _run(
     server: Any, calls: list[tuple[str, dict[str, Any]]]
 ) -> tuple[list[tuple[str, bytes]], str | None]:
@@ -290,16 +257,14 @@ async def _run(
     return out, None
 
 
-def _apps_path(flag: str | None) -> tuple[Path, bool]:
-    given = flag or os.environ.get("JHAROKHA_APPS")
-    return Path(given or "apps.toml"), bool(given)
+def _apps_path(flag: str | None) -> Path:
+    return Path(flag or os.environ.get("JHAROKHA_APPS") or "apps.toml")
 
 
 def _catalog(apps_flag: str | None) -> Catalog:
-    """Built-in apps, then apps.toml."""
-    apath, _ = _apps_path(apps_flag)
+    """Built-in apps, then apps.toml, when there is one."""
+    apath = _apps_path(apps_flag)
     try:
-        # A file not there yet is one jharokha_learn has still to write.
         return apps.load(apath if apath.exists() else None)
     except (OSError, apps.AppError) as e:
         sys.exit(f"apps: {e}")
@@ -307,7 +272,7 @@ def _catalog(apps_flag: str | None) -> Catalog:
 
 def _actions(apps_flag: str | None) -> dict[str, actions.Action]:
     """Built-in actions, then those in apps.toml, then those in $JHAROKHA_ACTIONS."""
-    apath, _ = _apps_path(apps_flag)
+    apath = _apps_path(apps_flag)
     paths = [apath] if apath.exists() else []
     if extra := os.environ.get("JHAROKHA_ACTIONS"):
         paths.append(Path(extra))

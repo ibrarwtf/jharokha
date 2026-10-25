@@ -109,9 +109,8 @@ def refusal(
             how = f"{e.want}: click {{'spot': 'taskbar.{e.want}'}}"
         else:
             how = (
-                f"{e.want}: its icon on the session's taskbar, which is no spot here: find it "
-                "with jharokha_find {'icon': true, 'region': 'session.taskbar'} or ask the "
-                "user; jharokha_learn step='taskbar' names the icons as spots"
+                f"{e.want}: its icon on the session's taskbar, which is no spot here (ask the "
+                f"user, or add it to apps.toml as the session spot taskbar.{e.want})"
             )
         out = (
             f"{e}; nothing was sent. Bring {how} to the front, confirm with jharokha_status, "
@@ -120,7 +119,7 @@ def refusal(
         if e.front == GENERIC and e.want != GENERIC:
             out += (
                 " If the app in front is the one you mean and jharokha does not recognise it, "
-                "pass expect='generic' (or teach it the app with jharokha_learn)."
+                "pass expect='generic'."
             )
         return "wrong_app", out
     if isinstance(e, Irreversible):

@@ -180,9 +180,7 @@ def held(hwnd: int) -> Iterator[None]:
 
 
 @contextmanager
-def _active(
-    hwnd: int, x: int | None = None, y: int | None = None, park: bool = True
-) -> Iterator[None]:
+def _active(hwnd: int, x: int | None = None, y: int | None = None) -> Iterator[None]:
     prev = user32.GetForegroundWindow()
     _bring_to_front(hwnd)
     # A client that was just activated can swallow the first click; give it time.
@@ -200,7 +198,7 @@ def _active(
             moved = True
         yield
     finally:
-        if moved and park:
+        if moved:
             _park(hwnd)
         user32.SetCursorPos(old.x, old.y)
         if prev and prev != hwnd and hwnd not in _held:
@@ -257,15 +255,6 @@ def scroll(hwnd: int, x: int, y: int, ticks: int) -> None:
         for left in range(abs(ticks), 0, -WHEEL_BATCH):
             _send(_mouse(MOUSEEVENTF_WHEEL, sign * WHEEL_DELTA * min(left, WHEEL_BATCH)))
             time.sleep(0.03)
-
-
-def hover(hwnd: int, x: int, y: int) -> None:
-    """The pointer to client point (x, y) with no button, left there for the session: the
-    session keeps the last position it saw once our cursor is put back, so a tooltip shows
-    until the next hover or click moves it (_park's reason, used on purpose)."""
-    with _active(hwnd, x, y, park=False):
-        record_own_input()  # not known to move the last-input clock; noted in case it does
-        time.sleep(0.05)  # for the client to send the move before the cursor leaves
 
 
 def click(hwnd: int, x: int, y: int, button: str = "left", double: bool = False) -> None:

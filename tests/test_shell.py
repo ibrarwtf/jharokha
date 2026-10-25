@@ -11,18 +11,32 @@ import pytest
 from jharokha.core.models import Line, Word
 from jharokha.core.shell import (
     CHUNK,
+    Shell,
     check_hash,
     confirms,
     marked,
     new_token,
     put_file,
     read_reply,
-    read_run,
     status,
 )
 
 TOKEN = "KX7R4C"
 PROMPT = "PS C:\\Users\\X>"
+
+
+class Run:
+    """read_reply with its status parsed, as the runner's run step reads it."""
+
+    def __init__(self, output: list[Line], echoed: bool, ok: bool | None, code: int | None):
+        self.output, self.echoed, self.ok, self.code = output, echoed, ok, code
+
+
+def read_run(lines: list[Line], token: str, shell: Shell) -> Run | None:
+    reply = read_reply(lines, token)
+    if reply is None:
+        return None
+    return Run(reply.output, reply.echoed, *status(reply.payload, shell))
 
 
 def screen(*rows: str | tuple[str, ...]) -> list[Line]:

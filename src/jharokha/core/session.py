@@ -4,7 +4,6 @@ tools and the actions' executor share one Session, so both read a screen the sam
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -12,7 +11,7 @@ from jharokha.core import apps, rows
 from jharokha.core.apps import Catalog
 from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
-from jharokha.core.models import Box, Frame, Line, iou
+from jharokha.core.models import Box, Frame, Line, inside, iou
 from jharokha.core.panes import background, panes
 from jharokha.core.screen import Screen, ScreenError
 from jharokha.core.text import grid
@@ -34,16 +33,6 @@ class Where:
     ) -> None:
         self.frame, self.ident, self.panes, self.lines = frame, ident, found, lines
         self.partial = partial
-
-
-def inside(lines: list[Line], box: Box) -> list[Line]:
-    """Lines whose centre is in box."""
-    x, y, w, h = box
-    return [
-        ln
-        for ln in lines
-        if x <= ln.box[0] + ln.box[2] / 2 < x + w and y <= ln.box[1] + ln.box[3] / 2 < y + h
-    ]
 
 
 def _swap(lines: list[Line], area: Box, within: Box | None, new: list[Line]) -> list[Line]:
@@ -71,7 +60,6 @@ class Session:
         # only rows whose pixels changed are read again.
         self._grids: dict[tuple[Any, ...], rows.Grid] = {}
         self._reads: dict[tuple[Any, ...], rows.RowRead] = {}
-        self._lock = threading.Lock()  # the watcher reads from its own thread
         # Grid rows the last shape() left to Windows OCR (core.rows' budget).
         self.pending = 0
 
@@ -187,27 +175,24 @@ class Session:
         def reread(boxes: list[Box]) -> list[str]:
             return source.reread(f, boxes, 0)
 
-        with self._lock:
-            g = rows.measured(box, cal.pitch, cal.char_width, cal.origin) or self._grids.get(key)
+        g = rows.measured(box, cal.pitch, cal.char_width, cal.origin) or self._grids.get(key)
+        if g is None:
+            g = rows.calibrate(f, at.lines, box)
             if g is None:
-                g = rows.calibrate(f, at.lines, box)
-                if g is None:
-                    return None
-                # Kept across the region's width: each read ends it at that frame's text
-                # edge, which a scrollbar appearing later or a mark going away moves.
-                g = rows.spanning(g, box)
-                if len(inside(at.lines, box)) >= 3:
-                    self._grids[key] = g
-            try:
-                got = rows.read_rows(
-                    f, box, reread, g, at.lines, self._reads.get(key), exact, budget
-                )
-            except ScreenError:
                 return None
-            if got is None:
-                return None
-            self._reads[key] = got
-            self.pending += got.pending
+            # Kept across the region's width: each read ends it at that frame's text edge,
+            # which a scrollbar appearing later or a mark going away moves.
+            g = rows.spanning(g, box)
+            if len(inside(at.lines, box)) >= 3:
+                self._grids[key] = g
+        try:
+            got = rows.read_rows(f, box, reread, g, at.lines, self._reads.get(key), exact, budget)
+        except ScreenError:
+            return None
+        if got is None:
+            return None
+        self._reads[key] = got
+        self.pending += got.pending
         return [ln for ln in rows.unwrap(got.lines, got.grid) if ln.text]
 
     def focus_box(self, at: Where) -> tuple[str, Box] | None:

@@ -13,12 +13,8 @@ its centre, or a clear miss with the closest texts on screen.
     { region = "list", nth = 2 }              the second item of a region (-1: the last), as
                                               its reader makes items (core.readers)
     { text = "Open", nth = 2 }                the second match
-    { icon = true, left_of = "Type a message" }   the nearest text-less element (an icon,
-                                              a button: core.elements) left of it
-    { icon = true, region = "nav", nth = 3 }  the third element in a region, in reading order
 
-Pure: no input, no reading; the caller passes what was read (and the elements found, for
-an icon)."""
+Pure: no input, no reading; the caller passes what was read."""
 
 from __future__ import annotations
 
@@ -27,15 +23,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from jharokha.core import readers
-from jharokha.core.models import Box, Line, Point, Word
+from jharokha.core.models import Box, Line, Point, Word, inside, rows
 from jharokha.core.text import clean, find, fold
 
-KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth", "icon")
+KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth")
 _SIDES = ("right_of", "left_of", "below", "above")
 _SPOT = 16  # px; the box a spot stands for, about an icon's middle
-_PAD = 6  # px; how far outside an icon's box its spot may fall and still be on it
-_SIZE = 0.15  # how much an icon's width or height may differ from the one learned
-Spot = tuple[int, ...]  # a spot in pixels: x, y, and the icon's width and height if known
+Spot = tuple[int, ...]  # a spot in pixels: x, y (and a size, if apps.toml gives one)
 
 
 @dataclass(frozen=True)
@@ -49,7 +43,6 @@ class Locator:
     above: str | None = None
     spot: str | None = None
     nth: int | None = None  # 1-based; negative counts from the end
-    icon: bool = False  # a text-less element (core.elements) rather than text
 
     def describe(self) -> str:
         parts = []
@@ -106,77 +99,19 @@ def locator(t: Mapping[str, object]) -> Locator:
         if not isinstance(n, int) or isinstance(n, bool) or n == 0:
             raise ValueError("locator nth must be a whole number other than 0")
         kw["nth"] = n
-    if "icon" in t:
-        if not isinstance(t["icon"], bool):
-            raise ValueError("locator icon must be true or false")
-        kw["icon"] = t["icon"]
     loc = Locator(**kw)  # type: ignore[arg-type]
     if sum(getattr(loc, k) is not None for k in _SIDES) > 1:
         raise ValueError("locator takes one of right_of, left_of, below, above")
-    if loc.spot and (loc.text or loc.region or loc.icon or any(getattr(loc, k) for k in _SIDES)):
+    if loc.spot and (loc.text or loc.region or any(getattr(loc, k) for k in _SIDES)):
         raise ValueError("locator spot stands alone")
-    if loc.icon and loc.text:
-        raise ValueError("locator icon has no text; place it with a region or a side")
-    if not (loc.text or loc.region or loc.spot or loc.icon or any(getattr(loc, k) for k in _SIDES)):
-        raise ValueError("locator needs text, regex, region, spot, icon or a side (right_of, ...)")
+    if not (loc.text or loc.region or loc.spot or any(getattr(loc, k) for k in _SIDES)):
+        raise ValueError("locator needs text, regex, region, spot or a side (right_of, ...)")
     return loc
-
-
-def app_spot(loc: Locator, spots: Mapping[str, Spot]) -> bool:
-    """Whether loc names an app's spot (an icon it was taught), which holds only where the
-    screen still shows an icon: the caller passes the elements found to locate."""
-    return bool(loc.spot) and loc.spot in spots and not str(loc.spot).startswith("session.")
 
 
 def spot_px(spot: Sequence[float], width: int, height: int) -> Spot:
     """A spot in fractions of the client area (x, y and maybe width, height) in pixels."""
     return tuple(round(v * (width if i % 2 == 0 else height)) for i, v in enumerate(spot))
-
-
-def spot_icon(spot: Spot, icons: Sequence[Box]) -> Box | None:
-    """The icon at an app's spot in pixels: under its centre and, when the spot has a size,
-    about that size (an icon zoomed, or another icon that moved there, is not it)."""
-    icon = icon_at((spot[0], spot[1]), icons)
-    if icon is None or len(spot) < 4:
-        return icon
-    same = all(abs(icon[k] - spot[k]) <= max(3, _SIZE * spot[k]) for k in (2, 3))
-    return icon if same else None
-
-
-def icon_at(p: Point, icons: Sequence[Box], pad: int = _PAD) -> Box | None:
-    """The icon under p, give or take pad px; the nearest when two are."""
-    near = [
-        b
-        for b in icons
-        if b[0] - pad <= p[0] < b[0] + b[2] + pad and b[1] - pad <= p[1] < b[1] + b[3] + pad
-    ]
-    return min(
-        near, key=lambda b: abs(_center(b)[0] - p[0]) + abs(_center(b)[1] - p[1]), default=None
-    )
-
-
-def inside(lines: list[Line], box: Box) -> list[Line]:
-    """Lines whose centre is in box."""
-    x, y, w, h = box
-    return [
-        ln
-        for ln in lines
-        if x <= ln.box[0] + ln.box[2] / 2 < x + w and y <= ln.box[1] + ln.box[3] / 2 < y + h
-    ]
-
-
-def rows(lines: list[Line]) -> list[list[Line]]:
-    """Lines on one screen row (centres closer than half a line height), left to right."""
-    out: list[list[Line]] = []
-    for ln in sorted(lines, key=lambda ln: ln.box[1] + ln.box[3] / 2):
-        cy = ln.box[1] + ln.box[3] / 2
-        if out:
-            r = out[-1][0]
-            if abs(cy - (r.box[1] + r.box[3] / 2)) < max(r.box[3], ln.box[3]) / 2:
-                out[-1].append(ln)
-                continue
-        out.append([ln])
-    return [sorted(r, key=lambda ln: ln.box[0]) for r in out]
 
 
 def row_texts(lines: list[Line]) -> list[str]:
@@ -230,22 +165,11 @@ def locate(
     spots: Mapping[str, Spot],
     screen: Box,
     info: Mapping[str, RegionInfo] | None = None,
-    icons: Sequence[Box] = (),
 ) -> Hit | Miss:
     """loc on this screen. lines are the whole screen's; regions are the placed named
     regions of the view on screen and the session (full names, `teams.list`, or the short
     ones the caller resolved), info how each reads as items (text blocks when not given);
-    spots the session's spots and the front app's, in pixels; icons the text-less elements
-    found (core.elements), for an icon locator or an app's spot."""
-    if loc.icon:
-        found = icon_hits(loc, lines, regions, screen, icons)
-        if isinstance(found, Miss):
-            return found
-        hit = _pick(found, loc.nth)
-        if hit is None:
-            where = f" in {loc.region}" if loc.region else ""
-            return Miss(f"{len(found)} icons{where}, not icon {loc.nth or 1}")
-        return hit
+    spots the session's spots and the front app's, in pixels."""
     if loc.spot:
         p = spots.get(loc.spot) or spots.get(f"session.{loc.spot}")
         if p is None:
@@ -255,19 +179,8 @@ def locate(
                 "it is in front"
             )
         at = (p[0], p[1])
-        if not app_spot(loc, spots):
-            b = (at[0] - _SPOT // 2, at[1] - _SPOT // 2, _SPOT, _SPOT)
-            return Hit(b, at, f"spot {loc.spot}")
-        # An app's icon moves with its zoom and the window's size; a click where it was
-        # would land on whatever is there now, another icon too.
-        icon = spot_icon(p, icons)
-        if icon is None:
-            return Miss(
-                f"no icon of the size learned at spot '{loc.spot}' {list(at)} now: the app "
-                "was zoomed, resized or redrawn since it was learned; learn it again "
-                "(jharokha_learn)"
-            )
-        return Hit(icon, _center(icon), f"app spot {loc.spot}")
+        b = (at[0] - _SPOT // 2, at[1] - _SPOT // 2, _SPOT, _SPOT)
+        return Hit(b, at, f"spot {loc.spot}")
     bounds = screen
     if loc.region:
         if loc.region not in regions:
@@ -320,41 +233,6 @@ def locate(
             return Miss(f"region '{loc.region}' shows {len(its)} items, not item {loc.nth}")
         return Hit(it.box, it.center, f"item {loc.nth} of {loc.region}", it.text)
     return Hit(bounds, _center(bounds), f"centre of {loc.region}")
-
-
-def icon_hits(
-    loc: Locator,
-    lines: list[Line],
-    regions: Mapping[str, Box],
-    screen: Box,
-    icons: Sequence[Box],
-) -> list[Hit] | Miss:
-    """Every icon loc can mean, best first: nearest the anchor on its side, else in reading
-    order inside its region (or the screen)."""
-    bounds = screen
-    if loc.region:
-        if loc.region not in regions:
-            known = ", ".join(regions) or "none"
-            return Miss(f"region '{loc.region}' is not on this screen (regions now: {known})")
-        bounds = regions[loc.region]
-    pool = [b for b in icons if _centre_in(b, bounds)]
-    side = next((k for k in _SIDES if getattr(loc, k)), None)
-    if side is None:
-        ordered = sorted(pool, key=lambda b: (b[1] + b[3] // 2, b[0]))
-        return [Hit(b, _center(b), "icon") for b in ordered]
-    anchor_q = getattr(loc, side)
-    texts = inside(lines, bounds) if loc.region else lines
-    anchors = find(texts, anchor_q, all=True)
-    if not anchors:
-        return Miss(f"'{anchor_q}' is not on screen", _candidates(texts, anchor_q))
-    scored = [(d, b) for b in pool if (d := _side(b, anchors[0].box, side)) is not None]
-    how = f"icon {side.replace('_', ' ')} '{anchor_q}'"
-    return [Hit(b, _center(b), how) for _, b in sorted(scored)]
-
-
-def _centre_in(b: Box, bounds: Box) -> bool:
-    x, y, w, h = bounds
-    return x <= b[0] + b[2] / 2 < x + w and y <= b[1] + b[3] / 2 < y + h
 
 
 def _side(b: Box, a: Box, side: str) -> float | None:

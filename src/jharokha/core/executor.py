@@ -10,7 +10,6 @@ from collections.abc import Callable
 from typing import Any
 
 from jharokha.core.actions import RegionInfo, Snapshot
-from jharokha.core.elements import elements
 from jharokha.core.locate import spot_px
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError
@@ -116,27 +115,6 @@ class SessionExecutor:
             return []
         self.reads += 1
         return self.session.screen.lines(frame, (x, y, w, h))
-
-    def icons(self) -> list[Box]:
-        """The text-less elements on the frame now (core.elements), for an icon locator."""
-        frame = self._frame()
-        s = self.session
-        at = s.where(frame, s.screen.lines(frame, None))
-        return elements(frame, at.lines, at.panes)
-
-    def exact(self, box: Box) -> list[Line]:
-        """The frame's lines as read() has them, with the terminal rows inside box read by
-        the second engine whatever the read's budget left to Windows OCR."""
-        frame = self._frame()
-        s = self.session
-        lines = s.screen.lines(frame, None)
-        return s.shape(s.where(frame, lines), lines, None, box, budget=0)
-
-    def reread(self, boxes: list[Box]) -> list[str]:
-        try:
-            return self.session.screen.source.reread(self._frame(), boxes)
-        except ScreenError:
-            return []  # no second engine: the marker is looked for in what OCR read
 
     def _send(
         self, kind: str, said: str, fields: dict[str, Any], send: Callable[[WindowInfo], None]

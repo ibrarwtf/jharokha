@@ -38,18 +38,16 @@ back and newlines typed as Shift+Enter, since most reply boxes send on one of th
 declared empty (`[app.x.policy]` alone, as the terminal's) opts out. The generic app, the
 screen no definition knows, has none.
 
-An app's `spots` name its text-less targets (jharokha_learn names them from its icons):
+An app's `spots` name its text-less targets, points measured on the user's screen:
 
     [app.tickets]
-    spots = { reply = [0.127, 0.06, 0.021, 0.02] }   # the icon's centre and size; a target
-                                                     # as {spot = "tickets.reply"}
+    spots = { reply = [0.127, 0.06] }     # a target as {spot = "tickets.reply"}, only while
+                                          # tickets is in front
 
-Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions; an app's
-own `action` table is accepted and kept, unused."""
+Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions."""
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
@@ -129,7 +127,6 @@ class View:
     id: str
     cues: tuple[Cue, ...] = ()
     ready: str | None = None
-    prompt: str | None = None  # a regex for a shell prompt at the start of a line
     regions: dict[str, Region] = field(default_factory=dict)
 
     @property
@@ -149,11 +146,9 @@ class App:
     views: dict[str, View] = field(default_factory=dict)
     # As written, checked when parsed; None when the definition has no policy table.
     policy: dict[str, Any] | None = None
-    action: dict[str, Any] = field(default_factory=dict)  # reserved: actions (0.20)
     source: str = "built-in"
-    # Text-less targets (a send button, an attach icon) by name: the icon's centre and, when
-    # learned, its size, as fractions of the client area. The locator {spot = "<app>.<name>"}
-    # takes one only while the app is in front and an icon of that size is still there.
+    # Text-less targets (a send button, an attach icon) by name, as fractions of the client
+    # area. The locator {spot = "<app>.<name>"} takes one only while the app is in front.
     spots: dict[str, Spot] = field(default_factory=dict)
 
     @property
@@ -190,20 +185,18 @@ class Variant:
 class Calibration:
     variants: tuple[Variant, ...]
     focus: str | None = None
-    prompt: str | None = None
     readers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class Doc:
-    """What one file holds; name is where it came from (parse's source)."""
+    """What one file holds."""
 
     apps: dict[str, App] = field(default_factory=dict)
     session: dict[str, Region] = field(default_factory=dict)  # "session.taskbar"
     calibration: dict[tuple[str, str], Calibration] = field(default_factory=dict)
     session_cal: dict[str, Fraction] = field(default_factory=dict)
     spots: dict[str, Point2] = field(default_factory=dict)
-    name: str = ""
 
 
 # Parsing
@@ -349,7 +342,7 @@ def _region(name: str, t: dict[str, Any], where: str) -> Region:
 
 
 def _view(vid: str, t: dict[str, Any], where: str) -> View:
-    _only(t, ("cue", "ready", "prompt", "region"), where)
+    _only(t, ("cue", "ready", "region"), where)
     regions = {
         k: _region(k, r, f"{where}.region.{k}")
         for k, r in _tables(t.get("region", {}), f"{where}.region").items()
@@ -360,13 +353,12 @@ def _view(vid: str, t: dict[str, Any], where: str) -> View:
         id=_id(vid, where),
         cues=_cues(t.get("cue", []), f"{where}.cue"),
         ready=_text(t["ready"], f"{where}.ready") if "ready" in t else None,
-        prompt=_regex(t["prompt"], f"{where}.prompt") if "prompt" in t else None,
         regions=regions,
     )
 
 
 def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
-    _only(t, ("name", "cue", "view", "policy", "action", "spots"), where)
+    _only(t, ("name", "cue", "view", "policy", "spots"), where)
     if aid == SESSION:
         raise AppError(f"{where}: '{SESSION}' is reserved for the session's own regions")
     views = {
@@ -375,9 +367,8 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
     }
     if not views:
         raise AppError(f"{where}: needs at least one [{where}.view.<id>]")
-    for key in ("policy", "action"):
-        if not isinstance(t.get(key, {}), dict):
-            raise AppError(f"{where}.{key} must be a table")
+    if not isinstance(t.get("policy", {}), dict):
+        raise AppError(f"{where}.policy must be a table")
     try:
         Policy.parse(t.get("policy", {}), f"{where}.policy")
     except ValueError as e:
@@ -394,7 +385,6 @@ def _app(aid: str, t: dict[str, Any], where: str, source: str) -> App:
         cues=_cues(t.get("cue", []), f"{where}.cue"),
         views=views,
         policy=dict(t["policy"]) if "policy" in t else None,
-        action=dict(t.get("action", {})),
         source=source,
         spots=spots,
     )
@@ -441,11 +431,7 @@ def _variant(name: str, t: dict[str, Any], base: Variant, where: str) -> Variant
 
 
 def _calibration(t: dict[str, Any], where: str) -> Calibration:
-    _only(
-        t,
-        ("anchor", "anchor_at", "regions", "grids", "focus", "prompt", "readers", "variant"),
-        where,
-    )
+    _only(t, ("anchor", "anchor_at", "regions", "grids", "focus", "readers", "variant"), where)
     common = {k: t[k] for k in ("anchor", "anchor_at", "regions", "grids") if k in t}
     base = _variant("", common, Variant(""), where)
     named = _tables(t.get("variant", {}), f"{where}.variant")
@@ -457,7 +443,6 @@ def _calibration(t: dict[str, Any], where: str) -> Calibration:
     return Calibration(
         variants=variants or (base,),
         focus=_id(t["focus"], f"{where}.focus") if "focus" in t else None,
-        prompt=_regex(t["prompt"], f"{where}.prompt") if "prompt" in t else None,
         readers=dict(readers),
     )
 
@@ -471,7 +456,7 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
     if data.get("format") != FORMAT:
         raise AppError(f"{source}: needs `format = {FORMAT}` at the top")
     _only(data, ("format", "app", "session", "calibration", "action"), source)
-    doc = Doc(name=source)
+    doc = Doc()
     for aid, t in _tables(data.get("app", {}), f"{source}: app").items():
         doc.apps[aid] = _app(aid, t, f"{source}: app.{aid}", origin)
     session = data.get("session", {})
@@ -512,13 +497,6 @@ class Catalog:
     session: dict[str, Region]
     session_cal: dict[str, Fraction]
     spots: dict[str, Point2]
-    docs: tuple[Doc, ...] = ()  # the files merged after the built-ins, in order
-
-    def replacing(self, doc: Doc) -> Catalog:
-        """This catalog with the file of doc's name read again as doc (or added last): what
-        a learned app saved to apps.toml loads as, without the other files being read."""
-        kept = [d for d in self.docs if d.name != doc.name]
-        return catalog(*kept, doc)
 
     def knows(self, target: str) -> bool:
         """target is an app id or 'app.view', as input tools' expect takes it."""
@@ -609,9 +587,6 @@ class Catalog:
         reg = self.session.get(name)
         return place(reg, panes, w, h) if reg else None
 
-    def prompt(self, app: str, view: str) -> str | None:
-        return self.apps[app].views[view].prompt
-
 
 def place(reg: Region, panes: list[Box], width: int, height: int) -> tuple[Box, str] | None:
     fallback = to_box(reg.box, width, height) if reg.box else None
@@ -676,12 +651,7 @@ def _calibrated(app: App, vid: str, cal: Calibration) -> App:
         else:
             # A measured anchor is the strongest evidence a local setup has.
             view_cues.append(Cue(text=(anchor,), at=at, weight=2.0))
-    view = replace(
-        view,
-        regions=regions,
-        cues=tuple(view_cues),
-        prompt=cal.prompt or view.prompt,
-    )
+    view = replace(view, regions=regions, cues=tuple(view_cues))
     return replace(app, cues=tuple(app_cues), views={**app.views, vid: view})
 
 
@@ -707,29 +677,10 @@ def catalog(*docs: Doc) -> Catalog:
         if aid not in apps:
             raise AppError(f"calibration.{aid}.{vid}: no app '{aid}' is defined")
         apps[aid] = _calibrated(apps[aid], vid, c)
-    return Catalog(apps, cal, session, session_cal, spots, tuple(docs))
+    return Catalog(apps, cal, session, session_cal, spots)
 
 
 def load(path: Path | None = None) -> Catalog:
     """Built-ins, then apps.toml, which wins."""
     docs = [parse(path.read_text(encoding="utf-8"), str(path))] if path is not None else []
     return catalog(*docs)
-
-
-# Writing calibration (jharokha_learn)
-
-
-def _nums(v: Iterable[float]) -> str:
-    return "[" + ", ".join(f"{f:.4f}".rstrip("0").rstrip(".") or "0" for f in v) + "]"
-
-
-def _key(k: str) -> str:
-    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k)
-
-
-_HEADER = re.compile(r"^\[\[?\s*(.+?)\s*\]\]?\s*(#.*)?$")
-
-
-def _path(header: str) -> list[str]:
-    """The keys of a table header, quotes removed: calibration.teams.chat.variant."-3"."""
-    return [(a or b).strip() for a, b in re.findall(r'"((?:[^"\\]|\\.)*)"|([^.\s"][^."]*)', header)]

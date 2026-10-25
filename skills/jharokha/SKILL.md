@@ -1,11 +1,11 @@
 ---
 name: jharokha
-description: Work in a Windows remote-desktop window (Windows 365, Azure Virtual Desktop, mstsc) from text, through the jharokha MCP tools. Use when a task needs to see what is on a remote session, read a chat, inbox, calendar, page or terminal there, run an action or a command in it, wait for something to appear, or teach jharokha an app it does not know.
+description: Work in a Windows remote-desktop window (Windows 365, Azure Virtual Desktop, mstsc) from text, through the jharokha MCP tools. Use when a task needs to see what is on a remote session, read a chat, inbox, calendar, page or terminal there, run an action or a command in it, or wait for something to appear.
 ---
 
 # Working in a remote desktop with jharokha
 
-jharokha OCRs the remote-desktop client window on the local machine and gives you its text, structured where it knows the app. Nine tools, whatever apps and actions are loaded:
+jharokha OCRs the remote-desktop client window on the local machine and gives you its text, structured where it knows the app. Eight tools, whatever apps and actions are loaded:
 
 | Tool | For |
 |---|---|
@@ -16,10 +16,9 @@ jharokha OCRs the remote-desktop client window on the local machine and gives yo
 | `jharokha_wait` | until a text, a regex, gone, ready, or settled |
 | `jharokha_do` | an action: many steps, one call, checked |
 | `jharokha_act` | one click, type, paste, press or scroll (only with `--allow-input`) |
-| `jharokha_learn` | name the session's taskbar icons so actions can switch apps |
 | `jharokha_screenshot` | last resort: images and colours |
 
-If `jharokha_act` is not listed the server is read-only: `jharokha_do` only shows plans (`dry_run=true`). If your client loads tools lazily, load all nine in one search.
+If `jharokha_act` is not listed the server is read-only: `jharokha_do` only shows plans (`dry_run=true`). If your client loads tools lazily, load all eight in one search.
 
 ## Loop
 
@@ -33,14 +32,14 @@ If `jharokha_act` is not listed the server is read-only: `jharokha_do` only show
    - `allow` caps every step's risk: `reversible` (default) covers clicks, scrolls and drafts. Every command, file writes, sends and Enter in a browser are `irreversible`: pass `allow="irreversible"` only when the user asked for it (for commands, once for the work they approved).
    - On `ok: false`, `failed` names the step, the reason and, for a missing target, the closest texts on screen; the steps before it were done. Read before retrying.
    - For a file in the session use `terminal.put_file` (it checks the SHA-256 there); never type a file's contents into a terminal.
-5. `jharokha_act` only when no action fits: `op="click"` with a `target`, `"type"`/`"paste"` with `text`, `"press"` with `keys`, `"scroll"` with `ticks` (< 0 down). A target is a text to find (`"Inbox"`), a locator (`{"text": "Inbox", "region": "outlook.folders"}`, `{"right_of": "To"}`, `{"region": "teams.list", "nth": 2}`, `{"icon": true, "left_of": "Type a message"}`, `{"spot": "taskbar.teams"}`, an icon an app was taught `{"spot": "tickets.refresh"}`), or `[x, y]` from a find. Never estimate coordinates from a screenshot. For type, paste and press the target is clicked first. It returns what changed in the focus region; read it before the next step. Send inputs one at a time.
+5. `jharokha_act` only when no action fits: `op="click"` with a `target`, `"type"`/`"paste"` with `text`, `"press"` with `keys`, `"scroll"` with `ticks` (< 0 down). A target is a text to find (`"Inbox"`), a locator (`{"text": "Inbox", "region": "outlook.folders"}`, `{"right_of": "To"}`, `{"region": "teams.list", "nth": 2}`, `{"spot": "taskbar.teams"}`, a point an app's definition names `{"spot": "tickets.refresh"}`), or `[x, y]` from a find. Never estimate coordinates from a screenshot. For type, paste and press the target is clicked first. It returns what changed in the focus region; read it before the next step. Send inputs one at a time.
    - Always pass `expect`, the app or `app.view` the input is for (`expect="teams.chat"`).
    - `until` waits after the input: a text (`until="KX7R4C"`), or `{"regex": ..., "timeout_s": 20}`, `{"gone": ...}`, `{"ready": true}`.
    - Use `paste` for anything longer than a short command: exact and instant, and the user's keys cannot mix in.
    - A command for a shell with no end marker (not PowerShell, cmd or bash): `op="type"`, `text="cmd\n"`, `until={"regex": "<its prompt>"}`.
-6. `jharokha_find` for one thing (`query`, case-insensitive, lookalike-tolerant, or `regex=true`), or a target by where it is (`locator`). `all=true` lists every match, or every icon with `{"icon": true}`.
+6. `jharokha_find` for one thing (`query`, case-insensitive, lookalike-tolerant, or `regex=true`), or a target by where it is (`locator`). `all=true` lists every match.
 7. `jharokha_wait` instead of reading in a loop: `text`, `regex`, `gone`, `ready=true`, or nothing to wait until the screen holds still. At most 30 s a call.
-8. `jharokha_screenshot` only for images, icons you cannot place with a locator, colours, or a value where `verify` still disagrees. Prefer a `region`.
+8. `jharokha_screenshot` only for images, icons without text, colours, or a value where `verify` still disagrees. Prefer a `region`.
 
 ## When input is refused
 
@@ -55,7 +54,7 @@ Nothing was sent. Do not work around a refusal.
 
 ## Switching apps
 
-Actions bring their app forward by its taskbar icon. If one says it cannot switch, name the icons once: `jharokha_learn(step="taskbar")`, ask the user which is which (or `step="name_icons"` with input allowed), `names={"T8": "teams"}`, then `step="save"`; show the change and save with `confirm=true` only once they agree. Teaching jharokha a whole new app is not built yet: say so.
+Actions bring their app forward by its taskbar icon, a session spot `taskbar.<app>` in the user's `apps.toml`. If one says it cannot switch, ask the user to add the spot (a screenshot of the taskbar gives its centre, as fractions of the client area) or to bring the app forward themselves. Teaching jharokha a whole new app is not built yet: say so.
 
 ## Rules
 

@@ -102,9 +102,6 @@ class FakeSource:
         self.items.append((f"pasted {text}", 10, 230))
         return False
 
-    def hover(self, w: WindowInfo, x: int, y: int) -> None:
-        self.items.append((f"hovered at {x},{y}", 10, 290))
-
     def guard_state(self, w: WindowInfo) -> dict[str, Any]:
         return {"warnings": list(self.warnings), "input": {"lease": None, "user_idle_s": 42.0}}
 

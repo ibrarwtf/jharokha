@@ -1,7 +1,7 @@
 # App definitions and calibration for jharokha. Copy to apps.toml (git-ignored) and keep
 # what you need: the server reads --apps PATH, else $JHAROKHA_APPS, else ./apps.toml.
 # The values here are synthetic, an example of the shape only: measure your own from
-# jharokha_read(format="panes"); taskbar spots come from `jharokha learn --names ... --save`.
+# jharokha_read(format="panes") and a screenshot of the taskbar for its spots.
 #
 # Built in (src/jharokha/apps/): terminal (shell), teams (chat), outlook (mail, calendar),
 # browser (page) and generic. Everything below adds to them or replaces them. Positions are
@@ -34,10 +34,8 @@ anchor_at = [0.33, 0.02]
 regions = { nav = [0, 0, 0.06, 0.95], list = [0.06, 0.09, 0.25, 0.86], thread = [0.31, 0.09, 0.69, 0.79], compose = [0.31, 0.88, 0.69, 0.07] }
 
 # A terminal's body read as a character grid, with the grid measured: row pitch and
-# character width in pixels, and the first cell's top-left inside the region. prompt is a
-# regex for the shell's prompt at the start of a line.
+# character width in pixels, and the first cell's top-left inside the region.
 [calibration.terminal.shell]
-prompt = '^PS [^>]*>'
 regions = { tabs = [0, 0, 1, 0.03], body = [0, 0.03, 1, 0.92] }
 grids.body = { pitch = 23, char_width = 11, origin = [8, 4] }
 
@@ -49,12 +47,11 @@ grids.body = { pitch = 23, char_width = 11, origin = [8, 4] }
 # form. policy limits input to the app: newline (the chord a typed newline is sent as) and
 # irreversible_keys (refused unless the call passes allow="irreversible"); an app with no
 # policy table holds back enter, ctrl+enter and alt+s and sends newlines as shift+enter, and
-# an empty table (irreversible_keys = []) opts out. spots name icons
-# by their centre and size: {"spot": "tickets.refresh"} clicks one, only while tickets is in
-# front and an icon of that size is there. action tables are reserved for a later version.
+# an empty table (irreversible_keys = []) opts out. spots name text-less targets (an icon)
+# by their centre: {"spot": "tickets.refresh"} clicks one, only while tickets is in front.
 [app.tickets]
 name = "Ticket queue"
-spots = { refresh = [0.058, 0.06, 0.021, 0.02] }
+spots = { refresh = [0.058, 0.06] }
 
 [app.tickets.policy]
 irreversible_keys = ["ctrl+enter"]  # submits the ticket form

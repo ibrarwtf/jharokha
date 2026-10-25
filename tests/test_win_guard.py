@@ -44,17 +44,6 @@ def test_leases_are_per_window_and_name_no_title(g, tmp_path):
     assert len(names) == 2 and not any("Session" in n for n in names)
 
 
-def test_release_frees_only_our_own_lease(g, tmp_path):
-    a = g.Lease(1, root=tmp_path, pid=1, alive=lambda p: True)
-    b = g.Lease(1, root=tmp_path, pid=2, alive=lambda p: True)
-    a.take()
-    b.release()
-    assert a.holder() is not None
-    a.release()
-    assert a.holder() is None
-    b.take()
-
-
 def test_a_corrupt_lease_file_holds_nothing(g, tmp_path):
     lease = g.Lease(1, root=tmp_path, pid=1)
     tmp_path.joinpath(lease.path).write_bytes(b"{not json")

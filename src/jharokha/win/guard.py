@@ -175,13 +175,6 @@ class Lease:
             check_lease(_read(fd), self.pid, now, self.ttl_s, self.alive)
             _write(fd, json.dumps({"pid": self.pid, "last_s": now}).encode())
 
-    def release(self) -> None:
-        """Frees the window now instead of after ttl_s, if this process holds it."""
-        with self._locked() as fd:
-            held = _read(fd)
-            if held is not None and held.pid == self.pid:
-                _write(fd, b"")
-
     def holder(self) -> Holder | None:
         with self._locked() as fd:
             return _read(fd)
