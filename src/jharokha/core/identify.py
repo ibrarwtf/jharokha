@@ -6,7 +6,8 @@ an `at` position, which calibration replaces with where the anchor was measured)
 ELSEWHERE where they are on screen somewhere else; a background cue counts when the
 screen's main colour is within COLOUR of it; a pane cue when a pane found from the pixels
 overlaps its box by PANE_MATCH. The best pair is the answer. Its confidence is its score,
-halved when the runner-up scores the same and full once the runner-up is 0.5 behind. Below
+halved when the best view of another app scores the same and full once it is 0.5 behind
+(the runner-up reported may be another view of the same app). Below
 THRESHOLD nothing is recognised and the screen is `generic`: panes only, with confidence
 1 - the best score."""
 
@@ -116,8 +117,8 @@ class _Evidence:
         self.seen[cue] = s
         return s
 
-    def present(self, text: str) -> bool:
-        return bool(self.hits(Cue(text=(text,))))
+    def present(self, text: tuple[str, ...]) -> bool:
+        return bool(self.hits(Cue(text=text)))
 
 
 def identify(
@@ -156,7 +157,11 @@ def identify(
             scores=scores,
         )
     s, aid, vid = best
-    confidence = s * min(1.0, 0.5 + s - (runner[0] if runner else 0.0))
+    # The margin is over the best view of another app: two views of one app share its
+    # cues (a title bar) and so score close whichever is up, which says nothing against
+    # the app itself.
+    other = next((sc for sc in scored[1:] if sc[1] != aid), None)
+    confidence = s * min(1.0, 0.5 + s - (other[0] if other else 0.0))
     app = next(a for a in apps if a.id == aid)
     view = app.views[vid]
     facts = {

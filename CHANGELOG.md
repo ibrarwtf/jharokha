@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.25.3
+
+From the first live pass over Outlook (the session's folder pane is collapsed, the usual state at this width):
+
+- Outlook is recognised by its title bar: a cue on the word Outlook at the top left, weight 3. With the folder pane collapsed no folder name showed anywhere, the mail view scored 0.56 against the 0.6 the input guard needs, and every Outlook action refused with `wrong_app`.
+- A view's `ready` takes a list, any of which says the view has loaded, like a cue's `text`. The mail view is ready once the list's header names the folder (Inbox, Focused or Other, Sent Items, Drafts, ...).
+- The mail regions are drawn for the collapsed layout: the list from the app rail to x=0.42, the reading pane from 0.45. The folders are the flyout the menu button opens over the list (region `menu` opens it, `folders` is the flyout): `outlook.unread` opens it, takes the count beside the folder's name, and clicks the name, which closes it. Checked live on Inbox (18 unread) and Sent Items.
+- Confidence no longer drops when another view of the same app scores close: two views share the app's cues (its title bar), so mail against calendar said nothing about Outlook being in front, and Sent Items came out at 0.58. The margin is now over the best view of another app; the runner-up reported is unchanged.
+
 ## v0.25.2
 
 - The risk scheme is gone: no `risk` on steps, no `max_risk` on actions, no `allow` of read, reversible or irreversible capping them, no `safety` list in results. Every command had been "irreversible" since 0.24.5, so every call carried the flag and it guarded nothing, and "reversible" on a terminal step would have been a lie. What stays is the one gate that has done real work: a step that presses a key the app's policy calls irreversible (Enter in Teams or a browser, Ctrl+Enter or Alt+S in Outlook), or types a newline that is one, is refused before any input unless the call says `allow="irreversible"`. The terminal has no such key: commands, the alphabet run and `put_file` run under `--allow-input` alone. About 100 lines fewer.

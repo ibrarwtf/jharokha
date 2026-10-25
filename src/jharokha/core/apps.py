@@ -126,7 +126,7 @@ class Region:
 class View:
     id: str
     cues: tuple[Cue, ...] = ()
-    ready: str | None = None
+    ready: tuple[str, ...] = ()  # the view has loaded once any of these is on screen
     regions: dict[str, Region] = field(default_factory=dict)
 
     @property
@@ -261,6 +261,15 @@ def _text(v: Any, where: str) -> str:
     return v
 
 
+def _texts(v: Any, where: str) -> tuple[str, ...]:
+    """One text or a list of them, none empty."""
+    items = v if isinstance(v, list) else [v]
+    out = tuple(_text(s, where) for s in items)
+    if not out:
+        raise AppError(f"{where} must not be empty")
+    return out
+
+
 def _regex(v: Any, where: str) -> str:
     try:
         re.compile(_text(v, where))
@@ -276,11 +285,7 @@ def _cue(t: dict[str, Any], where: str) -> Cue:
         raise AppError(f"{where}: needs exactly one of text, regex, background, pane")
     text: tuple[str, ...] = ()
     if "text" in t:
-        v = t["text"]
-        items = v if isinstance(v, list) else [v]
-        text = tuple(_text(s, f"{where}.text") for s in items)
-        if not text:
-            raise AppError(f"{where}.text must not be empty")
+        text = _texts(t["text"], f"{where}.text")
     bg = None
     if "background" in t:
         v = t["background"]
@@ -352,7 +357,7 @@ def _view(vid: str, t: dict[str, Any], where: str) -> View:
     return View(
         id=_id(vid, where),
         cues=_cues(t.get("cue", []), f"{where}.cue"),
-        ready=_text(t["ready"], f"{where}.ready") if "ready" in t else None,
+        ready=_texts(t["ready"], f"{where}.ready") if "ready" in t else (),
         regions=regions,
     )
 

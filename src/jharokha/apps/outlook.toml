@@ -1,11 +1,19 @@
 # New Outlook, built in. Generic UI text only; positions are fractions of the client area,
-# measured at 1166x1181 and 125% scaling: a ribbon from y=103 to 154 between dividers, the
-# app rail left of a divider at x=61, then (mail) folders, the message list and, past a
-# divider at x=500, the reading pane; (calendar) the calendars and a work-week grid.
+# measured at 1150x1181 and 125% scaling with the folder pane collapsed, which is how it
+# fits a session this wide: a title bar naming the app above the menu row, a ribbon from
+# y=103 to 154 between dividers, the app rail left of a divider at x=60, then (mail) the
+# message list to x=480 and, past a gap, the reading pane; (calendar) a work-week grid.
+# The folder list is a flyout the menu button (top left of the menu row) opens over the
+# message list, and a click on a folder in it closes it.
 format = 1
 
 [app.outlook]
 name = "Outlook"
+
+[[app.outlook.cue]]  # the title bar names the app
+text = "Outlook"
+at = [0.055, 0.017]
+weight = 3
 
 [[app.outlook.cue]]  # the app rail
 pane = [0, 0.131, 0.052, 0.818]
@@ -20,44 +28,39 @@ weight = 0.5
 [app.outlook.policy]
 irreversible_keys = ["ctrl+enter", "alt+s"]
 
+# With the folder pane collapsed the list's header alone names the folder (the Focused and
+# Other tabs for an inbox with focused inbox on), and says the list has loaded.
 [app.outlook.view.mail]
-ready = "Inbox"
+ready = ["Inbox", "Focused", "Other", "Sent Items", "Drafts", "Deleted Items", "Junk Email", "Archive", "Outbox"]
 
-# With the folder pane collapsed only the list's header names the folder, and no other
-# folder shows; the button reads "New mail" or "New email" by version. The mail ribbon's
-# labels stay either way.
 [[app.outlook.view.mail.cue]]
-text = "Inbox"
+text = ["Inbox", "Focused", "Other", "Sent Items", "Drafts", "Deleted Items", "Junk Email", "Archive", "Outbox"]
 weight = 2
 
-[[app.outlook.view.mail.cue]]
+[[app.outlook.view.mail.cue]]  # the button reads "New mail" or "New email" by version
 text = ["New mail", "New email", "New message"]
 weight = 2
 
 [[app.outlook.view.mail.cue]]
-text = ["Sent Items", "Deleted Items", "Junk Email", "Drafts"]
-
-[[app.outlook.view.mail.cue]]
-text = ["Reply all", "Forward", "Mark all as read", "Sweep", "Move to", "Report"]
+text = ["Quick steps", "Reply all", "Forward", "Mark all as read", "Sweep", "Move to", "Report"]
 weight = 1.5
 
 [app.outlook.view.mail.region.ribbon]
-at = [0.5, 0.11]
 box = [0, 0.088, 1, 0.042]
 
-[app.outlook.view.mail.region.folders]
-at = [0.12, 0.5]
-box = [0.053, 0.131, 0.136, 0.818]
+[app.outlook.view.mail.region.menu]  # the button that opens the folder flyout
+box = [0.06, 0.052, 0.05, 0.035]
+
+[app.outlook.view.mail.region.folders]  # the flyout, while it is open
+box = [0.052, 0.09, 0.252, 0.86]
 
 [app.outlook.view.mail.region.list]
 reader = "list"
 kind = "mails"
-at = [0.3, 0.5]
-box = [0.189, 0.131, 0.24, 0.818]
+box = [0.052, 0.131, 0.365, 0.818]
 
 [app.outlook.view.mail.region.reading]
-at = [0.7, 0.5]
-box = [0.43, 0.131, 0.57, 0.818]
+box = [0.448, 0.131, 0.534, 0.818]
 focus = true
 
 # The view switch outlasts the screen settling: the ribbon changes first and the grid
@@ -79,18 +82,13 @@ text = "Month"
 text = "Today"
 
 [app.outlook.view.calendar.region.ribbon]
-at = [0.5, 0.11]
 box = [0, 0.088, 1, 0.042]
-
-[app.outlook.view.calendar.region.calendars]
-at = [0.15, 0.5]
-box = [0.053, 0.131, 0.188, 0.818]
 
 # The grid draws a line around every day and hour, so its pixels split into cells: the
 # region runs from the cell under `at` (hours, top left) to the one under `to`.
 [app.outlook.view.calendar.region.week]
 reader = "table"
-at = [0.26, 0.19]
-to = [0.97, 0.9]
-box = [0.24, 0.18, 0.76, 0.77]
+at = [0.09, 0.22]
+to = [0.97, 0.93]
+box = [0.06, 0.19, 0.92, 0.76]
 focus = true

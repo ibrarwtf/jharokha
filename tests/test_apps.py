@@ -120,6 +120,58 @@ def test_identify_teams_from_text_and_panes():
     assert (who.app, who.ready) == ("teams", False) and who.confidence < 0.9
 
 
+OUTLOOK_PANES = [(0, 0, W, 59), (0, 59, 60, 1062), (60, 103, 1068, 56)]
+
+
+def test_identify_outlook_mail_by_title_in_any_folder():
+    """Collapsed folder pane (how it fits a session this wide): no Inbox anywhere; the
+    title bar, the ribbon and the list header's folder name carry it. Ready is any folder
+    name, and the calendar view sharing the title cue costs no confidence."""
+    cat = apps.catalog().apps.values()
+    sent = lines_for(
+        [
+            ("Outlook", 64, 22),
+            ("New email", 116, 122),
+            ("Quick steps", 771, 122),
+            ("Sent Items", 148, 183),
+        ]
+    )
+    who = identify(cat, sent, OUTLOOK_PANES, (255, 255, 255), W, H)
+    assert (who.app, who.view, who.ready) == ("outlook", "mail", True)
+    assert who.confidence >= 0.75 and who.runner_up and who.runner_up[0] == "outlook"
+    inbox = lines_for(
+        [("Outlook", 64, 22), ("New email", 116, 122), ("Focused", 148, 190), ("Other", 235, 190)]
+    )
+    who = identify(cat, inbox, OUTLOOK_PANES, (255, 255, 255), W, H)
+    assert (who.app, who.view, who.ready) == ("outlook", "mail", True)
+    loading = lines_for([("Outlook", 64, 22), ("New email", 116, 122), ("Quick steps", 771, 122)])
+    who = identify(cat, loading, OUTLOOK_PANES, (255, 255, 255), W, H)
+    assert (who.app, who.view, who.ready) == ("outlook", "mail", False)
+
+
+def test_a_view_ready_takes_a_list():
+    doc = apps.parse("""format = 1
+[app.x]
+name = "X"
+[[app.x.cue]]
+text = "X"
+[app.x.view.a]
+ready = ["One", "Two"]
+[app.x.view.a.region.r]
+box = [0, 0, 1, 1]
+""")
+    assert apps.catalog(doc).apps["x"].views["a"].ready == ("One", "Two")
+    with pytest.raises(apps.AppError, match="ready"):
+        apps.parse("""format = 1
+[app.x]
+name = "X"
+[app.x.view.a]
+ready = []
+[app.x.view.a.region.r]
+box = [0, 0, 1, 1]
+""")
+
+
 def test_identify_terminal_browser_and_generic():
     cat = apps.catalog().apps.values()
     term = lines_for([("Windows PowerShell", 14, 10), ("PS C:\\work> dir", 8, 46)])
