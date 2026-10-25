@@ -141,7 +141,7 @@ def test_typing_with_a_quiet_user_sends_everything_without_pauses(inp, monkeypat
     monkeypatch.setattr(inp.time, "sleep", slept.append)
     watch = FakeWatch(inp.sent, after=None)
     inp.type_text(SESSION, "a" * 40, watch=watch)
-    assert len(inp.sent) == 80 and sum(slept) == pytest.approx(0.4)  # 10 ms a key, no more
+    assert len(inp.sent) == 80 and sum(slept) == pytest.approx(40 * inp.KEY_S)  # a pause a key
     assert watch.log == ["enter at 0", "exit at 80"]
 
 

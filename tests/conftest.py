@@ -98,6 +98,10 @@ class FakeSource:
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self.items.append((f"pressed {combo}", 10, 260))
 
+    def paste_line(self, w: WindowInfo, text: str) -> bool:
+        self.items.append((f"pasted {text}", 10, 230))
+        return False
+
     def hover(self, w: WindowInfo, x: int, y: int) -> None:
         self.items.append((f"hovered at {x},{y}", 10, 290))
 

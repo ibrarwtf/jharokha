@@ -43,6 +43,10 @@ class Source(Protocol):
         self, w: WindowInfo, text: str, focus_at: Point | None = None, paste: bool = False
     ) -> None: ...
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None: ...
+    def paste_line(self, w: WindowInfo, text: str) -> bool:
+        """One line pasted, no Enter, once it is on screen; True when a paste warning was
+        accepted. Raises ScreenError("paste_failed") when it never arrived."""
+        ...
     def hover(self, w: WindowInfo, x: int, y: int) -> None:
         """The session's pointer to (x, y), no button, and left there: what a tooltip
         needs. Guarded as the other input is."""

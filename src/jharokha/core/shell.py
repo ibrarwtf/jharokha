@@ -40,15 +40,20 @@ def new_token(n: int = 6) -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(n))
 
 
+# What clears the screen first, on the same line as the command.
+CLEAR: dict[str, str] = {"powershell": "cls;", "cmd": "cls & ", "bash": "clear; "}
+
+
 def marked(command: str, token: str, shell: Shell) -> str:
     """command with a suffix that prints `<token>:<status>` when it finishes: PowerShell
-    `True:0` ($? and $LASTEXITCODE, empty when no native program has run), cmd and bash the
-    exit code. The token is split in two in what is typed, so the echoed command line never
-    holds it whole."""
+    `True:0` ($? and $LASTEXITCODE), cmd and bash the exit code. The token is split in two
+    in what is typed, so the echoed command line never holds it whole."""
     a, b = token[:2], token[2:]
     if shell == "powershell":
-        # Through a variable, since `"$?:"` in a string reads as a drive-scoped name.
-        return f'{command.rstrip()}; $jkq=$?; "{a}"+"{b}:${{jkq}}:$LASTEXITCODE"'
+        # $LASTEXITCODE is reset first: it keeps the last native program's code, so a
+        # cmdlet after `exit 3` would report 3. $? goes outside the quotes, where `"$?:"`
+        # would read as a drive-scoped name.
+        return f'$LASTEXITCODE=0;{command.rstrip()};"{a}"+"{b}:"+$?+":"+$LASTEXITCODE'
     if shell == "cmd":
         # %errorlevel% on a typed line expands before the line runs; hiding it behind a
         # caret and expanding again with `call` reads it after the command.
@@ -104,6 +109,14 @@ def echo_bottom(lines: list[Line], token: str) -> int | None:
     if not echoes:
         return None
     return max(ln.box[1] + ln.box[3] for ln in rows[echoes[-1]])
+
+
+def marker_bottom(lines: list[Line], token: str) -> int | None:
+    """The y just below the command's end marker row: the reply ends there."""
+    rows, markers, _ = _scan(lines, token)
+    if not markers:
+        return None
+    return max(ln.box[1] + ln.box[3] for ln in rows[markers[-1][0]])
 
 
 def read_reply(lines: list[Line], token: str) -> Reply | None:

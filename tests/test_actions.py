@@ -12,7 +12,7 @@ import pytest
 from jharokha.core import actions, listread
 from jharokha.core.actions import ActionError, Runner, Snapshot
 from jharokha.core.guard import Policy
-from jharokha.core.locate import Hit, Miss, RegionInfo, inside, locate, locator
+from jharokha.core.locate import Hit, Miss, RegionInfo, inside, locate, locator, unwrapped
 from jharokha.core.models import Box, Line
 
 from .conftest import lines_for
@@ -392,3 +392,52 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
         check_front("generic", "teams", "chat", 1.0)
+
+
+def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():
+    from jharokha.core.screen import ScreenError
+
+    class Pasting(Scripted):
+        fail: bool = False
+
+        def paste(self, text: str) -> bool:
+            if self.fail:
+                raise ScreenError("paste_failed", "nothing came")
+            self.inputs.append(f"paste {text}")
+            return False
+
+    def send(line: str, fail: bool = False) -> tuple[list[str], str]:
+        ex = Pasting({"terminal": [(r"PS C:\>", 10, 10)]}, "terminal")
+        ex.fail = fail
+        r = Runner(ex, "irreversible")
+        r.action = actions.builtin()["terminal.run"]
+        r.res, r.cap = actions.Result("terminal.run"), "irreversible"
+        r._send(line)
+        return ex.inputs, r.res.fields["input"]
+
+    long = "Get-ChildItem C:/Windows | Select-Object -First 3 Name, Length, LastWriteTime | ft" * 3
+    assert send("Get-Date") == (["type Get-Date", "press enter"], "typed")
+    assert send(long) == ([f"paste {long}", "press enter"], "pasted")
+    assert send(long, fail=True) == (
+        ["press escape", f"type {long}", "press enter"],
+        "typed: the paste did not arrive",
+    )
+
+
+def test_a_row_the_terminal_wrapped_is_joined_to_the_next():
+    def row(text: str, y: int, right: int) -> Line:
+        return Line(text, (10, y, right - 10, 16))
+
+    lines = [
+        row("a long line the terminal cut at the ed", 10, 1130),
+        row("ge of the pane", 30, 200),
+        row("short", 50, 100),
+        row("ends near the edge but not the furthest", 70, 1100),
+        row("next", 90, 80),
+    ]
+    assert unwrapped(lines, 1150) == [
+        "a long line the terminal cut at the edge of the pane",
+        "short",
+        "ends near the edge but not the furthest",
+        "next",
+    ]

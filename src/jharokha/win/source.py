@@ -11,7 +11,11 @@ from typing import Any
 from jharokha.core.guard import InputLeased, UserActive, refusal, warnings
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo
 from jharokha.core.screen import ScreenError
+from jharokha.core.text import fold
+from jharokha.core.watch import changed_bbox
 from jharokha.win import capture, ocr, recognize, window
+
+ARRIVED_PX = 40  # a change at least this wide or tall is the pasted text, not the caret
 
 
 class WindowsSource:
@@ -78,7 +82,7 @@ class WindowsSource:
         }
         return out
 
-    def _input(self, w: WindowInfo, fn: str, *args: Any, watched: bool = False) -> None:
+    def _input(self, w: WindowInfo, fn: str, *args: Any, watched: bool = False) -> Any:
         """Every input goes through here: this process takes the window's lease (another
         jharokha sending to it refuses), nobody may have used this laptop in the last few
         seconds, and while text is sent, hooks stop it at the user's first key or click."""
@@ -88,7 +92,11 @@ class WindowsSource:
         try:
             guard.Lease(w.hwnd).take()
             self._wait_idle(guard.ensure_user_idle)
-            getattr(input, fn)(w.hwnd, *args, **kw)
+            return getattr(input, fn)(w.hwnd, *args, **kw)
+        except input.PasteNotArrived as e:
+            raise ScreenError(
+                "paste_failed", f"{e}; the line may be partly in. Clear it and type instead."
+            ) from e
         except (InputLeased, UserActive) as e:
             raise ScreenError(*refusal(e)) from e
         except input.Covered as e:
@@ -133,6 +141,29 @@ class WindowsSource:
 
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self._input(w, "press", combo, focus_at)
+
+    def paste_line(self, w: WindowInfo, text: str) -> bool:
+        """One line pasted, no Enter, returning once it is on screen (win.input.paste_line);
+        True when a terminal's paste warning was accepted on the way."""
+        before = [self.frame(w)]
+
+        def arrived() -> bool:
+            now = self.frame(w)
+            moved = changed_bbox(before[0], now)
+            # A blinking caret is a cell wide; pasted text or a dialog is far wider.
+            if moved is None or max(moved[2], moved[3]) < ARRIVED_PX:
+                return False
+            before[0] = now
+            return True
+
+        def warning() -> Point | None:
+            for ln in self.ocr(before[0], None):
+                if "pasteanyway" in fold(ln.text).replace(" ", ""):
+                    x, y, bw, bh = ln.box
+                    return (x + bw // 2, y + bh // 2)
+            return None
+
+        return bool(self._input(w, "paste_line", text, arrived, warning))
 
     def hover(self, w: WindowInfo, x: int, y: int) -> None:
         self._input(w, "hover", x, y)

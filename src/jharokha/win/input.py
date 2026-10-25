@@ -2,7 +2,8 @@
 
 The RDP client forwards input only while it is the foreground window, so every action
 brings it to the front, parks the cursor where needed, and restores both afterwards.
-Keys go as scan codes: that is what the client translates for the session."""
+Named keys and chords go as scan codes, which the client translates for the session; typed
+text goes as unicode events, which need no shift and no matching keyboard layout."""
 
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ MOUSEEVENTF_WHEEL = 0x0800
 KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, KEYEVENTF_SCANCODE = 0x1, 0x2, 0x4, 0x8
 WHEEL_DELTA = 120
 WHEEL_BATCH = 10  # ticks in one wheel event
+KEY_S = 0.002  # between typed characters; the live session took them exact at none
+PASTE_WAIT_S = 5.0  # for pasted text to arrive; the session fetches it from this machine
 GA_ROOT = 2
 BUTTONS = {  # down, up flags
     "left": (0x0002, 0x0004),
@@ -293,12 +296,11 @@ def type_text(
     focus_at: tuple[int, int] | None = None,
     watch: Watch | None = None,
 ) -> None:
-    """Characters on the current keyboard layout go as scan codes (with shift when needed),
-    anything else as a unicode event. focus_at is a client point to click when the session
-    does not come to the front by itself. watch looks out for the user's own keys and
-    clicks while typing; once it has seen one, TypingInterrupted is raised before the next
-    character: their keys would land in the middle of ours, so the rest is not sent. It
-    starts after the focus click and cursor moves, which are ours."""
+    """Each character goes as one unicode event, Enter as its key. focus_at is a client point
+    to click when the session does not come to the front by itself. watch looks out for the
+    user's own keys and clicks while typing; once it has seen one, TypingInterrupted is
+    raised before the next character: their keys would land in the middle of ours, so the
+    rest is not sent. It starts after the focus click and cursor moves, which are ours."""
     x, y = focus_at or (None, None)
     with _active(hwnd, x, y):
         _ensure_foreground(hwnd, focus_at is not None)
@@ -318,16 +320,8 @@ def _type(hwnd: int, text: str, seen: Seen | None) -> None:
         if ch == "\n":
             _send(_key(KEYS["enter"], False), _key(KEYS["enter"], True))
             continue
-        vk = user32.VkKeyScanW(ch)
-        if vk == -1 or (vk >> 8) & 0x6:  # not on the layout, or needs ctrl/alt
-            _send(_unicode(ch, False), _unicode(ch, True))
-            continue
-        shift = (vk >> 8) & 0x1
-        seq = [_key(vk & 0xFF, False), _key(vk & 0xFF, True)]
-        if shift:
-            seq = [_key(KEYS["shift"], False), *seq, _key(KEYS["shift"], True)]
-        _send(*seq)
-        time.sleep(0.01)
+        _send(_unicode(ch, False), _unicode(ch, True))
+        time.sleep(KEY_S)
 
 
 def paste_text(
@@ -358,6 +352,48 @@ def paste_text(
                     _chord([KEYS["enter"]])
         # The session fetches the text only when it pastes, after the keys arrive.
         time.sleep(0.5)
+    finally:
+        _set_clipboard(old)
+
+
+class PasteNotArrived(RuntimeError):
+    pass
+
+
+def paste_line(
+    hwnd: int,
+    text: str,
+    arrived: Callable[[], bool],
+    warning: Callable[[], tuple[int, int] | None],
+    timeout_s: float = PASTE_WAIT_S,
+) -> bool:
+    """One line through the clipboard and Ctrl+V, no Enter: the caller presses it once the
+    text is in. The session fetches the clipboard only when Ctrl+V lands, so the text can
+    arrive a second later, after an Enter sent behind it (which then runs half a command);
+    arrived() says it is on screen. A terminal may ask first ("Paste anyway"): warning()
+    gives that button's point, clicked once. The local clipboard is put back only after the
+    text arrived, or the session could fetch it instead. Returns whether a warning was
+    accepted; raises PasteNotArrived when nothing came within timeout_s."""
+    if "\n" in text or "\r" in text:
+        raise ValueError("paste_line takes one line; its newline is the caller's Enter")
+    old = _clipboard()
+    _set_clipboard(text)
+    accepted = False
+    try:
+        time.sleep(0.2)  # the client announces the new clipboard to the session
+        with _active(hwnd):
+            _ensure_foreground(hwnd, False)
+            _chord(_vks("ctrl+v"))
+        end = time.monotonic() + timeout_s
+        while time.monotonic() < end:
+            if arrived():
+                point = None if accepted else warning()
+                if point is None:
+                    return accepted
+                click(hwnd, *point)
+                accepted = True
+            time.sleep(0.1)
+        raise PasteNotArrived(f"the pasted text did not arrive within {timeout_s:g} s")
     finally:
         _set_clipboard(old)
 

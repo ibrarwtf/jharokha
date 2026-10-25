@@ -18,7 +18,7 @@ do = "run"
 command = "{command}"
 shell = "{shell}"
 region = "body"
-clear = true  # Ctrl+L first, so the reply starts at the top whatever OCR makes of its echo
+clear = true  # cls on the same line, so the reply starts at the top whatever OCR makes of its echo
 # Every command is irreversible: which ones only read is not told from their text (an
 # allowlist passed none of a live day's 93 commands). A user's allow for commands comes later.
 risk = "irreversible"
