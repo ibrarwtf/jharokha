@@ -88,7 +88,7 @@ from jharokha.core.locate import (
     unwrapped,
 )
 from jharokha.core.models import Box, Line, inside
-from jharokha.core.screen import ScreenError
+from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.text import find, fold
 
 FORMAT = 1
@@ -413,7 +413,7 @@ class Executor(Protocol):
     def press(self, keys: str) -> None: ...
     def scroll(self, x: int, y: int, ticks: int) -> None: ...
     # Until the screen holds still after input; within box only, when given.
-    def settle(self, box: Box | None = None) -> None: ...
+    def settle(self, box: Box | None = None) -> object: ...  # core.screen.Settled, or None
     def wait(self, seconds: float) -> None: ...
     def now(self) -> float: ...
 
@@ -910,7 +910,8 @@ class Runner:
     def _wait(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         what = p.get("for")
         if what == "settled":
-            self.ex.settle()
+            got = self.ex.settle()
+            return got.head() if isinstance(got, Settled) else ""
         elif what == "ready":
             self._until({"ready": True}, s.timeout_s, "the view to load")
         elif p.get("until"):

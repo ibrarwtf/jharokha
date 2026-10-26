@@ -12,7 +12,7 @@ from typing import Any
 from jharokha.core.actions import RegionInfo, Snapshot
 from jharokha.core.locate import spot_px
 from jharokha.core.models import Box, Frame, Line, WindowInfo
-from jharokha.core.screen import ScreenError
+from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.session import Session
 from jharokha.core.text import looks_locked
 from jharokha.core.watch import changed_bbox
@@ -177,8 +177,8 @@ class SessionExecutor:
         fields = {"point": (x, y), "keys": f"wheel {ticks}"}
         self._send("scroll", f"{x},{y} {ticks}", fields, lambda w: src.scroll(w, x, y, ticks))
 
-    def settle(self, box: Box | None = None) -> None:
-        self.session.screen.settle(self.title, box=box)
+    def settle(self, box: Box | None = None) -> Settled:
+        return self.session.screen.settle(self.title, box=box)
 
     def wait(self, seconds: float) -> None:
         time.sleep(seconds)

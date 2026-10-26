@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from PIL import Image
@@ -56,6 +57,32 @@ class Source(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class Settled:
+    """How a wait for the screen to hold still ended."""
+
+    ms: int
+    ended: str  # still (quiet long enough), max (still changing when the time ran out)
+    looks: int  # frames compared
+    changes: int  # of them, how many differed from the one before
+    quiet_ms: int  # since the last change, when it ended
+
+    def head(self) -> str:
+        """What a tool's head line says of it: the time, and a screen that never held."""
+        if self.ended == "still":
+            return f"settled_ms={self.ms}"
+        return f"settled_ms={self.ms} settle=max (still changing: {self.changes} changes)"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "settled_ms": self.ms,
+            "ended": self.ended,
+            "looks": self.looks,
+            "changes": self.changes,
+            "quiet_ms": self.quiet_ms,
+        }
+
+
 class Screen:
     """One reading of the window: frame plus OCR lines, cached across calls."""
 
@@ -89,26 +116,37 @@ class Screen:
             )
         return w, frame
 
-    def settle(self, window_title: str | None, max_s: float = 3.0, box: Box | None = None) -> int:
+    def settle(
+        self, window_title: str | None, max_s: float = 3.0, box: Box | None = None
+    ) -> Settled:
         """Wait until the window stops changing after input: at least MIN_SETTLE_S, since the
         RDP client takes a moment to paint anything, then QUIET_S without a change, or
         max_s for screens that never stop (a spinner). With box, only changes inside it count:
         a caret blinking elsewhere (Teams' compose box) never lets the whole window hold still.
-        Returns the milliseconds waited."""
+        Says which of the two ended it: a screen still moving at max_s is no settled one."""
         start = time.monotonic()
         _, prev = self.frame(window_title)
         quiet_since = start
+        looks = changes = 0
         while True:
             time.sleep(POLL_S)
             _, cur = self.frame(window_title)
+            looks += 1
             now = time.monotonic()
             moved = changed_bbox(prev, cur)
             if moved is not None and (box is None or _meets(moved, box)):
                 quiet_since = now
+                changes += 1
             prev = cur
             settled = now - start >= MIN_SETTLE_S and now - quiet_since >= QUIET_S
             if settled or now - start >= max_s:
-                return int((now - start) * 1000)
+                return Settled(
+                    int((now - start) * 1000),
+                    "still" if settled else "max",
+                    looks,
+                    changes,
+                    int((now - quiet_since) * 1000),
+                )
 
     def read(self, window_title: str | None, region: Box | None) -> tuple[Frame, list[Line]]:
         w, frame = self.frame(window_title)

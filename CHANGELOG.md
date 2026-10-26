@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.26.0
+
+Waits say why they ended (an idea from Pomerado's waits, which name their outcome).
+
+- `Screen.settle` returns how it ended: `still` (quiet long enough) or `max` (still changing when the time ran out), with the frames looked at, how many changed and how long it had been quiet. A screen that never held still used to read the same as one that did.
+- `jharokha_act`'s head says `settle=max (still changing: N changes)` after `settled_ms` when the screen never held still; `jharokha_wait` returns `ended` (`appeared`, `gone`, `ready`, `still`, `max`) and `looks`, and its timeout says how many looks it took. An action's `wait for = "settled"` step notes the same.
+
 ## v0.25.7
 
 - `jharokha_wait(seconds=N)`: a plain pause of up to 300 s that reads nothing. Agents used a wait for a text that never appears as a timer.
