@@ -432,3 +432,20 @@ def test_a_message_read_with_and_without_its_day_is_kept_once():
         ("Today 10:44", "the build is green"),
         ("10:50", "x"),
     ]
+
+
+def test_a_read_below_continues_from_its_anchor_and_a_gap_is_reported():
+    from jharokha.core.listread import Item, item_key, merged
+
+    def msg(sender: str, time: str, text: str, cut: bool = False) -> Item:
+        return Item("message", (0, 0, 9, 9), (), time=time, sender=sender, text=text, cut=cut)
+
+    a, b, c = msg("Ana", "9:00", "ok"), msg("Ben", "9:05", "the report"), msg("Cy", "9:10", "go")
+    d = msg("Di", "9:20", "done")
+    assert item_key(msg("Ana", "Today 09:00", "ok")) == item_key(a)
+    # Newer starts with the tail of a message cut at its top, then the anchor (Ben), then new.
+    got, overlapped = merged([a, b], [msg("", "", "report", cut=True), b, c, d])
+    assert overlapped and [m.sender for m in got] == ["Ana", "Ben", "Cy", "Di"]
+    # Nothing shared: the list moved more than a screen between the reads.
+    got, overlapped = merged([a, b], [c, d])
+    assert not overlapped and len(got) == 4

@@ -809,6 +809,7 @@ class Runner:
         step, grow = ticks, abs(int(p.get("max_ticks", 0)))
         until = p.get("until")
         got: list[Any] = []
+        gaps = 0  # reads that shared no item with the read before
         last_seen: tuple[str, ...] | None = None
         n = still = 0
         why = f"{most} scrolls"
@@ -817,7 +818,8 @@ class Runner:
             if p.get("collect"):
                 its = self._items(snap, p)
                 # Scrolling up (ticks > 0) reads further up: what is read now comes first.
-                got = _merge(its, got) if ticks > 0 else _merge(got, its)
+                got, overlapped = _merge(its, got) if ticks > 0 else _merge(got, its)
+                gaps += not overlapped
             if until and _holds(until, snap, self._regions(snap), self._info(snap))[0]:
                 why = f"{_describe(until)} held"
                 break
@@ -861,7 +863,13 @@ class Runner:
         if p.get("collect"):
             self._store(p["collect"], got, p)
             self.res.fields["stopped"] = why
-        return f"{n} scrolls, stopped: {why}"
+            if gaps:
+                self.res.fields["gaps"] = gaps
+                self.res.fields["warning"] = (
+                    f"{gaps} times a screen shared no item with the one before it: items "
+                    "between them may be missing (the list moved more than a screen)"
+                )
+        return f"{n} scrolls, stopped: {why}" + (f", {gaps} gaps" if gaps else "")
 
     def _partial(self, got: list[Any], p: dict[str, Any]) -> None:
         """What a collecting scroll read before it failed: a long read cut short still
@@ -1361,13 +1369,15 @@ def _compact(s: str) -> str:
     return re.sub(r"[\W_]+", "", fold(_ELLIPSIS.sub("", s.strip()))).lower()
 
 
-def _merge(older: list[Any], newer: list[Any]) -> list[Any]:
-    """Items read at two scroll positions as one list, each once: older is the read
-    further up. listread.merge for a list's items; for other readers, by their text."""
+def _merge(older: list[Any], newer: list[Any]) -> tuple[list[Any], bool]:
+    """Items read at two scroll positions as one list, each once, and whether the two
+    reads shared an item: older is the read further up. listread.merged for a list's
+    items; for other readers, by their text."""
     if all(isinstance(i, listread.Item) for i in [*older, *newer]):
-        return listread.merge(older, newer)
+        return listread.merged(older, newer)
     seen = {fold(readers.item_text(i)).replace(" ", "") for i in older}
-    return older + [i for i in newer if fold(readers.item_text(i)).replace(" ", "") not in seen]
+    new = [i for i in newer if fold(readers.item_text(i)).replace(" ", "") not in seen]
+    return older + new, not older or not newer or len(new) < len(newer)
 
 
 def _newline(s: Step, action: Action, policy: Policy) -> str:

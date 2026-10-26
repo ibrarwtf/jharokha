@@ -484,20 +484,73 @@ def same_time(a: str, b: str) -> bool:
 
 def merge(older: list[Item], newer: list[Item]) -> list[Item]:
     """Items read at two scroll positions as one list, each item once: older is the read
-    further up (earlier messages; later mails), newer the one below it. Items match in
-    order on sender or title, time, and the first 30 characters of the text, folded for
-    OCR; a message cut at newer's top joins the one above whose rows it continues. box and
-    refs stay those of the read the item was taken from.
+    further up (earlier messages; later mails), newer the one below it. See merged."""
+    return merged(older, newer)[0]
+
+
+RECENT = 16  # items at the end of what was collected that an anchor is looked for among
+
+
+def merged(older: list[Item], newer: list[Item]) -> tuple[list[Item], bool]:
+    """merge, and whether the two reads overlapped: a read below that shares no item with
+    the one above may have skipped items between them (the list moved more than a screen).
+
+    The anchor first: the newest of older's last RECENT items that newer holds read the
+    same way (item_key, and only one such in each). The read below continues from there:
+    what newer shows above the anchor is older's already, and only the anchor and what
+    follows it are matched item by item (`_fuzzy`), so nothing below it can be pulled back
+    onto an older item that merely reads alike. With no anchor, every item is matched."""
+    if not older or not newer:
+        return older + newer, True
+    if at := _anchor(older, newer):
+        i, j = at
+        tail, _ = _fuzzy(older[i:], newer[j:])
+        return _unique(older[:i] + tail), True
+    out, joins = _fuzzy(older, newer)
+    return _unique(out), joins > 0
+
+
+def item_key(it: Item) -> str:
+    """An item as two reads of it agree on it: kind and side, sender or title, the clock of
+    its time (a day divider dates it in one read only), its first 40 characters, folded."""
+    clock = re.search(rf"{_CLOCK}$", it.time.strip())
+    when = clock.group().lstrip("0") if clock else _fold(it.time)
+    text = _fold(it.subtitle + it.text)[:40]
+    return "|".join((it.kind, str(it.own), _fold(it.sender or it.title), when, text))
+
+
+def _anchor(older: list[Item], newer: list[Item]) -> tuple[int, int] | None:
+    def once(its: list[Item]) -> dict[str, int]:
+        keys: dict[str, int] = {}
+        for n, it in enumerate(its):
+            k = item_key(it)
+            keys[k] = -1 if k in keys or it.cut or not (it.text or it.title) else n
+        return keys
+
+    recent = once(older[-RECENT:])
+    below = once(newer)
+    for k, i in sorted(recent.items(), key=lambda kv: -kv[1]):
+        if i >= 0 and below.get(k, -1) >= 0:
+            return len(older) - len(older[-RECENT:]) + i, below[k]
+    return None
+
+
+def _fuzzy(older: list[Item], newer: list[Item]) -> tuple[list[Item], int]:
+    """Items matched in order on sender or title, time, and the first 30 characters of the
+    text, folded for OCR; a message cut at newer's top joins the one above whose rows it
+    continues. box and refs stay those of the read the item was taken from. With how many
+    items joined.
 
     A screen read below can only overlap the end of what was collected above it, so only that
     end is searched: a short line it shares with a message days earlier (`ok`, a repeated
     question) would otherwise pull it, and every item after it, back to there."""
     tail = max(0, len(older) - 2 * len(newer) - _TAIL_SLACK)
     if tail:
-        return older[:tail] + merge(older[tail:], newer)
+        out, joins = _fuzzy(older[tail:], newer)
+        return older[:tail] + out, joins
     out: list[Item] = []
     pending: list[Item] = []
-    i = 0
+    i = joins = 0
     for n, it in enumerate(newer):
         found = None
         for k in range(i, len(older)):
@@ -511,7 +564,8 @@ def merge(older: list[Item], newer: list[Item]) -> list[Item]:
         out += older[i:j] + pending + [joined]
         pending = []
         i = j + 1
-    return _unique(out + older[i:] + pending)
+        joins += 1
+    return out + older[i:] + pending, joins
 
 
 _NEARBY = 12  # items apart a repeat is looked for: the same item read at two scroll places
