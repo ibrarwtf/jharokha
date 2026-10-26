@@ -89,10 +89,20 @@ def _scan(
         if p == "" and nxt and _payload(nxt, token) is None:
             p = _payload(t + nxt, token)
         if p is not None:
+            # Never the echo too, however near its letters read: `73XXXX:` holds `73`, a
+            # gap, and `XXX:`, one letter off `XXXX`.
             markers.append((i, p))
+            continue
         if _echo(t, token):
             echoes.append(i)
-        elif nxt and not _echo(nxt, token) and _echo(t + nxt, token):
+        elif (
+            nxt
+            and not _echo(nxt, token)
+            # A row ending in the token's first letters above the marker joins with it
+            # into what looks like an echo split over two rows, hiding the marker.
+            and _payload(nxt, token) is None
+            and _echo(t + nxt, token)
+        ):
             echoes.append(i + 1)
     return rows, markers, echoes
 

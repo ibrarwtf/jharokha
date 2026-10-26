@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.26.1
+
+- The end marker is no longer missed when the row above it ends in the token's first two letters (`...KX` above `KX7R4C:True:0`): the two rows joined read as the command's echo split over two rows, so the marker counted as part of the echo and the run waited out its timeout. Nor when the marker's own letters sit within one of an echo (`73XXXX:` holds `73`, a gap, and `XXX:`). A marker row is never taken for the echo now.
+
 ## v0.26.0
 
 Waits say why they ended.
