@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.25.7
+
+- `jharokha_wait(seconds=N)`: a plain pause of up to 300 s that reads nothing. Agents used a wait for a text that never appears as a timer.
+- An action's input waits up to 60 s for the user's keyboard and mouse to go idle (3 s without input) before it is refused with `user_active`, where it waited 10 s: a read that only brings Teams forward, or a command, is queued behind the user rather than refused into retries. `jharokha_act` keeps 10 s.
+
 ## v0.25.6
 
 - `terminal.write_file {path, text, shell}`: a text file written as readable lines, no base64. The lines are typed in batches of up to 3,000 characters into a list in the shell (PowerShell or bash), each batch confirmed by the list's line count, then joined with the text's own line ending (LF or CRLF), written as UTF-8 without a BOM, and its SHA-256 checked against the one sent. A batch cuts the list back to where it starts, so a batch typed again after a misread confirmation adds its lines once. Tabs go in as expressions (a typed tab would complete a file name); PowerShell's curly single quotes are doubled like `'`. Other control characters, and a line too long for one batch, are refused before anything is typed. The generated commands are tested by running them in this machine's PowerShell and bash, each batch twice, against the exact bytes.

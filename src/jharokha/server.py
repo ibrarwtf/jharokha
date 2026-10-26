@@ -89,6 +89,8 @@ INSTRUCTIONS = (
 )
 # Codes of a refused or failed action that make jharokha_do an error: the input tools'.
 DO_ERRORS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked", "bad_argument")
+DO_WAIT_IDLE_S = 60.0  # how long an action's input waits for the user to go idle
+MAX_SLEEP_S = 300.0
 OPS = ("click", "double_click", "right_click", "type", "paste", "press", "scroll")
 CONDITIONS = ("text", "regex", "gone", "ready")
 STALE = 0.05  # of the client area: a calibration anchor this far from where it was measured
@@ -816,18 +818,26 @@ def build_server(
         ready: bool = False,
         region: Region = None,
         timeout_s: float = 10,
+        seconds: float | None = None,
     ) -> str:
         """Wait instead of polling: until text appears (matched as find matches), a regex
         matches (a prompt like '^PS .*>$', 'saved|Error'), a text is gone, or ready=true
         (the view on screen has finished loading); with none of these, until the screen
         stops changing. region as in jharokha_read (default the whole screen). Up to
         timeout_s, at most 30; call again for longer. A timeout carries the last text
-        seen."""
+        seen. seconds alone is a plain pause of that long (up to 300), reading nothing."""
         given: dict[str, Any] = {
             k: x for k, x in (("text", text), ("regex", regex), ("gone", gone)) if x
         }
         if ready:
             given["ready"] = True
+        if seconds is not None:
+            if given or not 0 <= seconds <= MAX_SLEEP_S:
+                raise ScreenError(
+                    "bad_argument", f"seconds stands alone and is 0 to {MAX_SLEEP_S:g}"
+                )
+            time.sleep(seconds)
+            return json.dumps({"slept_s": seconds})
         if not given:
             return json.dumps({"settled_ms": screen.settle(window_title)})
         cond, _ = condition({**given, "timeout_s": timeout_s})
@@ -1072,8 +1082,9 @@ def build_server(
         Outlook: the app's policy) is refused before anything is sent (irreversible) unless
         allow='irreversible', which you pass only when the user asked for exactly that;
         commands and file writes need nothing. Guarded as act: wrong_app, input_leased,
-        user_active. dry_run=true shows the plan and sends nothing; it is all that works
-        without --allow-input. Returns JSON: ok, fields, items, lines, output, exit_code;
+        user_active (each input first waits up to 60 s for the user to stop).
+        dry_run=true shows the plan and sends nothing; it is all that works without
+        --allow-input. Returns JSON: ok, fields, items, lines, output, exit_code;
         on failure failed {step, reason, code, candidates} and the steps done (read the
         screen before retrying). Screen text in it never becomes an action's input."""
         a = actions.get(action)
@@ -1095,8 +1106,17 @@ def build_server(
         holder.append(ex)
         start = time.monotonic()
         hold = getattr(screen.source, "held", None)
-        with hold(screen.window(window_title)) if hold and not dry_run else nullcontext():
-            r = act.Runner(ex, allow, policies).run(a, args or {}, dry_run)
+        idle = getattr(screen.source, "wait_idle_s", None)
+        if idle is not None:
+            # An action is queued behind the user's typing rather than refused: it is one
+            # call the agent made to be done, and a refusal only sends it into retries.
+            screen.source.wait_idle_s = max(idle, DO_WAIT_IDLE_S)  # type: ignore[attr-defined]
+        try:
+            with hold(screen.window(window_title)) if hold and not dry_run else nullcontext():
+                r = act.Runner(ex, allow, policies).run(a, args or {}, dry_run)
+        finally:
+            if idle is not None:
+                screen.source.wait_idle_s = idle  # type: ignore[attr-defined]
         ms = int((time.monotonic() - start) * 1000)
         head = f"action={a.id} ok={str(r.ok).lower()} ms={ms}"
         code = (r.failed or {}).get("code")
