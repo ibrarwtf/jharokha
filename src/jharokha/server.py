@@ -1065,8 +1065,8 @@ def build_server(
         result, such as teams.messages {chat, from, to}, teams.latest {chat, n},
         teams.draft {chat, text},
         outlook.unread {folder}, browser.goto {url}, terminal.run {command, shell,
-        timeout_s} (a command's output and exit code), terminal.put_file {path,
-        content_base64};
+        timeout_s} (a command's output and exit code), terminal.write_file {path, text}
+        (readable lines), terminal.put_file {path, content_base64} (any bytes);
         jharokha_apps lists them all with their arguments. args is a JSON object. A step
         that would send or submit (Enter in Teams or a browser, Ctrl+Enter or Alt+S in
         Outlook: the app's policy) is refused before anything is sent (irreversible) unless

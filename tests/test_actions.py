@@ -29,6 +29,7 @@ def test_builtin_actions_parse():
         "terminal.run",
         "terminal.glyphs",
         "terminal.put_file",
+        "terminal.write_file",
         "teams.open_chat",
         "teams.messages",
         "teams.latest",

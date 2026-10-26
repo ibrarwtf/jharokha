@@ -1,6 +1,6 @@
 [project]
 name = "jharokha"
-version = "0.25.5"
+version = "0.25.6"
 description = "Local MCP server that lets AI agents read and, opt-in, operate a Windows remote-desktop session."
 readme = "README.md"
 license = "MIT"

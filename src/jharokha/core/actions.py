@@ -32,6 +32,8 @@ and `timeout_s`:
               clear (cls) first; learn = "glyphs" prints the alphabet instead and learns
               the terminal's glyphs from it (core.glyphs)
     put_file  path, content_base64; per-chunk confirmation, then the SHA-256 checked
+    write_file  path, text: the text's lines typed in batches, each confirmed by the line
+              count, then written as UTF-8 and the SHA-256 checked
 
 Items are what jharokha_read format=items gives for the region (a Teams thread's
 messages: sender, time, text); `fields = { who = "sender" }` renames their fields. A
@@ -95,7 +97,7 @@ ARG_TYPES = ("text", "number", "list", "base64", "choice")
 SHELLS = ("powershell", "cmd", "bash")
 COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before", "after")
 COMMON = ("do", "expect", "unless", "timeout_s", "label")
-INPUT = ("click", "type", "press", "scroll", "run", "put_file")
+INPUT = ("click", "type", "press", "scroll", "run", "put_file", "write_file")
 # Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
 REFUSALS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked")
 PARAMS: dict[str, tuple[str, ...]] = {
@@ -122,6 +124,7 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "repeat": ("times", "each", "as", "until", "max", "step"),
     "run": ("command", "shell", "region", "clear", "learn"),
     "put_file": ("path", "content_base64", "shell", "region"),
+    "write_file": ("path", "text", "shell", "region"),
 }
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
@@ -273,7 +276,10 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         raise ActionError(f'{where}.fields renames item fields, like {{ who = "sender" }}')
     if kind == "type" and params.get("newline", "forbid") not in NEWLINES:
         raise ActionError(f"{where}.newline must be one of {', '.join(NEWLINES)}")
-    if kind in ("run", "put_file") and params.get("shell", "powershell") not in SHELLS:
+    if (
+        kind in ("run", "put_file", "write_file")
+        and params.get("shell", "powershell") not in SHELLS
+    ):
         if not _PLACEHOLDER.fullmatch(str(params.get("shell"))):
             raise ActionError(f"{where}.shell must be one of {', '.join(SHELLS)}")
     if kind == "run" and params.get("learn") not in (None, "glyphs"):
@@ -284,6 +290,7 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         "click": ("target",),
         "run": () if params.get("learn") else ("command",),
         "put_file": ("path", "content_base64"),
+        "write_file": ("path", "text"),
         "read": ("region", "into"),
         "scroll": ("region",),
     }.get(kind, ()):
@@ -1132,6 +1139,21 @@ class Runner:
         shell = p.get("shell", "powershell")
         data = base64.b64decode(str(p["content_base64"]).encode())
         plan = sh.put_file(str(p["path"]), data, shell)
+        return self._put(s, p, shell, plan, "chunk")
+
+    def _write_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
+        shell = p.get("shell", "powershell")
+        try:
+            plan = sh.write_text(str(p["path"]), str(p["text"]), shell)
+        except ValueError as e:
+            raise _Fail(f"{e}; nothing was typed") from None
+        self.res.fields["lines"] = int(str(plan.steps[-2].expect).rpartition(":")[2])
+        return self._put(s, p, shell, plan, "batch")
+
+    def _put(self, s: Step, p: dict[str, Any], shell: sh.Shell, plan: sh.PutPlan, what: str) -> str:
+        """plan's steps typed in order, each confirmed by what it prints (retyped up to
+        three times: each is safe to repeat), then the last, which writes the file and
+        prints its SHA-256, checked against the one sent."""
         for k, st in enumerate(plan.steps[:-1]):
             seen: list[str] = []
             for attempt in range(3):
@@ -1148,7 +1170,7 @@ class Runner:
                     break
                 if attempt == 2:
                     raise _Fail(
-                        f"chunk {k} was not confirmed after 3 tries: expected {st.expect!r} "
+                        f"{what} {k} was not confirmed after 3 tries: expected {st.expect!r} "
                         f"after the marker, read {', '.join(seen)}"
                     )
         last = plan.steps[-1]
@@ -1160,7 +1182,7 @@ class Runner:
         self.res.exit_code = code
         if check == "mismatch" or ok is False:
             raise _Fail(f"the file's SHA-256 on the remote side is not {plan.sha256}")
-        return f"{len(plan.steps) - 1} chunks, hash {check}"
+        return f"{len(plan.steps) - 1} × {what}, hash {check}"
 
     # Conditions
 
@@ -1375,6 +1397,8 @@ def _plan(
         p.pop("step", None)
         if s.kind == "put_file":
             p["content_base64"] = f"<{len(str(p.get('content_base64', '')))} characters>"
+        if s.kind == "write_file":
+            p["text"] = f"<{len(str(p.get('text', '')))} characters>"
         row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind}
         row |= {k: v for k, v in p.items()}
         for k, cond in (("unless", s.unless), ("expect", s.expect)):

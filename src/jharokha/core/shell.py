@@ -184,6 +184,97 @@ def put_file(path: str, data: bytes, shell: Shell) -> PutPlan:
     return PutPlan(tuple(steps), hashlib.sha256(data).hexdigest(), len(data))
 
 
+BATCH = 3000
+"""Longest command a write_text step pastes: under the 4 KB a terminal pastes as one line
+without asking, with room for the quoting."""
+# PowerShell takes each of these as a single quote, so inside a quoted string each is
+# doubled, which stands for itself.
+_QUOTES = "'‘’‚‛"
+
+
+def write_text(path: str, text: str, shell: Shell) -> PutPlan:
+    """A text file written as its lines, readable as typed: batches of lines appended to a
+    list in the shell, each step confirming how many lines the list holds, then the list
+    joined with the text's own line ending, written as UTF-8 without a BOM, and its SHA-256
+    printed. ValueError for what a line typed into a shell cannot carry: a control
+    character other than a tab, a lone CR or LF beside CRLF line endings, or a shell
+    other than PowerShell or bash."""
+    if shell not in ("powershell", "bash"):
+        raise ValueError("write_file takes powershell or bash")
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    for n, line in enumerate(lines, 1):
+        bad = next((c for c in line if (ord(c) < 32 and c != "\t") or c == "\x7f"), None)
+        if bad is not None:
+            raise ValueError(f"line {n} holds the control character {bad!r}")
+    steps: list[Step] = []
+    parts: list[str] = []
+    start = 0  # lines the list holds before the batch
+
+    def flush() -> None:
+        nonlocal start
+        t = new_token()
+        i = len(steps)
+        a, b = t[:2], t[2:]
+        # A batch first cuts the list back to where it starts, so a batch typed again (its
+        # confirmation misread) does not add its lines twice.
+        if shell == "powershell":
+            if i == 0:
+                init = "$jkw=[Collections.Generic.List[string]]::new()"
+            else:
+                init = f"if($jkw.Count -gt {start}){{$jkw.RemoveRange({start},$jkw.Count-{start})}}"
+            mark = f'"{a}"+"{b}:{i}:"+$jkw.Count'
+        else:
+            init = "jkw=()" if i == 0 else f'jkw=("${{jkw[@]:0:{start}}}")'
+            mark = f'echo "{a}""{b}:{i}:${{#jkw[@]}}"'
+        start += len(parts)
+        steps.append(Step("; ".join([init, *parts, mark]), t, f"{i}:{start}"))
+        parts.clear()
+
+    for n, line in enumerate(lines, 1):
+        q = _quoted(line, shell)
+        stmt = f"$jkw.Add({q})" if shell == "powershell" else f"jkw+=({q})"
+        if len(stmt) > BATCH:
+            raise ValueError(
+                f"line {n} is too long to type as one ({len(line)} characters, quotes and tabs "
+                "count more): put_file takes any bytes"
+            )
+        if parts and sum(len(x) + 2 for x in parts) + len(stmt) > BATCH:
+            flush()
+        parts.append(stmt)
+    flush()
+    t = new_token()
+    if shell == "powershell":
+        q = path.replace("'", "''")
+        sep = '"`r`n"' if nl == "\r\n" else '"`n"'
+        cmd = (
+            f"$jkp=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('{q}'); "
+            f"[IO.File]::WriteAllText($jkp,($jkw -join {sep}),[Text.UTF8Encoding]::new($false)); "
+            "(Get-FileHash -A SHA256 -LiteralPath $jkp).Hash"
+        )
+    else:
+        q = "'" + path.replace("'", "'\\''") + "'"
+        sep = "\\r\\n" if nl == "\r\n" else "\\n"
+        cmd = (
+            f"{{ printf %s \"${{jkw[0]}}\"; [ ${{#jkw[@]}} -gt 1 ] && printf '{sep}%s' "
+            f'"${{jkw[@]:1}}"; }} > {q}; sha256sum {q} | cut -c1-64'
+        )
+    steps.append(Step(marked(cmd, t, shell), t, None))
+    data = text.encode("utf-8")
+    return PutPlan(tuple(steps), hashlib.sha256(data).hexdigest(), len(data))
+
+
+def _quoted(s: str, shell: Shell) -> str:
+    """s as a quoted shell string, a tab joined in as an expression: typed, a tab would
+    complete a file name."""
+    if shell == "powershell":
+        quoted = [
+            "'" + "".join(c * 2 if c in _QUOTES else c for c in p) + "'" for p in s.split("\t")
+        ]
+        return '+"`t"+'.join(quoted)
+    return "$'\\t'".join("'" + p.replace("'", "'\\''") + "'" for p in s.split("\t"))
+
+
 def check_hash(lines: list[Line], expected: str) -> Literal["exact", "folded", "mismatch"]:
     """Whether the lines show the expected SHA-256: exactly (ignoring case and spaces, so a
     hash OCR split or wrapped still counts), only after folding lookalikes (0/O/D, 1/I/l,
