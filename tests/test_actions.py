@@ -665,3 +665,24 @@ def test_a_read_of_items_looks_twice_and_flags_what_changed():
     r = Runner(Drawing({}, "chat")).run(a, {})
     assert r.ok and [m.get("unsteady") for m in r.items["m"]] == [None, True]
     assert "1 unsteady" in r.steps[0].note
+
+
+def test_a_collecting_scroll_reports_reads_that_shared_nothing():
+    a = one(
+        '[[action.chat.a.step]]\ndo = "scroll"\nregion = "thread"\nticks = -7\nmax = 2\n'
+        'collect = "m"'
+    )
+
+    class Jumping(Scripted):
+        def read(self) -> Snapshot:
+            self.fid += 1
+            n = self.fid
+            lines = lines_for([(f"Ana Silva  7:{n:02}", 10, 30), (f"message {n}", 10, 52)])
+            info = {"chat.thread": RegionInfo("list", "messages")}
+            return Snapshot(
+                n, (640, 400), lines, "chat", "main", None, {"chat.thread": SCREEN}, info=info
+            )
+
+    r = Runner(Jumping({}, "chat")).run(a, {})
+    assert r.ok and r.fields["gaps"] == 2 and "may be missing" in r.fields["warning"]
+    assert len(r.items["m"]) == 3

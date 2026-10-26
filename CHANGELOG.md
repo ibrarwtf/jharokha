@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.30.0
+
+Reads across scrolls are joined at an anchor, and a gap between them is reported (Pomerado's list cursor keeps an anchor and the recent rows' keys, and says when the list changed under it).
+
+- `listread.item_key`: kind, side, sender or title, the clock of the time (so `Today 10:44` and `10:44` agree), and the first 40 characters, folded.
+- `listread.merged` finds the anchor first: the newest of the last 16 items collected that the read below holds with the same key, where each key occurs once. What the read below shows above the anchor is already collected; only the anchor and what follows it are matched item by item, so nothing below the anchor can be pulled back onto an older item that merely reads alike. Without an anchor, every item is matched as before.
+- A collecting scroll counts the reads that shared no item with the read before: `fields.gaps` and a `warning` that items between them may be missing (the list moved more than a screen).
+
 ## v0.29.0
 
 Two looks before items are trusted (Pomerado returns a value only once two looks 500 ms apart agree).
