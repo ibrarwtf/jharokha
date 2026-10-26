@@ -639,3 +639,29 @@ def test_an_ambiguous_text_target_is_refused_not_guessed():
     second = at(text="Reports", nth=2)
     assert isinstance(second, Hit) and second.center[0] > 300
     assert isinstance(at(regex=r"Repo\w+"), Miss)
+
+
+def test_a_read_of_items_looks_twice_and_flags_what_changed():
+    a = one('[[action.chat.a.step]]\ndo = "read"\nregion = "thread"\nas = "items"\ninto = "m"')
+
+    class Drawing(Scripted):
+        def read(self) -> Snapshot:
+            self.fid += 1
+            text = "half drawn" if self.fid == 1 else "fully drawn"
+            lines = lines_for([("Ana Silva  7:05", 10, 30), ("first", 10, 52)])
+            lines += lines_for([("Ben Okoro  7:09", 10, 100), (text, 10, 122)])
+            info = {"chat.thread": RegionInfo("list", "messages")}
+            return Snapshot(
+                self.fid,
+                (640, 400),
+                lines,
+                "chat",
+                "main",
+                None,
+                {"chat.thread": SCREEN},
+                info=info,
+            )
+
+    r = Runner(Drawing({}, "chat")).run(a, {})
+    assert r.ok and [m.get("unsteady") for m in r.items["m"]] == [None, True]
+    assert "1 unsteady" in r.steps[0].note

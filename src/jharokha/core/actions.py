@@ -144,6 +144,7 @@ PAGE_TICKS = 5
 MAX_PAGES = 60
 GLYPHS_MIN = 60  # templates a terminal needs before its cells read without OCR
 UNKNOWN_WARN = 20  # cells read by OCR in a reply, past which the result warns
+AGREE_S = 0.3  # between the two looks a read of items takes
 
 
 class ActionError(ValueError):
@@ -436,7 +437,7 @@ class Result:
     action: str
     ok: bool = True
     fields: dict[str, Any] = field(default_factory=dict)
-    items: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+    items: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     lines: dict[str, list[str]] = field(default_factory=dict)
     output: list[str] | None = None
     exit_code: int | None = None
@@ -892,7 +893,11 @@ class Runner:
             inner.append(self._box(snap, p["exclude"]))
         return readers.items(info.reader, self._pool(snap, p), box, info.kind, inner)
 
-    def _store(self, into: str, its: list[Any], p: dict[str, Any]) -> None:
+    def _store(
+        self, into: str, its: list[Any], p: dict[str, Any], shaky: set[int] | None = None
+    ) -> None:
+        """its as the result's items under into, filtered by the step's since and upto,
+        renamed by its fields; those whose id is in shaky marked unsteady."""
         for key, keep in (("since", listread.since), ("upto", listread.upto)):
             if not p.get(key):
                 continue
@@ -904,7 +909,9 @@ class Runner:
                 raise _Fail(f"{key}: {e}") from None
         rename = {v: k for k, v in (p.get("fields") or {}).items()}
         self.res.items[into] = [
-            {rename.get(k, k): v for k, v in d.items()} for d in readers.plain(its)
+            {rename.get(k, k): v for k, v in d.items()}
+            | ({"unsteady": True} if shaky and id(it) in shaky else {})
+            for it, d in zip(its, readers.plain(its), strict=True)
         ]
 
     def _wait(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
@@ -924,8 +931,19 @@ class Runner:
         snap = self._look()
         if p.get("as", "lines") == "items":
             its = self._items(snap, p)
-            self._store(p["into"], its[-int(p["last"]) :] if p.get("last") else its, p)
-            return f"{len(self.res.items[p['into']])} items"
+            # A second look a moment later, as jharokha_read takes: an item read differently
+            # then was caught while the list drew or scrolled.
+            self.ex.wait(AGREE_S)
+            again = self._look()
+            seen = {readers.key(i) for i in self._items(again, p)}
+            shaky = (
+                set()
+                if again.frame_id == snap.frame_id
+                else {id(i) for i in its if readers.key(i) not in seen}
+            )
+            self._store(p["into"], its[-int(p["last"]) :] if p.get("last") else its, p, shaky)
+            n = sum("unsteady" in d for d in self.res.items[p["into"]])
+            return f"{len(self.res.items[p['into']])} items" + (f", {n} unsteady" if n else "")
         self.res.lines[p["into"]] = row_texts(self._pool(snap, p))
         return f"{len(self.res.lines[p['into']])} lines"
 

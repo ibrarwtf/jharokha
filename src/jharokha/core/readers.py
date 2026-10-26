@@ -23,7 +23,7 @@ from typing import Any
 
 from jharokha.core import listread
 from jharokha.core.models import Box, Line, union
-from jharokha.core.text import clean, wrap_untrusted
+from jharokha.core.text import clean, fold, wrap_untrusted
 
 READERS = ("text", "grid", "list", "table", "form")
 KINDS = listread.KINDS
@@ -71,6 +71,43 @@ def as_dicts(its: Sequence[Any]) -> list[dict[str, Any]]:
 def plain(its: Sequence[Any]) -> list[dict[str, Any]]:
     """The items as an action's result holds them: concise."""
     return _concise(as_dicts(its))
+
+
+def key(it: Any) -> str:
+    """An item as two reads compare it: its fields but not where it is on screen, which
+    moves when the list scrolls."""
+    d = it.as_dict() if hasattr(it, "as_dict") else it
+    plain = {k: v for k, v in d.items() if k not in ("box", "refs", "unsteady")}
+    return fold(json.dumps(plain, sort_keys=True, ensure_ascii=False)).replace(" ", "")
+
+
+def unsteady(its: Sequence[Any], again: Sequence[Any]) -> tuple[list[Any], int]:
+    """its, each item a second look (again) did not read the same way marked
+    `unsteady: true` (as a dict), and how many. Grouped reads ({region, items}) are marked
+    item by item. A list still drawing, or half scrolled, reads differently a moment later:
+    such an item may be garbled, or about to change."""
+    flat = [i for g in again for i in g["items"]] if _grouped(again) else list(again)
+    seen = {key(i) for i in flat}
+    n = 0
+
+    def mark(xs: Sequence[Any]) -> list[Any]:
+        nonlocal n
+        out: list[Any] = []
+        for it in xs:
+            if key(it) in seen:
+                out.append(it)
+            else:
+                n += 1
+                out.append(as_dicts([it])[0] | {"unsteady": True})
+        return out
+
+    if _grouped(its):
+        return [g | {"items": mark(g["items"])} for g in its], n
+    return mark(its), n
+
+
+def _grouped(its: Sequence[Any]) -> bool:
+    return bool(its) and isinstance(its[0], dict) and "items" in its[0] and "region" in its[0]
 
 
 def item_text(it: Any) -> str:

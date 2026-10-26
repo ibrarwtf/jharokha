@@ -127,3 +127,15 @@ def test_built_in_regions_name_their_readers():
         "browser.page": "text",
         "terminal.body": "grid",
     }
+
+
+def test_an_item_a_second_look_reads_differently_is_unsteady():
+    from jharokha.core.readers import unsteady
+
+    first = [{"title": "Ana", "time": "9:05", "box": [0, 0, 1, 1]}, {"title": "Bem", "time": ""}]
+    again = [{"title": "Ana", "time": "9:05", "box": [0, 9, 1, 1]}, {"title": "Ben", "time": ""}]
+    marked, n = unsteady(first, again)
+    assert n == 1 and "unsteady" not in marked[0] and marked[1]["unsteady"] is True
+    grouped = [{"region": "a.list", "reader": "list", "items": first}]
+    marked, n = unsteady(grouped, [{"region": "a.list", "reader": "list", "items": again}])
+    assert n == 1 and marked[0]["items"][1]["unsteady"] is True

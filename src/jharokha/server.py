@@ -44,7 +44,6 @@ from jharokha.core.text import (
     cells,
     clean,
     find,
-    fold,
     format_concise,
     format_detailed,
     looks_locked,
@@ -91,6 +90,7 @@ INSTRUCTIONS = (
 DO_ERRORS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked", "bad_argument")
 DO_WAIT_IDLE_S = 60.0  # how long an action's input waits for the user to go idle
 MAX_SLEEP_S = 300.0
+AGREE_S = 0.3  # between the two looks a list read as items takes
 OPS = ("click", "double_click", "right_click", "type", "paste", "press", "scroll")
 CONDITIONS = ("text", "regex", "gone", "ready")
 STALE = 0.05  # of the client area: a calibration anchor this far from where it was measured
@@ -148,14 +148,6 @@ def _unlocked(lines: list[Line]) -> list[Line]:
 
 def _nums(box: Box | tuple[float, ...] | list[int]) -> str:
     return f"[{','.join(map(str, box))}]"
-
-
-def _item_key(it: Any) -> str:
-    """An item as since='last' compares it: its fields but not where it is on screen, which
-    moves when the list scrolls."""
-    d = it.as_dict() if hasattr(it, "as_dict") else it
-    plain = {k: v for k, v in d.items() if k not in ("box", "refs")}
-    return fold(json.dumps(plain, sort_keys=True, ensure_ascii=False)).replace(" ", "")
 
 
 def build_server(
@@ -381,14 +373,15 @@ def build_server(
         """its without those the last read of key had, and what this read has."""
         prev = last_items.get(key)
         if grouped:
-            now = {_item_key(i) for g in its for i in g["items"]}
+            now = {readers.key(i) for g in its for i in g["items"]}
             if prev is not None:
                 its = [
-                    g | {"items": [i for i in g["items"] if _item_key(i) not in prev]} for g in its
+                    g | {"items": [i for i in g["items"] if readers.key(i) not in prev]}
+                    for g in its
                 ]
                 its = [g for g in its if g["items"]]
         else:
-            keys = [_item_key(i) for i in its]
+            keys = [readers.key(i) for i in its]
             now = set(keys)
             if prev is not None:
                 its = [i for i, k in zip(its, keys, strict=True) if k not in prev]
@@ -609,7 +602,8 @@ def build_server(
         '09:15' keeps a list's items from then on. verify: flagged (lines with digits or
         capitals, where IDs and 0/O, 1/l hide) or all re-reads lines with a second OCR
         engine, ~30 ms a line, at most 40; a line read differently shows `| verify: ...`,
-        usually right on IDs. Paged by offset and limit."""
+        usually right on IDs. Items are looked at twice, 0.3 s apart: one read differently
+        the second time carries unsteady: true (read again). Paged by offset and limit."""
         if format == "panes":
             return panes_text(window_title)
         frame, lines, at, a = read_area(window_title, region)
@@ -637,6 +631,11 @@ def build_server(
             alt, note = second_reading(frame, lines, verify, range(len(lines)))
             its: list[Any]
             label, its = region_items(apply_verified(lines, alt), a, at)
+            # A second look a moment later: an item read differently then was caught while
+            # the list drew or scrolled, and is flagged rather than trusted.
+            time.sleep(AGREE_S)
+            frame2, lines2, at2, a2 = read_area(window_title, region)
+            again = its if changed_bbox(frame, frame2) is None else region_items(lines2, a2, at2)[1]
             grouped = a.box is None
             if since == "last":
                 its, prev = new_items(key, its, grouped)
@@ -648,6 +647,9 @@ def build_server(
                     its = listread.since(its, str(since), datetime.now())
                 except ValueError as e:
                     raise ScreenError("bad_argument", f"since: {e}") from None
+            its, shaky = readers.unsteady(its, again)
+            if shaky:
+                note += f" unsteady={shaky} (read differently a moment later: read again)"
             n = sum(len(g["items"]) for g in its) if grouped else len(its)
             body = readers.format_items(its, offset, limit)
             what = f"regions={len(its)}" if grouped else f"reader={label}"

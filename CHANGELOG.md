@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.29.0
+
+Two looks before items are trusted (Pomerado returns a value only once two looks 500 ms apart agree).
+
+- `jharokha_read` as items, and an action's `read` step as items, look at the screen a second time 0.3 s later. An item the second look reads differently (a list still drawing, a half-scrolled row, an OCR misread of a moving frame) carries `unsteady: true`, and the head says `unsteady=N (read differently a moment later: read again)`. When the pixels did not change, the second look costs a capture and no OCR. The answer is still the first read, so verified lines and `since` work as before.
+- `readers.key` is the one item key, for `since='last'` and the second look alike.
+
 ## v0.28.0
 
 What an input did is judged by what is new since it (Pomerado counts only elements new or changed after an action).
