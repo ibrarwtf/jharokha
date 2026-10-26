@@ -608,3 +608,12 @@ async def test_list_regions_read_as_items_since_a_time_and_since_last(source):
         source.items += [("Cy Cole 16/10 11:50", 10, 160), ("Shipped", 20, 176)]
         r = await read(region="chat.thread", since="last")
         assert "items=1" in r and "Cy Cole" in r and "Ana Alder" not in r
+
+
+async def test_wait_seconds_is_a_plain_pause(source):
+    r = await call(source, "jharokha_wait", seconds=0.05)
+    assert json.loads(text(r)) == {"slept_s": 0.05}
+    r = await call(source, "jharokha_wait", seconds=1, text="x")
+    assert r.is_error and text(r).startswith("bad_argument: seconds stands alone")
+    r = await call(source, "jharokha_wait", seconds=301)
+    assert r.is_error
