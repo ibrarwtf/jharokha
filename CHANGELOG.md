@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.25.6
+
+- `terminal.write_file {path, text, shell}`: a text file written as readable lines, no base64. The lines are typed in batches of up to 3,000 characters into a list in the shell (PowerShell or bash), each batch confirmed by the list's line count, then joined with the text's own line ending (LF or CRLF), written as UTF-8 without a BOM, and its SHA-256 checked against the one sent. A batch cuts the list back to where it starts, so a batch typed again after a misread confirmation adds its lines once. Tabs go in as expressions (a typed tab would complete a file name); PowerShell's curly single quotes are doubled like `'`. Other control characters, and a line too long for one batch, are refused before anything is typed. The generated commands are tested by running them in this machine's PowerShell and bash, each batch twice, against the exact bytes.
+
 ## v0.25.5
 
 - `teams.messages` scrolls back in strides that double from 7 notches up to 150 (a scroll step's `max_ticks`). Its first stride was 150 notches: in a busy chat one stride could go back hours, and the long way down collected messages it did not need.

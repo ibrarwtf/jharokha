@@ -275,3 +275,64 @@ def test_put_file_round_trip_on_screen():
     run = read_run(lines, last.token, "powershell")
     assert run is not None and run.echoed and run.ok
     assert check_hash(run.output, plan.sha256) == "exact"
+
+
+TRICKY = 'first line\n\tit\'s ‘quoted’ – ünïcode, $HOME `n %PATH% "double"\n\nlast\n'
+
+
+def test_write_text_types_lines_in_confirmed_batches():
+    from jharokha.core.shell import BATCH, write_text
+
+    plan = write_text("out.txt", "a\nb\n" * 2000, "powershell")
+    assert all(len(st.command) < BATCH + 200 for st in plan.steps[:-1])
+    assert plan.steps[-2].expect is not None and plan.steps[-2].expect.endswith(":4001")
+    # A batch after the first cuts the list back to where it starts: typed again, it adds
+    # its lines once.
+    assert "RemoveRange" in plan.steps[1].command
+    with pytest.raises(ValueError, match="control character"):
+        write_text("x", "bell\x07", "powershell")
+    with pytest.raises(ValueError, match="too long"):
+        write_text("x", "y" * 5000, "powershell")
+    with pytest.raises(ValueError, match="powershell or bash"):
+        write_text("x", "y", "cmd")
+
+
+MANY = "\n".join(f"row {i}: it's\tfine" for i in range(600))  # several batches
+
+
+@pytest.mark.parametrize("shell", ["powershell", "bash"])
+@pytest.mark.parametrize(
+    "text", [TRICKY, TRICKY.replace("\n", "\r\n"), "no newline at end", "", MANY]
+)
+def test_write_text_writes_the_exact_bytes(tmp_path, shell, text):
+    """The plan run by a real shell on this machine, as the session's would run it."""
+    import hashlib
+    import shutil
+    import subprocess
+    import sys
+
+    from jharokha.core.shell import write_text
+
+    exe = shutil.which("powershell" if shell == "powershell" else "bash")
+    if exe is None or sys.platform != "win32":
+        pytest.skip(f"no {shell} here")
+    target = tmp_path / "out.txt"
+    path = str(target) if shell == "powershell" else target.as_posix()
+    plan = write_text(path, text, shell)  # type: ignore[arg-type]
+    script = tmp_path / ("run.ps1" if shell == "powershell" else "run.sh")
+    # Every batch typed twice, as a retry after a misread confirmation types it.
+    script.write_text(
+        "\n".join(
+            [st.command for st in plan.steps[:-1] for _ in (1, 2)] + [plan.steps[-1].command]
+        ),
+        encoding="utf-8-sig" if shell == "powershell" else "utf-8",
+    )
+    args = (
+        [exe, "-NoProfile", "-File", str(script)]
+        if shell == "powershell"
+        else [exe, script.as_posix()]
+    )
+    out = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", timeout=60).stdout
+    assert target.read_bytes() == text.encode("utf-8")
+    assert plan.sha256 == hashlib.sha256(text.encode()).hexdigest()
+    assert plan.sha256.lower() in out.lower()

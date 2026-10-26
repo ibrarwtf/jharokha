@@ -44,6 +44,26 @@ region = "body"
 clear = true
 timeout_s = 20
 
+[action.terminal.write_file]
+summary = """Write a text file in the shell in front as readable lines: typed in batches,
+each confirmed by the shell's count of lines so far, then written as UTF-8 (no BOM) with
+the text's own line endings and its SHA-256 checked against the one sent. Tabs are fine;
+other control characters and lines over about 3,000 characters are not (put_file)."""
+args.path = { type = "text", max_len = 260 }
+args.text = { type = "text", max_len = 200000 }
+args.shell = { type = "choice", choices = ["powershell", "bash"], default = "powershell" }
+
+[[action.terminal.write_file.step]]
+do = "focus"
+
+[[action.terminal.write_file.step]]
+do = "write_file"
+path = "{path}"
+text = "{text}"
+shell = "{shell}"
+region = "body"
+timeout_s = 15
+
 [action.terminal.put_file]
 summary = """Write a file in the shell in front: its bytes as base64 typed in short chunks, each
 confirmed, then decoded there and its SHA-256 checked against the one sent."""
