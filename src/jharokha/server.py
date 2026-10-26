@@ -994,7 +994,8 @@ def build_server(
         press (keys: 'enter', 'esc', 'ctrl+c', 'f5', 'shift+tab'), scroll (ticks: < 0 down,
         > 0 up, at the target or the focus region). target: [x, y], a text to find, or a
         locator as jharokha_find takes ({"right_of": "To"}, {"spot": "taskbar.teams"});
-        for type, paste and press it is clicked first. Guarded,
+        for type, paste and press it is clicked first. A text that matches several things
+        equally well is refused, not guessed: add nth or a region. Guarded,
         nothing sent when refused: pass expect, the app or app.view it is meant for
         ('terminal', 'teams.chat', or 'generic' for an app no definition knows): it must be
         in front at confidence 0.6 (wrong_app). A click on a taskbar spot is not checked

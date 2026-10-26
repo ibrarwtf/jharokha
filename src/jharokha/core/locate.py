@@ -19,6 +19,7 @@ Pure: no input, no reading; the caller passes what was read."""
 from __future__ import annotations
 
 import difflib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -151,6 +152,19 @@ def _candidates(lines: list[Line], query: str, n: int = 3) -> tuple[str, ...]:
     return tuple(t for _, t in scored[:n] if t)
 
 
+def _rank(line: str, query: str) -> int:
+    """How closely a line that matched query matches it, best first: the whole line, its
+    start, whole words inside it, part of a word. Two matches at the best rank are
+    ambiguous, and a click on either is a guess."""
+    f, q = fold(line).strip(), fold(query).strip()
+    if f.replace(" ", "") == q.replace(" ", ""):
+        return 0
+    word = rf"(?<![^\W_]){re.escape(q)}(?![^\W_])"
+    if re.match(word, f):
+        return 1
+    return 2 if re.search(word, f) else 3
+
+
 def _pick(found: list[Hit], nth: int | None) -> Hit | None:
     if not found:
         return None
@@ -208,13 +222,28 @@ def locate(
             )
         return Hit(*_field(a, side, bounds), f"empty field {side.replace('_', ' ')} '{anchor_q}'")
     if loc.text:
+        where = f" in {loc.region}" if loc.region else ""
+        matches = find(pool, loc.text, regex=loc.regex, all=True)
         found = [
             Hit(m.box, m.center, f"text in {loc.region}" if loc.region else "text", m.text)
-            for m in find(pool, loc.text, regex=loc.regex, all=True)
+            for m in matches
         ]
+        if loc.nth is None and len(found) > 1:
+            ranks = [
+                0 if loc.regex else _rank(pool[int(m.ref[1:])].text, loc.text) for m in matches
+            ]
+            best = [h for h, r in zip(found, ranks, strict=True) if r == min(ranks)]
+            if len(best) > 1:
+                shown = tuple(clean(pool[int(m.ref[1:])].text) for m in matches)
+                return Miss(
+                    f"'{loc.text}'{where} is ambiguous: {len(best)} matches alike; nothing "
+                    "was picked. Give nth (1 is the first in reading order, -1 the last) or "
+                    "a region, or more of the text",
+                    tuple(dict.fromkeys(shown))[:5],
+                )
+            found = best
         hit = _pick(found, loc.nth)
         if hit is None:
-            where = f" in {loc.region}" if loc.region else ""
             if found:
                 return Miss(f"'{loc.text}'{where} is on screen {len(found)} times, not {loc.nth}")
             return Miss(f"'{loc.text}' is not on screen{where}", _candidates(pool, loc.text))
