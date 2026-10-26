@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.28.0
+
+What an input did is judged by what is new since it (Pomerado counts only elements new or changed after an action).
+
+- `jharokha_act`'s `until` text or regex counts only on lines that are new or changed since the input: a line with the same text in about the same place before (within 4 px, `watch.fresh`) does not count, so a prompt or a "Saved" already on screen no longer ends the wait at once and reports success the input never had. A line that moved (a terminal that scrolled) counts. When the wait times out with the text on screen only where it was before, the error says so. `gone` and `ready` are unchanged.
+- The terminal's end marker already worked this way: its token is new for every command.
+
 ## v0.27.0
 
 An ambiguous text target is refused, not guessed (Pomerado ranks a picker's matches and refuses a tie).
