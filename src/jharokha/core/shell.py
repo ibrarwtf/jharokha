@@ -68,8 +68,11 @@ class Reply:
     payload: str
     """What the shell printed after `<token>:`, spaces removed, as OCR read it."""
     echoed: bool
-    """False when the command's line was not found (scrolled off): output is everything
-    above the marker and its start may be missing."""
+    """False when the command's line was not found (scrolled off, or cleared by its own
+    cls): output is everything above the marker and its start may be missing."""
+    bottom: int = 0
+    """The marker row's bottom edge: near the screen's bottom, the output may have
+    scrolled its start off the top."""
 
 
 def _scan(
@@ -112,7 +115,22 @@ def read_reply(lines: list[Line], token: str) -> Reply | None:
     else:
         return None
     out = [ln for r in rows[start:m] for ln in r]
-    return Reply(out, payload, bool(echoes))
+    bottom = max(ln.box[1] + ln.box[3] for ln in rows[m])
+    return Reply(out, payload, bool(echoes), bottom)
+
+
+def echoed(lines: list[Line], token: str) -> bool:
+    """Whether the line marked with token is on screen as typed: in the shell's input
+    before Enter, or as its echo after."""
+    return bool(_scan(lines, token)[2])
+
+
+def after_echo(lines: list[Line], token: str) -> tuple[list[Line], bool]:
+    """What a command marked with token printed so far: the rows after its echo, or all of
+    them when the echo is not on screen; and whether it was."""
+    rows, _, echoes = _scan(lines, token)
+    start = echoes[-1] + 1 if echoes else 0
+    return [ln for r in rows[start:] for ln in r], bool(echoes)
 
 
 def status(payload: str, shell: Shell) -> tuple[bool | None, int | None]:

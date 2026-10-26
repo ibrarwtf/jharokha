@@ -7,9 +7,12 @@ format = 1
 
 [action.terminal.run]
 summary = """Run one command in the shell in front and return what it printed and its exit
-code, read up to an end marker the command prints (not the prompt, which OCR misreads)."""
+code, read up to an end marker the command prints (not the prompt, which OCR misreads).
+Output longer than the screen is read back up the scrollback. On a timeout, output holds
+what it printed so far and fields.finished is false. Learns the font first when needed."""
 args.command = { type = "text", max_len = 2000, doc = "one line" }
 args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+args.timeout_s = { type = "number", default = 30, max = 300, doc = "seconds for the command to finish, up to 300" }
 
 [[action.terminal.run.step]]
 do = "focus"
@@ -20,7 +23,7 @@ command = "{command}"
 shell = "{shell}"
 region = "body"
 clear = true  # cls on the same line, so the reply starts at the top whatever OCR makes of its echo
-timeout_s = 30
+timeout_s = "{timeout_s}"
 
 # Prints every printable ASCII glyph in a known order and learns what each looks like in
 # this terminal's font, so later reads match cells instead of running OCR (core.glyphs).
