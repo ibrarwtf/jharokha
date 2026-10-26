@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.27.0
+
+An ambiguous text target is refused, not guessed (Pomerado ranks a picker's matches and refuses a tie).
+
+- A locator's text that matches more than one line is ranked: the whole line, the line's start, whole words inside it, part of a word. When two or more share the best rank and no `nth` is given, the locator misses with "ambiguous: N matches alike; nothing was picked", the lines it matched as candidates, and what to add (nth, a region, more of the text). It used to click the first in reading order. A single best match still wins: `Ana Alder` clicks the chat entry, not the preview line `Ana Alder: see you then`. A regex target matching twice is ambiguous.
+- This applies wherever a locator does: `jharokha_act` targets, action click steps and `jharokha_find` with a locator. `jharokha_find`'s plain query still lists every match.
+
 ## v0.26.1
 
 - The end marker is no longer missed when the row above it ends in the token's first two letters (`...KX` above `KX7R4C:True:0`): the two rows joined read as the command's echo split over two rows, so the marker counted as part of the echo and the run waited out its timeout. Nor when the marker's own letters sit within one of an echo (`73XXXX:` holds `73`, a gap, and `XXX:`). A marker row is never taken for the echo now. Found by a test that failed for one random token in about 500; 30,000 random tokens pass now. A likely part of the missed markers of 0.25.4's report.

@@ -614,3 +614,28 @@ def test_teams_latest_reads_the_last_n_without_scrolling_back():
         ("7:12", "third"),
     ]
     assert [i for i in ex.inputs if i.startswith("scroll")] == ["scroll -150"]
+
+
+def test_an_ambiguous_text_target_is_refused_not_guessed():
+    lines = lines_for(
+        [
+            ("Ana Alder", 20, 40),
+            ("Ana Alder: see you then", 20, 60),
+            ("Reports", 20, 100),
+            ("Reports", 300, 100),
+            ("Reports archive", 20, 140),
+        ]
+    )
+
+    def at(**t: object) -> Hit | Miss:
+        return locate(locator(t), lines, {}, {}, SCREEN)
+
+    # The whole line ranks above a line that only starts with it: no ambiguity.
+    hit = at(text="Ana Alder")
+    assert isinstance(hit, Hit) and hit.center[1] == 46
+    miss = at(text="Reports")
+    assert isinstance(miss, Miss) and "ambiguous: 2 matches alike" in miss.reason
+    assert miss.candidates == ("Reports", "Reports archive")
+    second = at(text="Reports", nth=2)
+    assert isinstance(second, Hit) and second.center[0] > 300
+    assert isinstance(at(regex=r"Repo\w+"), Miss)
