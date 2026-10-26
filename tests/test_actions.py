@@ -400,3 +400,141 @@ def test_a_row_the_terminal_wrapped_is_joined_to_the_next():
         "ends near the edge but not the furthest",
         "next",
     ]
+
+
+# terminal.run on a scripted shell
+
+
+class Shell(Scripted):
+    """A shell in a 10-row view: a typed line shows on the prompt's row (unless dropped),
+    Enter runs it (cls clears the rows above, echo and all), printing output then the
+    marker unless it never finishes; the wheel moves the view a row a notch."""
+
+    def __init__(self, output: list[str], drop: int = 0, finish: bool = True) -> None:
+        super().__init__({}, "terminal", regions={"terminal": dict(SCREEN_REGIONS)})
+        self.output, self.drop, self.finish = output, drop, finish
+        self.rows: list[str] = []
+        self.typed = ""
+        self.view = 0  # rows scrolled up from the bottom
+        self.running = False
+
+    def _all(self) -> list[str]:
+        return self.rows + ([] if self.running else [r"PS C:\> " + self.typed])
+
+    def read(self) -> Snapshot:
+        rows = self._all()
+        end = len(rows) - self.view
+        shown = rows[max(0, end - 10) : end]
+        lines = lines_for([(t, 10, 10 + 38 * i) for i, t in enumerate(shown) if t])
+        return Snapshot(self.fid, (640, 400), lines, "terminal", "shell", None, SCREEN_REGIONS)
+
+    def type(self, text: str) -> None:
+        super().type(text)
+        if self.drop:
+            self.drop -= 1
+        else:
+            self.typed = text
+
+    def press(self, keys: str) -> None:
+        super().press(keys)
+        if keys == "escape":
+            self.typed = ""
+        elif keys == "enter":
+            import re
+
+            line, self.typed = self.typed, ""
+            m = re.search(r'"(\w\w)"\+"(\w{4}):"', line)
+            self.rows = [] if line.startswith("cls;") else [*self.rows, rf"PS C:\> {line}"]
+            self.rows += self.output
+            if m and self.finish:
+                self.rows.append(f"{m[1]}{m[2]}:True:0")
+            else:
+                self.running = True
+
+    def scroll(self, x: int, y: int, ticks: int) -> None:
+        super().scroll(x, y, ticks)
+        self.view = max(0, min(self.view + ticks, len(self._all()) - 10))
+
+
+SCREEN_REGIONS: dict[str, Box] = {"terminal.body": SCREEN}
+
+
+def run(ex: Shell, **args: object) -> actions.Result:
+    return Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-Thing", **args})
+
+
+def test_a_reply_longer_than_the_screen_is_read_up_the_scrollback():
+    ex = Shell([f"row {i}" for i in range(25)])
+    r = run(ex)
+    assert r.ok and r.exit_code == 0
+    assert r.output == [f"row {i}" for i in range(25)]
+    assert ex.view == 0  # scrolled back down
+    assert [i for i in ex.inputs if i.startswith("scroll")][-1] == "scroll -25"
+
+
+def test_a_short_reply_scrolls_nothing():
+    ex = Shell(["one", "two"])
+    r = run(ex)
+    assert r.ok and r.output == ["one", "two"] and not any("scroll" in i for i in ex.inputs)
+
+
+def test_a_timeout_returns_what_was_printed_so_far():
+    ex = Shell(["working", "still working"], finish=False)
+    r = run(ex, timeout_s=2)
+    assert not r.ok and "within 2 s" in r.failed["reason"]  # type: ignore[index]
+    assert r.output == ["working", "still working"] and r.fields["finished"] is False
+    assert "scroll -300" in ex.inputs  # once to the bottom, in case the view was scrolled up
+    bad = run(Shell([]), timeout_s=301)
+    assert not bad.ok and bad.failed["code"] == "bad_argument"  # type: ignore[index]
+
+
+def test_a_line_that_never_shows_is_not_run():
+    ex = Shell(["x"], drop=2)
+    r = run(ex)
+    assert not r.ok and "did not show" in r.failed["reason"]  # type: ignore[index]
+    assert "press enter" not in ex.inputs and ex.inputs[-1] == "press escape"
+    ex = Shell(["x"], drop=1)
+    r = run(ex)
+    assert r.ok and r.output == ["x"] and "typed again" in r.fields["input"]
+
+
+def test_scrollback_pages_join_where_they_overlap():
+    from jharokha.core.actions import _overlap
+
+    assert _overlap(["a", "b", "c", "d"], ["c", "d", "e"]) == ["a", "b", "c", "d", "e"]
+    # The page's last row and the run's first are wrapped lines read in part.
+    assert _overlap(["a", "b", "c", "d-cut"], ["d-tail", "b", "c", "d", "e"]) == [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+    ]
+    assert _overlap(["a", "b"], ["x", "y"]) == ["a", "b", "…", "x", "y"]
+
+
+def test_a_chunk_is_confirmed_by_its_length_when_the_index_is_misread():
+    from jharokha.core.actions import _confirmed
+
+    assert _confirmed("0:344", "0:344") and _confirmed("0344", "0:344")
+    assert _confirmed("8:344", "0:344")
+    assert not _confirmed("0:343", "0:344")
+
+
+def test_the_font_is_learned_before_the_first_command():
+    class Unlearned(Shell):
+        known = 0
+
+        def glyphs(self) -> int:
+            return self.known
+
+        def learn_glyphs(self) -> int:
+            self.known = 94
+            return 94
+
+    ex = Unlearned(["out"])
+    r = run(ex)
+    assert r.ok and r.output == ["out"] and r.fields["glyphs"] == 94
+    assert ex.inputs.count("press enter") == 2
+    r = run(ex)
+    assert ex.inputs.count("press enter") == 3  # learned once

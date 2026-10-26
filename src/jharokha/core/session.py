@@ -63,8 +63,10 @@ class Session:
         self._reads: dict[tuple[Any, ...], glyphs.Read] = {}
         # The glyphs known per font and size (core.glyphs.store_key).
         self._stores: dict[tuple[int, int], glyphs.Store] = {}
-        # Inked cells the last shape() found no glyph for.
+        # Inked cells the last shape() found no glyph for, and the glyphs known for the font
+        # it read (None: it read no terminal grid).
         self.unknown = 0
+        self.glyphs: int | None = None
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
         """The app and view on a frame, from the whole screen's lines. The screen's cache
@@ -140,7 +142,7 @@ class Session:
         """Grid regions of the view on screen read cell by cell (core.glyphs), or, where no
         grid can be measured, Windows OCR's words snapped to the grid calibration gives."""
         ident, f = at.ident, at.frame
-        self.unknown = 0
+        self.unknown, self.glyphs = 0, None
         if ident.app is None or ident.view is None:
             return lines
         for name in self.catalog.apps[ident.app].views[ident.view].grids:
@@ -190,6 +192,7 @@ class Session:
             return None
         g = rows.bounded(g, f, box)
         store = self._stores.setdefault(glyphs.store_key(g), glyphs.Store())
+        self.glyphs = len(store)
         source = self.screen.source
         no_engine = False
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.25.4
+
+From a day of use by an agent in another session, where about a third of `terminal.run` calls came back with "no end marker within 30 s" for commands that had finished. Checked on synthetic screens only so far; still to be checked live.
+
+- `terminal.run` takes `timeout_s`, up to 300 (default 30). A step's `timeout_s` may name an argument; a number argument may have a `max`.
+- On a timeout, `output` holds what the command printed so far and `fields.finished` is false, so a slow command's result can be read without a screenshot. Before giving up, the view is scrolled to its bottom once and looked at again: a view scrolled up does not follow new output, so its marker can sit below it.
+- Output longer than the screen is read back up the scrollback: when the reply fills the screen from top to bottom and its own line is not on it, the view is scrolled up five notches at a time, each page joined to the rows below where they overlap (`…` where they do not), until the command's line shows or the view stops moving; then scrolled back down.
+- A sent line must show in the shell before Enter is pressed. If it does not within 2 s (a paste that came in empty), it is cleared with Escape and typed once more; if that does not show either, nothing is run and the step fails with "did not show". An Enter alone used to leave the run waiting 30 s for a marker that never came.
+- The font is learned on first use: `terminal.run` runs the `terminal.glyphs` alphabet first when fewer than 60 glyphs are known for the terminal on screen. A reply with more than 20 cells no glyph matched carries a `warning` to run `terminal.glyphs` again.
+- `terminal.put_file` confirms a chunk by its stored length when OCR misread its index (the marker's token is the chunk's own), and a chunk that is still not confirmed says what was read after the marker.
+
 ## v0.25.3
 
 From the first live pass over Outlook (the session's folder pane is collapsed, the usual state at this width):

@@ -106,6 +106,16 @@ class SessionExecutor:
             self._snap = snap
         return snap
 
+    def glyphs(self) -> int | None:
+        """How many glyphs are known for the terminal font on screen now; None when no
+        terminal grid is on screen."""
+        self.read()
+        return self.session.glyphs
+
+    def unknown_cells(self) -> int:
+        """Cells of the last full read no learned glyph matched (read by the engine)."""
+        return self.session.unknown
+
     def learn_glyphs(self) -> int:
         """The terminal glyphs learned from the alphabet lines on screen now
         (Session.learn_glyphs); the next read reads with them."""
