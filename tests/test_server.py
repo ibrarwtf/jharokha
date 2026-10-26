@@ -617,3 +617,28 @@ async def test_wait_seconds_is_a_plain_pause(source):
     assert r.is_error and text(r).startswith("bad_argument: seconds stands alone")
     r = await call(source, "jharokha_wait", seconds=301)
     assert r.is_error
+
+
+def test_settle_says_whether_the_screen_held_still(source):
+    from jharokha.core.screen import Screen
+
+    s = Screen(source).settle(None, max_s=0.6)
+    assert s.ended == "still" and s.changes == 0 and s.head() == f"settled_ms={s.ms}"
+
+    class Spinner(type(source)):  # type: ignore[misc]
+        def frame(self, w):  # noqa: ANN001, ANN202
+            self.items = [("spinning", 10, 10 + self.frame_id % 2 * 40)]
+            return super().frame(w)
+
+    s = Screen(Spinner()).settle(None, max_s=0.6)
+    assert s.ended == "max" and s.changes >= 3 and "settle=max" in s.head()
+    assert s.as_dict()["ended"] == "max"
+
+
+async def test_wait_says_how_it_ended(source):
+    got = json.loads(text(await call(source, "jharokha_wait", text="Build succeeded")))
+    assert got["ended"] == "appeared" and got["looks"] == 1
+    got = json.loads(text(await call(source, "jharokha_wait", gone="Not here")))
+    assert got["ended"] == "gone"
+    got = json.loads(text(await call(source, "jharokha_wait")))
+    assert got["ended"] == "still" and got["settled_ms"] >= 400

@@ -784,30 +784,45 @@ def build_server(
     def poll(
         title: str | None, cond: dict[str, Any], region: Region, timeout_s: float
     ) -> dict[str, Any]:
-        """Polls twice a second until cond holds, up to timeout_s (at most 30)."""
+        """Polls twice a second until cond holds, up to timeout_s (at most 30). Says how it
+        ended (ready, appeared, gone) and how many looks it took."""
         timeout_s = min(max(timeout_s, 0), 30)
         start = time.monotonic()
+        looks = 0
         while True:
             if region is None or region == "screen":
                 _, lines, at = whole(title)
             else:
                 _, lines, at, _ = read_area(title, region)
+            looks += 1
             elapsed = int((time.monotonic() - start) * 1000)
             if cond.get("ready"):
                 if at.ident.ready is not False:
-                    return {"ready": True, "elapsed_ms": elapsed, "app": at.ident.app}
+                    return {
+                        "ready": True,
+                        "ended": "ready",
+                        "elapsed_ms": elapsed,
+                        "looks": looks,
+                        "app": at.ident.app,
+                    }
             else:
                 q = str(cond.get("text") or cond.get("regex") or cond.get("gone"))
                 matches = find(lines, q, regex="regex" in cond)
                 if bool(matches) != ("gone" in cond):
-                    m = matches[0].__dict__ if matches else None
-                    return {"found": "gone" not in cond, "elapsed_ms": elapsed, "match": m}
+                    gone = "gone" in cond
+                    return {
+                        "found": not gone,
+                        "ended": "gone" if gone else "appeared",
+                        "elapsed_ms": elapsed,
+                        "looks": looks,
+                        "match": matches[0].__dict__ if matches else None,
+                    }
             if time.monotonic() - start >= timeout_s:
                 what = " ".join(f"{k}={v!r}" for k, v in cond.items())
                 raise ScreenError(
                     "timeout",
-                    f"{what} did not hold within {timeout_s:g} s. Last text seen:\n"
-                    f"{format_concise(lines, max(0, len(lines) - 40), 40)}",
+                    f"{what} did not hold within {timeout_s:g} s ({looks} looks). Last text "
+                    f"seen:\n{format_concise(lines, max(0, len(lines) - 40), 40)}",
                 )
             time.sleep(0.5)
 
@@ -824,8 +839,10 @@ def build_server(
         matches (a prompt like '^PS .*>$', 'saved|Error'), a text is gone, or ready=true
         (the view on screen has finished loading); with none of these, until the screen
         stops changing. region as in jharokha_read (default the whole screen). Up to
-        timeout_s, at most 30; call again for longer. A timeout carries the last text
-        seen. seconds alone is a plain pause of that long (up to 300), reading nothing."""
+        timeout_s, at most 30; call again for longer. Says how it ended: appeared, gone,
+        ready; for the screen still, or max when it never stopped changing. A timeout
+        carries the last text seen. seconds alone is a plain pause of that long (up to
+        300), reading nothing."""
         given: dict[str, Any] = {
             k: x for k, x in (("text", text), ("regex", regex), ("gone", gone)) if x
         }
@@ -839,7 +856,7 @@ def build_server(
             time.sleep(seconds)
             return json.dumps({"slept_s": seconds})
         if not given:
-            return json.dumps({"settled_ms": screen.settle(window_title)})
+            return json.dumps(screen.settle(window_title).as_dict())
         cond, _ = condition({**given, "timeout_s": timeout_s})
         return json.dumps(poll(window_title, cond, region, timeout_s))
 
@@ -931,7 +948,7 @@ def build_server(
         until: str | dict[str, Any] | None,
         head: str,
     ) -> str:
-        head += f" settled_ms={screen.settle(title)}"
+        head += " " + screen.settle(title).head()
         if until:
             cond, timeout = condition(until)
             try:
