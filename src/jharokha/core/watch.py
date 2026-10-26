@@ -15,6 +15,26 @@ from jharokha.core.text import clean, wrap_untrusted
 _MAX_CHANGED_AREA = 100  # px^2: a text caret, not a character
 
 
+MOVED_PX = 4  # a line this close to where the same text was has not moved
+
+
+def fresh(old: list[Line], new: list[Line]) -> list[Line]:
+    """Lines of new that old did not have: no old line with the same text in about the
+    same place. A line that moved (a terminal scrolled) is fresh, as is one whose text
+    changed; one that sat there all along is not."""
+    seen: dict[str, list[tuple[int, int]]] = {}
+    for ln in old:
+        seen.setdefault(ln.text, []).append((ln.box[0], ln.box[1]))
+    return [
+        ln
+        for ln in new
+        if not any(
+            abs(ln.box[0] - x) <= MOVED_PX and abs(ln.box[1] - y) <= MOVED_PX
+            for x, y in seen.get(ln.text, ())
+        )
+    ]
+
+
 def diff_lines(old: list[Line], new: list[Line]) -> tuple[list[Line], list[Line]]:
     """Lines in new that were not in old, and the reverse, by text in reading order."""
     sm = difflib.SequenceMatcher(None, [ln.text for ln in old], [ln.text for ln in new])

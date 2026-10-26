@@ -642,3 +642,23 @@ async def test_wait_says_how_it_ended(source):
     assert got["ended"] == "gone"
     got = json.loads(text(await call(source, "jharokha_wait")))
     assert got["ended"] == "still" and got["settled_ms"] >= 400
+
+
+async def test_until_counts_only_text_new_since_the_input(source):
+    async with Client(build_server(source, allow_input=True)) as c:
+        # On screen before the input, where it still is: no proof the input did anything.
+        until = {"text": "Build succeeded", "timeout_s": 0.5}
+        r = await c.call_tool("jharokha_act", {"op": "press", "keys": "x", "until": until})
+        assert r.is_error and "only where it was before the input" in text(r)
+        r = await c.call_tool("jharokha_act", {"op": "press", "keys": "y", "until": "pressed y"})
+        assert not r.is_error and "until_ms=" in text(r)
+
+
+def test_fresh_lines_are_new_moved_or_changed():
+    from jharokha.core.watch import fresh
+
+    from .conftest import lines_for
+
+    old = lines_for([("a", 10, 10), ("b", 10, 30)])
+    new = lines_for([("a", 10, 11), ("b", 10, 50), ("c", 10, 70)])
+    assert [ln.text for ln in fresh(old, new)] == ["b", "c"]
