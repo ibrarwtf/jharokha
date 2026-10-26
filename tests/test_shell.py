@@ -336,3 +336,14 @@ def test_write_text_writes_the_exact_bytes(tmp_path, shell, text):
     assert target.read_bytes() == text.encode("utf-8")
     assert plan.sha256 == hashlib.sha256(text.encode()).hexdigest()
     assert plan.sha256.lower() in out.lower()
+
+
+def test_a_row_ending_in_the_tokens_start_does_not_hide_the_marker():
+    # "x" above "XXNAH7:True:0" reads, joined, as the echo `XX` + `NAH7` split over rows.
+    from .conftest import lines_for
+
+    for above, token in (("x", "XXNAH7"), ("ends in KX", "KX7R4C"), ("x", "73XXXX")):
+        lines = lines_for([(above, 10, 10), (f"{token}:True:0", 10, 48), (PROMPT, 10, 86)])
+        reply = read_reply(lines, token)
+        assert reply is not None and reply.payload == "True:0", token
+        assert [ln.text for ln in reply.output] == [above]
