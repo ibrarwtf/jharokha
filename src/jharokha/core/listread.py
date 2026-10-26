@@ -453,14 +453,33 @@ def _join(a: Item, b: Item, edge: bool) -> Item | None:
         return replace(a, text="\n".join(a.text.split("\n") + b.text.split("\n")[k:]))
     if a.cut:
         return None
-    if _fold(a.sender or a.title) != _fold(b.sender or b.title) or _fold(a.time) != _fold(b.time):
+    if _fold(a.sender or a.title) != _fold(b.sender or b.title) or not same_time(a.time, b.time):
         return None
     ta, tb = _fold(a.subtitle + a.text), _fold(b.subtitle + b.text)
     n = min(len(ta), len(tb), 30)
     if n and difflib.SequenceMatcher(None, ta[:n], tb[:n]).ratio() < 0.85:
         return None
-    # The region's bottom may have cut a short; the longer read is the whole item.
-    return b if len(tb) > len(ta) else a
+    # The region's bottom may have cut a short; the longer read is the whole item, and the
+    # time with its day is the one to keep.
+    return replace(b if len(tb) > len(ta) else a, time=max(a.time, b.time, key=len))
+
+
+_TODAY = re.compile(r"^\s*today\b[,\s]*", re.I)
+
+
+def same_time(a: str, b: str) -> bool:
+    """Whether two reads of an item's time name the same one. A day divider above a message
+    dates its bare time (`Today 10:44`) only in the read that had the divider on screen,
+    so a bare clock matches the same clock under any day."""
+    fa, fb = _fold(_TODAY.sub("", a)), _fold(_TODAY.sub("", b))
+    if fa == fb:
+        return True
+    bare = [t for t in (a, b) if re.fullmatch(_CLOCK, t.strip())]
+    if len(bare) != 1:
+        return False
+    other = b if bare[0] is a else a
+    m = re.search(rf"(?:^|\s)({_CLOCK})$", other.strip())
+    return bool(m) and m.group(1).lstrip("0") == bare[0].strip().lstrip("0")
 
 
 def merge(older: list[Item], newer: list[Item]) -> list[Item]:
@@ -492,7 +511,37 @@ def merge(older: list[Item], newer: list[Item]) -> list[Item]:
         out += older[i:j] + pending + [joined]
         pending = []
         i = j + 1
-    return out + older[i:] + pending
+    return _unique(out + older[i:] + pending)
+
+
+_NEARBY = 12  # items apart a repeat is looked for: the same item read at two scroll places
+
+
+def _unique(its: list[Item]) -> list[Item]:
+    """its without a message read twice that the merge kept twice (its time read with its
+    day in one place and without in the other): same sender, same time, same text.
+    Messages without a time are left alone: two short ones under one header can be
+    alike."""
+    out: list[Item] = []
+    for it in its:
+        near = range(len(out) - 1, max(-1, len(out) - 1 - _NEARBY), -1)
+        twin = next((k for k in near if _twins(out[k], it)), None)
+        if twin is None:
+            out.append(it)
+        elif len(it.time) > len(out[twin].time):
+            out[twin] = replace(out[twin], time=it.time)
+    return out
+
+
+def _twins(a: Item, b: Item) -> bool:
+    return (
+        bool(a.time and b.time)
+        and a.kind == b.kind == "message"
+        and a.own == b.own
+        and _fold(a.sender or a.title) == _fold(b.sender or b.title)
+        and _fold(a.subtitle + a.text) == _fold(b.subtitle + b.text)
+        and same_time(a.time, b.time)
+    )
 
 
 def parse_when(s: str, now: datetime) -> tuple[datetime, bool] | None:

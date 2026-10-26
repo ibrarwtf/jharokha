@@ -96,6 +96,9 @@ class Cue:
     near: float = 0.1  # how far from `at` still counts as there, as a fraction
     weight: float = 1.0
     report: str | None = None  # report the matched text under this name (a URL)
+    # Counts when seen and costs nothing when not: evidence a normal state hides (a draft
+    # hides the compose box's placeholder, pictures break the panes found from pixels).
+    optional: bool = False
 
     @property
     def label(self) -> str:
@@ -279,7 +282,8 @@ def _regex(v: Any, where: str) -> str:
 
 
 def _cue(t: dict[str, Any], where: str) -> Cue:
-    _only(t, ("text", "regex", "background", "pane", "at", "near", "weight", "report"), where)
+    keys = ("text", "regex", "background", "pane", "at", "near", "weight", "report", "optional")
+    _only(t, keys, where)
     kinds = [k for k in ("text", "regex", "background", "pane") if k in t]
     if len(kinds) != 1:
         raise AppError(f"{where}: needs exactly one of text, regex, background, pane")
@@ -311,7 +315,14 @@ def _cue(t: dict[str, Any], where: str) -> Cue:
         near=_num(t.get("near", 0.1), f"{where}.near"),
         weight=_num(t.get("weight", 1.0), f"{where}.weight"),
         report=report,
+        optional=_flag(t.get("optional", False), f"{where}.optional"),
     )
+
+
+def _flag(v: Any, where: str) -> bool:
+    if not isinstance(v, bool):
+        raise AppError(f"{where} must be true or false")
+    return v
 
 
 def _cues(v: Any, where: str) -> tuple[Cue, ...]:

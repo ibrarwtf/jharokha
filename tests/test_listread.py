@@ -416,3 +416,19 @@ def test_merge_joins_the_next_message_under_a_header_scrolled_off():
         ("Ana Alder", "Second one"),
         ("Ben Brook", "Hi all"),
     ]
+
+
+def test_a_message_read_with_and_without_its_day_is_kept_once():
+    from jharokha.core.listread import Item, merge, same_time
+
+    def msg(time: str, text: str = "the build is green") -> Item:
+        return Item("message", (0, 0, 10, 10), (), time=time, sender="Ana Alder", text=text)
+
+    assert same_time("Today 10:44", "10:44") and same_time("Yesterday 10:44", "10:44")
+    assert not same_time("Yesterday 10:44", "Today 10:44") and not same_time("10:44", "10:45")
+    got = merge([msg("09:12", "first"), msg("Today 10:44")], [msg("10:44"), msg("10:50", "x")])
+    assert [(m.time, m.text) for m in got] == [
+        ("09:12", "first"),
+        ("Today 10:44", "the build is green"),
+        ("10:50", "x"),
+    ]

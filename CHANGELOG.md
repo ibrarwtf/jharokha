@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.25.5
+
+Teams, from the same day of use. Checked on synthetic screens only so far; still to be checked live.
+
+- `teams.messages` scrolls back in strides that double from 7 notches up to 150 (a scroll step's `max_ticks`). It always compared parsed times, but its first stride was 150 notches: in a busy chat one stride from the bottom went from 18:20 back to 12:34, and the long way down collected hours it did not need.
+- An action that scrolled a list up scrolls it back down at its end, finished or stopped half-way (refused because the user became active, say); when that is refused too, the result says it was left scrolled up.
+- `teams.latest {chat, n}`: the newest n messages (up to 50, at most a screen's worth) with no scrolling back. A read step takes `last`.
+- A message read at two scroll positions, once with its day (`Today 10:44`, the divider on screen) and once without (`10:44`), is kept once, with the day. Merging compares times with `listread.same_time`, and a final pass drops a message that repeats a nearby one's sender, time and text.
+- Cues may be `optional`: counted when seen, costing nothing when not. Teams' panes (pictures in the thread break them up) and the compose box's placeholder (a draft hides it) are optional, and the rail's other labels (Calendar, Calls, OneDrive, Apps) are a new optional cue: Teams with a draft and pictures was identified at 0.46 and every click was refused with `wrong_app`.
+- `focus` no longer fails when the view's ready cue never shows (a draft over Teams' placeholder): it waits as before, then goes on with a note; the steps after check their own targets.
+- `jharokha_act` clicks a taskbar spot whatever app is in front: `expect` is not checked for it, since switching apps is that click's purpose.
+
 ## v0.25.4
 
 From a day of use by an agent in another session, where about a third of `terminal.run` calls came back with "no end marker within 30 s" for commands that had finished. Checked on synthetic screens only so far; still to be checked live.

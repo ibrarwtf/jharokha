@@ -42,13 +42,16 @@ target = { text = "{chat}", region = "list" }
 unless = { name = "{chat}", region = "header" }
 expect = { name = "{chat}", region = "header" }
 
-# Back in long strides, reading only to know when to stop: overshooting costs a few screens
-# on the way down, each stride read costs a capture.
+# Back in strides that double from about a screen up to 150 notches, reading only to know
+# when to stop: a start minutes ago is a stride or two away, one weeks ago a few long ones,
+# and no stride overshoots by more than the way already come. One fixed stride of 150 read
+# back from 18:20 to 12:34 in a busy chat.
 [[action.teams.messages.step]]
 do = "scroll"
 region = "thread"
 exclude = "compose"
-ticks = 150
+ticks = 7
+max_ticks = 150
 max = 60
 until = { before = "{from}", region = "thread" }
 # A group chat begins with Teams' own line about who added whom.
@@ -73,6 +76,40 @@ do = "extract"
 items = "messages"
 pick = "count"
 into = "count"
+
+[action.teams.latest]
+summary = """The newest messages in a chat, oldest first, as far as the screen shows them:
+no scrolling. Each has sender, time and text (screen text). Without chat, the open chat is
+read."""
+args.chat = { type = "text", max_len = 200, default = "", doc = "omit to read the chat open now" }
+args.n = { type = "number", default = 10, max = 50, doc = "how many, at most what one screen holds" }
+
+[[action.teams.latest.step]]
+do = "focus"
+switch = true
+view = "chat"
+
+[[action.teams.latest.step]]
+do = "click"
+target = { text = "{chat}", region = "list" }
+unless = { name = "{chat}", region = "header" }
+expect = { name = "{chat}", region = "header" }
+
+# To the newest end first, in case the thread was left scrolled up.
+[[action.teams.latest.step]]
+do = "scroll"
+region = "thread"
+exclude = "compose"
+ticks = -150
+max = 1
+
+[[action.teams.latest.step]]
+do = "read"
+region = "thread"
+exclude = "compose"
+as = "items"
+into = "messages"
+last = "{n}"
 
 [action.teams.draft]
 summary = """Type text into a chat's compose box and leave it there: newlines become

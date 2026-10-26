@@ -113,11 +113,24 @@ def test_identify_teams_from_text_and_panes():
     assert (who.app, who.view) == ("teams", "chat")
     assert who.confidence >= 0.9 and who.ready is True
     assert who.runner_up and who.runner_up[2] < THRESHOLD
-    # The compose box gone: the chat view is not ready yet.
+    # The compose box's placeholder gone: not ready, though still surely Teams (a draft
+    # hides it too).
     who = identify(
         cat.apps.values(), lines_for(TEAMS_TEXT[:-1]), TEAMS_PANES, (255, 255, 255), W, H
     )
-    assert (who.app, who.ready) == ("teams", False) and who.confidence < 0.9
+    assert (who.app, who.ready) == ("teams", False) and who.confidence >= 0.9
+
+
+def test_teams_holds_with_a_draft_and_pictures():
+    """A draft hides the compose box's placeholder and pictures break up the panes: both are
+    optional cues, so the rest still says Teams at the input guard's 0.6."""
+    cat = apps.catalog()
+    text = [*TEAMS_TEXT[:-1], ("Calendar", 12, 250)]
+    who = identify(cat.apps.values(), lines_for(text), [(0, 0, W, H)], (255, 255, 255), W, H)
+    assert (who.app, who.view) == ("teams", "chat") and who.confidence >= 0.6
+    # Without Teams' own text, the optional cues alone say nothing.
+    who = identify(cat.apps.values(), [], TEAMS_PANES, (255, 255, 255), W, H)
+    assert who.app != "teams"
 
 
 OUTLOOK_PANES = [(0, 0, W, 59), (0, 59, 60, 1062), (60, 103, 1068, 56)]

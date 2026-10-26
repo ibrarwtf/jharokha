@@ -31,6 +31,7 @@ def test_builtin_actions_parse():
         "terminal.put_file",
         "teams.open_chat",
         "teams.messages",
+        "teams.latest",
         "teams.draft",
         "outlook.unread",
         "outlook.open",
@@ -538,3 +539,77 @@ def test_the_font_is_learned_before_the_first_command():
     assert ex.inputs.count("press enter") == 2
     r = run(ex)
     assert ex.inputs.count("press enter") == 3  # learned once
+
+
+def test_a_scroll_back_doubles_its_stride_and_a_run_ends_scrolled_down():
+    a = one(
+        '[[action.chat.a.step]]\ndo = "scroll"\nregion = "thread"\nticks = 7\n'
+        'max_ticks = 50\nmax = 5\nuntil = { text = "never" }'
+    )
+
+    class Moving(Scripted):
+        def read(self) -> Snapshot:
+            self.fid += 1  # a list that keeps moving
+            snap = super().read()
+            return Snapshot(
+                snap.frame_id,
+                snap.size,
+                lines_for([(f"m{self.fid}", 10, 10)]),
+                "chat",
+                "main",
+                None,
+                {"chat.thread": SCREEN},
+            )
+
+    ex = Moving({}, "chat")
+    r = Runner(ex).run(a, {})
+    scrolls = [i for i in ex.inputs if i.startswith("scroll")]
+    assert scrolls == [
+        "scroll 7",
+        "scroll 14",
+        "scroll 28",
+        "scroll 50",
+        "scroll 50",
+        "scroll -298",
+    ]
+    assert not r.ok and "scrolled back down" in r.failed["reason"]  # type: ignore[index]
+
+
+def test_teams_latest_reads_the_last_n_without_scrolling_back():
+    thread = [
+        ("Ana Silva  7:05", 10, 30),
+        ("first", 10, 52),
+        ("Ana Silva  7:09", 10, 100),
+        ("second", 10, 122),
+        ("Ana Silva  7:12", 10, 170),
+        ("third", 10, 192),
+    ]
+    regions = {
+        "teams.header": (0, 0, 640, 20),
+        "teams.thread": (0, 20, 640, 280),
+        "teams.compose": (0, 300, 640, 100),
+    }
+
+    class Thread(Scripted):
+        def read(self) -> Snapshot:
+            snap = super().read()
+            info = {"teams.thread": RegionInfo("list", "messages")}
+            return Snapshot(
+                snap.frame_id,
+                snap.size,
+                snap.lines,
+                "teams",
+                "chat",
+                True,
+                snap.regions,
+                info=info,
+            )
+
+    ex = Thread({"teams": thread}, "teams", regions={"teams": regions})
+    r = Runner(ex).run(actions.builtin()["teams.latest"], {"n": 2})
+    assert r.ok, r.failed
+    assert [(m["time"], m["text"]) for m in r.items["messages"]] == [
+        ("7:09", "second"),
+        ("7:12", "third"),
+    ]
+    assert [i for i in ex.inputs if i.startswith("scroll")] == ["scroll -150"]
