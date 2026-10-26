@@ -1,8 +1,9 @@
 """Which app and view is on screen, scored from the evidence each definition names.
 
 Every (app, view) pair is scored on the app's cues and the view's together: the weighted
-share of them present. Text and regex cues count fully where they belong (within `near` of
-an `at` position, which calibration replaces with where the anchor was measured) and
+share of them present, where an optional cue counts only when it is seen. Text and regex
+cues count fully where they belong (within `near` of an `at` position, which calibration
+replaces with where the anchor was measured) and
 ELSEWHERE where they are on screen somewhere else; a background cue counts when the
 screen's main colour is within COLOUR of it; a pane cue when a pane found from the pixels
 overlaps its box by PANE_MATCH. The best pair is the answer. Its confidence is its score,
@@ -134,7 +135,7 @@ def identify(
     scored: list[tuple[float, str, str]] = []
     for app in apps:
         for view in app.views.values():
-            cues = app.cues + view.cues
+            cues = [c for c in app.cues + view.cues if not c.optional or ev.score(c)]
             total = sum(c.weight for c in cues)
             if total:
                 s = sum(c.weight * ev.score(c) for c in cues) / total

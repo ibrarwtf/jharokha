@@ -106,6 +106,7 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "scroll": (
         "region",
         "ticks",
+        "max_ticks",
         "until",
         "end",
         "max",
@@ -116,7 +117,7 @@ PARAMS: dict[str, tuple[str, ...]] = {
         "upto",
     ),
     "wait": ("for", "until"),
-    "read": ("region", "as", "into", "fields", "exclude", "since", "zoom"),
+    "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
     "run": ("command", "shell", "region", "clear", "learn"),
@@ -573,6 +574,7 @@ class Runner:
         self.action, self.res = action, res
         self._last: str | None = None  # the last app recognised during this run
         self._close: dict[tuple[int, str], list[Line]] = {}  # rows read again, per frame
+        self._lifted: dict[tuple[int, int], int] = {}  # wheel notches up, net, per point
         try:
             self._steps(action.steps, env, "")
         except _Fail as e:
@@ -590,7 +592,28 @@ class Runner:
                 reason += f" ({len(self.res.steps)} steps were done before; see steps_done)"
             res.ok = False
             res.failed = {"step": self._at, "reason": reason, "code": e.code}
+        self._lower(res)
         return res
+
+    def _lower(self, res: Result) -> None:
+        """A list scrolled up by the run (a thread read back to a start time) goes back to
+        its newest end, whether the run finished or stopped half-way: a chat left scrolled
+        up hides what comes in next from the user. Overshooting the end is harmless."""
+        for (x, y), up in self._lifted.items():
+            if up <= 0:
+                continue
+            try:
+                self._guard(self._look(fast=True))
+                self.ex.scroll(x, y, -2 * up)
+                self.ex.settle()
+                note = "scrolled back down to the newest end"
+            except (_Refuse, _Fail, ScreenError) as e:
+                why = e.reason if isinstance(e, _Refuse | _Fail) else str(e)
+                note = f"left scrolled up {up} notches: scrolling back was refused ({why})"
+                if res.failed is None:
+                    res.fields["warning"] = note
+            if res.failed is not None:
+                res.failed["reason"] += f"; {note}"
 
     # Steps
 
@@ -638,9 +661,15 @@ class Runner:
         self._guard(snap, app)
         if view and snap.view != view:
             raise _Fail(f"{app} shows its {snap.view} view, not {view}")
+        note = f"switched to {app}" if switched else f"{app} in front"
         if snap.ready is False:
-            self._until({"ready": True}, s.timeout_s, f"{app} {snap.view} to load")
-        return f"switched to {app}" if switched else f"{app} in front"
+            # Its ready cue can be hidden for good (a draft over Teams' compose placeholder):
+            # the wait gives a loading view its time, and the steps after check their own.
+            try:
+                self._until({"ready": True}, s.timeout_s, f"{app} {snap.view} to load")
+            except _Fail:
+                note += f", not shown ready after {s.timeout_s:g} s"
+        return note
 
     def _look(self, fast: bool = False) -> Snapshot:
         """The screen now; fast, Windows OCR's text alone where the executor can (finding
@@ -769,6 +798,7 @@ class Runner:
 
     def _scroll(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         ticks, most = int(p.get("ticks", 3)), int(p.get("max", 10))
+        step, grow = ticks, abs(int(p.get("max_ticks", 0)))
         until = p.get("until")
         got: list[Any] = []
         last_seen: tuple[str, ...] | None = None
@@ -812,8 +842,14 @@ class Runner:
                 break
             self._guard(snap)
             last_seen = seen
-            self.ex.scroll(box[0] + box[2] // 2, box[1] + box[3] // 2, ticks)
+            at = (box[0] + box[2] // 2, box[1] + box[3] // 2)
+            self.ex.scroll(*at, step)
+            self._lifted[at] = self._lifted.get(at, 0) + step
             self.ex.settle(box)
+            # Doubling up to max_ticks: a start close to the newest end is found in a short
+            # stride or two, one far back in a few long ones, and a stride never overshoots
+            # by more than the way already come.
+            step = max(-grow, min(grow, step * 2)) if grow else step
         if p.get("collect"):
             self._store(p["collect"], got, p)
             self.res.fields["stopped"] = why
@@ -879,7 +915,8 @@ class Runner:
     def _read(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         snap = self._look()
         if p.get("as", "lines") == "items":
-            self._store(p["into"], self._items(snap, p), p)
+            its = self._items(snap, p)
+            self._store(p["into"], its[-int(p["last"]) :] if p.get("last") else its, p)
             return f"{len(self.res.items[p['into']])} items"
         self.res.lines[p["into"]] = row_texts(self._pool(snap, p))
         return f"{len(self.res.lines[p['into']])} lines"

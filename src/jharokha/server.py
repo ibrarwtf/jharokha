@@ -970,7 +970,8 @@ def build_server(
         for type, paste and press it is clicked first. Guarded,
         nothing sent when refused: pass expect, the app or app.view it is meant for
         ('terminal', 'teams.chat', or 'generic' for an app no definition knows): it must be
-        in front at confidence 0.6 (wrong_app). The
+        in front at confidence 0.6 (wrong_app). A click on a taskbar spot is not checked
+        against the app in front. The
         app's policy applies: in Teams a newline is Shift+Enter, and keys that send or
         submit (Enter in Teams or a browser, Ctrl+Enter or Alt+S in Outlook) are refused
         unless allow='irreversible', which you pass only when the user asked for exactly
@@ -1014,7 +1015,10 @@ def build_server(
             double = op == "double_click"
             fields = {"point": point, "keys": button + (" double" if double else "")}
             with tracing("click", w.title, **fields) as rec:
-                front(window_title, expect, rec, always=False)
+                # The session's taskbar is no app's: switching to an app is the click's
+                # purpose, so whatever is in front now is not checked.
+                taskbar = how.startswith("spot") and "taskbar." in how
+                front(window_title, None if taskbar else expect, rec, False)
                 screen.source.click(w, point[0], point[1], button, double)
         elif op == "scroll":
             assert point is not None
@@ -1058,7 +1062,8 @@ def build_server(
         dry_run: bool = False,
     ) -> str:
         """Run an action: a named, checked sequence of steps in one call, with a structured
-        result, such as teams.messages {chat, from, to}, teams.draft {chat, text},
+        result, such as teams.messages {chat, from, to}, teams.latest {chat, n},
+        teams.draft {chat, text},
         outlook.unread {folder}, browser.goto {url}, terminal.run {command, shell,
         timeout_s} (a command's output and exit code), terminal.put_file {path,
         content_base64};

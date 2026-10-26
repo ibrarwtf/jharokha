@@ -323,6 +323,15 @@ async def test_expect_refuses_input_unless_that_app_is_in_front(source):
         assert "typed hello" in text(await c.call_tool("jharokha_act", args))
 
 
+async def test_a_taskbar_spot_is_clicked_whatever_app_is_in_front(source):
+    spots = "format = 1\n[calibration.session.spots]\n'taskbar.teams' = [0.5, 0.97]\n"
+    cat = apps.catalog(apps.parse(spots))
+    async with Client(build_server(source, allow_input=True, catalog=cat)) as c:
+        args = {"op": "click", "target": {"spot": "taskbar.teams"}, "expect": "teams"}
+        r = await c.call_tool("jharokha_act", {**args, "show": "none"})
+        assert not r.is_error and "at=spot" in text(r), text(r)
+
+
 POLICY_APP = """format = 1
 [app.chat]
 [[app.chat.cue]]
