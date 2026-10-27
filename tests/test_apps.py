@@ -133,6 +133,44 @@ def test_teams_holds_with_a_draft_and_pictures():
     assert who.app != "teams"
 
 
+def test_teams_holds_with_its_anchor_misread_and_no_rail_labels():
+    """In a wider window OCR can read the search box as `Search (Ctrl* E)` and no rail label
+    at all; Teams must still score above the input guard's 0.6."""
+    w = 1300
+    text = [
+        ("Q Search (Ctrl* E)", 425, 21),
+        ("Chat", 113, 80),
+        ("Ana Ald..., +2 Chat Shared Notes", 477, 80),
+        ("Type a message", 488, 1063),
+    ]
+    cat = apps.catalog()
+    who = identify(cat.apps.values(), lines_for(text), [(0, 0, w, H)], (255, 255, 255), w, H)
+    assert (who.app, who.view) == ("teams", "chat") and who.confidence >= 0.8
+    assert "Search (Ctrl+E)" in who.found
+    # Short cues keep their punctuation: `Chat` is not found in `Ch-at`-like noise.
+    who = identify(cat.apps.values(), lines_for([("C.hat", 113, 80)]), [], None, w, H)
+    assert who.app != "teams"
+
+
+def test_session_spots_keep_their_pixels_when_the_window_is_resized():
+    """Taskbar icons keep their distance from the left and bottom edges: a fraction measured
+    at 1200 px wide would click 15 px right of the terminal's icon at 1300."""
+    toml = (
+        "format = 1\n[calibration.session]\nsize = [1200, 1200]\n"
+        "spots = { 'taskbar.terminal' = [0.15, 0.975] }\n"
+    )
+    cat = apps.catalog(apps.parse(toml))
+    x, y = cat.spots_for(None, 1300, 1200)["session.taskbar.terminal"]
+    assert round(x * 1300) == 180 and round(y * 1200) == 1170
+    x, y = cat.spots_for(None, 1200, 1100)["session.taskbar.terminal"]
+    assert round(x * 1200) == 180 and round(y * 1100) == 1100 - (1200 - 1170)
+    # Without a size they stay fractions of the client area, as before.
+    plain = apps.catalog(apps.parse(toml.replace("size = [1200, 1200]\n", "")))
+    assert plain.spots_for(None, 1300, 1200)["session.taskbar.terminal"] == (0.15, 0.975)
+    with pytest.raises(apps.AppError, match="size must be"):
+        apps.parse("format = 1\n[calibration.session]\nsize = [0.5, 1]\n")
+
+
 OUTLOOK_PANES = [(0, 0, W, 59), (0, 59, 60, 1062), (60, 103, 1068, 56)]
 
 

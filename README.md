@@ -79,7 +79,7 @@ An action does in one call what an agent would otherwise do in many scrolls and 
 
 - RDP sends no frames to a minimized window; covered is fine.
 - Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (run `terminal.glyphs` once a session), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
-- Keep the session window one size: calibration and spots hold at the size and zoom they were measured at.
+- Keep the session window one size: calibration holds at the size and zoom it was measured at. Taskbar spots follow a resize when `[calibration.session]` has the `size` they were measured at.
 - Apps are recognised by their English UI text.
 - Windows only; a port would sit beside `src/jharokha/win/` and reuse `core/`.
 

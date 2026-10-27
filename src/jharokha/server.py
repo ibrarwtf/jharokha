@@ -424,7 +424,7 @@ def build_server(
         ]
         if sess:
             out.append("session: " + "; ".join(sess))
-        if here := session.catalog.spots_for(ident.app):
+        if here := session.catalog.spots_for(ident.app, frame.width, frame.height):
             spots = (
                 f"{k} {_nums(spot_px(p, frame.width, frame.height)[:2])}" for k, p in here.items()
             )
@@ -700,7 +700,7 @@ def build_server(
             loc = parse_locator({**loc_t, "region": a.label})
         spots = {
             k: spot_px(p, frame.width, frame.height)
-            for k, p in session.catalog.spots_for(at.ident.app).items()
+            for k, p in session.catalog.spots_for(at.ident.app, frame.width, frame.height).items()
         }
         hit = locate(loc, lines, boxes, spots, (0, 0, frame.width, frame.height), info)
         return frame, hit if isinstance(hit, Miss) else [hit]
@@ -1059,10 +1059,21 @@ def build_server(
             button = "right" if op == "right_click" else "left"
             double = op == "double_click"
             fields = {"point": point, "keys": button + (" double" if double else "")}
+            # The session's taskbar is no app's: switching to an app is the click's
+            # purpose, so whatever is in front now is not checked.
+            taskbar = how.startswith("spot") and "taskbar." in how
+            if taskbar and op == "click":
+                # Windows minimises the app in front when its own icon is clicked, so
+                # bringing an app forward twice in a row hides it.
+                ident = where_now(window_title).ident
+                icon = re.search(r"taskbar\.(\w+)", how)
+                if ident.app and icon and icon.group(1) == ident.app:
+                    return (
+                        f"{head} skipped: {ident.app} is in front already (confidence "
+                        f"{ident.confidence:g}), and a click on its taskbar icon would "
+                        "minimise it. Nothing was sent."
+                    )
             with tracing("click", w.title, **fields) as rec:
-                # The session's taskbar is no app's: switching to an app is the click's
-                # purpose, so whatever is in front now is not checked.
-                taskbar = how.startswith("spot") and "taskbar." in how
                 front(window_title, None if taskbar else expect, rec, False)
                 screen.source.click(w, point[0], point[1], button, double)
         elif op == "scroll":

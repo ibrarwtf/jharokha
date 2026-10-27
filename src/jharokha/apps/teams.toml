@@ -12,13 +12,10 @@ text = "Search (Ctrl+E)"
 at = [0.3, 0.02]
 weight = 2
 
+# The rail's labels, in the rail: one of them is enough. OCR often misses all of them
+# (small text under icons), so they only add.
 [[app.teams.cue]]
-text = "Activity"
-
-# The rail's other labels, in the rail: one of them is enough, and it holds when OCR drops
-# the one above. Not measured live yet, so it only adds.
-[[app.teams.cue]]
-text = ["Calendar", "Calls", "OneDrive", "Apps"]
+text = ["Activity", "Calendar", "Calls", "OneDrive", "Apps"]
 at = [[0.01, 0.15], [0.01, 0.3], [0.01, 0.45]]
 optional = true
 

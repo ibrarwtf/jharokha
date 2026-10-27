@@ -3,7 +3,7 @@ OCR), then the built-in actions on the simulated session with the real Windows O
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 import pytest
@@ -348,6 +348,9 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     assert name_on(lines_for([("@ Ana Alder", 0, 0)]), "Ana Alder")
     assert name_on(lines_for([("Ana Ald…", 0, 0)]), "Ana Alder")
     assert not name_on(lines_for([("Ana Altman", 0, 0)]), "Ana Alder")
+    # A group chat's count right after the cut, unspaced.
+    assert name_on(lines_for([("Ana Ald...,+2 ('2 Chat Shared", 0, 0)]), "Ana Alder, +2")
+    assert not name_on(lines_for([("Ana Alt...,+2", 0, 0)]), "Ana Alder, +2")
     assert name_on([], "")
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
@@ -479,6 +482,22 @@ def test_a_short_reply_scrolls_nothing():
     assert r.ok and r.output == ["one", "two"] and not any("scroll" in i for i in ex.inputs)
 
 
+def test_a_long_command_behind_another_app_times_out_without_wrong_app():
+    """A switch to the browser during a long command must not fail it wrong_app, since it
+    was typed and is running."""
+
+    class Left(Shell):
+        def read(self) -> Snapshot:
+            snap = super().read()
+            return replace(snap, app="browser", view="page") if self.running else snap
+
+    ex = Left(["working"], finish=False)
+    r = run(ex, timeout_s=2)
+    reason = r.failed["reason"]  # type: ignore[index]
+    assert not r.ok and "browser is in front now" in reason and "wrong_app" not in str(r.failed)
+    assert r.fields["finished"] is False and not any("scroll" in i for i in ex.inputs)
+
+
 def test_a_timeout_returns_what_was_printed_so_far():
     ex = Shell(["working", "still working"], finish=False)
     r = run(ex, timeout_s=2)
@@ -573,6 +592,23 @@ def test_a_scroll_back_doubles_its_stride_and_a_run_ends_scrolled_down():
         "scroll -298",
     ]
     assert not r.ok and "scrolled back down" in r.failed["reason"]  # type: ignore[index]
+
+    class Dimming(Moving):
+        """The app still reads as itself, but under the guard's 0.6 once scrolled up; it must
+        not be left scrolled up."""
+
+        def read(self) -> Snapshot:
+            snap = super().read()
+            up = len([i for i in self.inputs if i.startswith("scroll")]) >= 2
+            return replace(snap, confidence=0.59 if up else 0.9)
+
+        def settle(self, box=None) -> None:  # noqa: ANN001
+            self.t += 0.5
+
+    ex = Dimming({}, "chat")
+    r = Runner(ex).run(a, {})
+    assert ex.inputs[-1].startswith("scroll -")
+    assert "scrolled back down" in r.failed["reason"]  # type: ignore[index]
 
 
 def test_teams_latest_reads_the_last_n_without_scrolling_back():

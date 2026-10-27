@@ -611,7 +611,10 @@ class Runner:
             if up <= 0:
                 continue
             try:
-                self._guard(self._look(fast=True))
+                # Undoing the run's own scroll needs the app to read as itself, not the 0.6
+                # new input needs: an app read at 0.59 would be left scrolled far up.
+                if (snap := self._look()).app != self.action.app:
+                    self._guard(snap)
                 self.ex.scroll(x, y, -2 * up)
                 self.ex.settle()
                 note = "scrolled back down to the newest end"
@@ -653,6 +656,10 @@ class Runner:
         if snap.locked:
             raise _Refuse("locked", "the session is locked; nothing was sent")
         switched = snap.app != app and app != guard.ANY
+        if switched and (full := self._look()).app == app:
+            # A click on the icon of the app in front minimises it: a glance that missed
+            # the app is not enough to click.
+            snap, switched = full, False
         if switched:
             if not p.get("switch"):
                 self._guard(snap, app)  # refuses: wrong_app, as the input tools do
@@ -1016,6 +1023,16 @@ class Runner:
             if r := sh.read_reply(inside(snap.lines, box), token):
                 return r
             if self.ex.now() >= end:
+                if snap.app not in (self.action.app, GENERIC, None):
+                    # The user may switch apps during a long command, which must not then
+                    # fail wrong_app though it was typed and is running.
+                    self.res.fields["finished"] = False
+                    raise _Fail(
+                        f"no end marker within {timeout:g} s, and {snap.app} is in front now: "
+                        "the command was typed and may still be running behind it; nothing "
+                        "more was sent. Bring the terminal forward when the user is done and "
+                        "read terminal.body for its output"
+                    )
                 if not bottomed:
                     bottomed = True
                     self._guard(snap)
@@ -1065,7 +1082,11 @@ class Runner:
                 raise _Fail(
                     "the line did not show in the shell after it was sent twice (nothing, or "
                     "only part of it, arrived); Escape cleared it and nothing was run. Read "
-                    "the screen: the shell may be busy, or not the one in front"
+                    "the screen: the shell may be busy, or not the one in front. If it is "
+                    "idle and in front, the keys are lost on this computer: another window "
+                    "(a dictation or chat overlay) holds the keyboard while clicks still "
+                    "reach the session. Ask the user to click once inside the session "
+                    "window and leave it active, then retry"
                 )
         self.ex.press("enter")
         self.res.fields["input"] = how
@@ -1349,7 +1370,8 @@ def name_on(lines: list[Line], want: str) -> bool:
     for row in row_texts(lines):
         if w in _compact(row):
             return True
-        tokens = row.split()
+        # A group chat's count follows the cut name unspaced: `Ana Ald...,+2`.
+        tokens = re.sub(r"(\.{2,}|…)(?=\S)", r"\1 ", row).split()
         for j, tok in enumerate(tokens):
             cut = bool(_ELLIPSIS.search(tok))
             if not cut and j < len(tokens) - 1:

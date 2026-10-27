@@ -78,7 +78,8 @@ def test_the_echo_never_holds_the_joined_token(shell):
 
 def test_suffixes():
     assert marked("dir  ", TOKEN, "powershell") == (
-        '$LASTEXITCODE=0;dir;"KX"+"7R4C:"+$?+":"+$LASTEXITCODE'
+        "$LASTEXITCODE=0;try{dir}catch{Write-Error $_ -ErrorAction Continue};"
+        '"KX"+"7R4C:"+$?+":"+$LASTEXITCODE'
     )
     assert marked("dir", TOKEN, "cmd") == "dir & call echo KX^7R4C:%^errorlevel%"
     assert marked("ls", TOKEN, "bash") == 'ls; echo "KX""7R4C:$?"'

@@ -200,6 +200,7 @@ class Doc:
     calibration: dict[tuple[str, str], Calibration] = field(default_factory=dict)
     session_cal: dict[str, Fraction] = field(default_factory=dict)
     spots: dict[str, Point2] = field(default_factory=dict)
+    spots_size: tuple[int, int] | None = None  # the client size the session's spots fit
 
 
 # Parsing
@@ -240,6 +241,12 @@ def _point(v: Any, where: str) -> Point2:
     if not all(0 <= f <= 1 for f in v):
         raise AppError(f"{where} must be [x, y] as fractions 0..1")
     return (float(v[0]), float(v[1]))
+
+
+def _size(v: Any, where: str) -> tuple[int, int]:
+    if not (isinstance(v, list) and len(v) == 2 and all(isinstance(n, int) and n > 0 for n in v)):
+        raise AppError(f"{where} must be [width, height] in pixels of the client area")
+    return (v[0], v[1])
 
 
 def _spot(v: Any, where: str) -> Spot:
@@ -482,11 +489,13 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
     for aid, views in _tables(data.get("calibration", {}), f"{source}: calibration").items():
         where = f"{source}: calibration.{aid}"
         if aid == SESSION:
-            _only(views, ("regions", "spots"), where)
+            _only(views, ("regions", "spots", "size"), where)
             for k, f in views.get("regions", {}).items():
                 doc.session_cal[f"{SESSION}.{k}"] = _frac(f, f"{where}.regions.{k}")
             for k, p in views.get("spots", {}).items():
                 doc.spots[f"{SESSION}.{k}"] = _point(p, f"{where}.spots.{k}")
+            if "size" in views:
+                doc.spots_size = _size(views["size"], f"{where}.size")
             continue
         for vid, t in _tables(views, where).items():
             doc.calibration[(_id(aid, where), _id(vid, where))] = _calibration(t, f"{where}.{vid}")
@@ -513,6 +522,7 @@ class Catalog:
     session: dict[str, Region]
     session_cal: dict[str, Fraction]
     spots: dict[str, Point2]
+    spots_size: tuple[int, int] | None = None
 
     def knows(self, target: str) -> bool:
         """target is an app id or 'app.view', as input tools' expect takes it."""
@@ -522,10 +532,19 @@ class Catalog:
     def views(self) -> list[str]:
         return [f"{a.id}.{v}" for a in self.apps.values() for v in a.views]
 
-    def spots_for(self, app: str | None) -> dict[str, Spot]:
+    def spots_for(self, app: str | None, width: int = 0, height: int = 0) -> dict[str, Spot]:
         """The session's spots, and those of app (the one in front) by `app.name`: an app's
-        icon is a target only while its app is on screen."""
+        icon is a target only while its app is on screen. With the size the session's spots
+        were measured at, they are moved to this window size: a taskbar icon keeps its
+        distance in pixels from the left and bottom edges and does not grow with the window
+        (a wider window put a fraction several px right of the icon)."""
         out: dict[str, Spot] = dict(self.spots)
+        if self.spots_size and width and height:
+            w0, h0 = self.spots_size
+            out = {
+                k: (min(1.0, p[0] * w0 / width), max(0.0, 1 - (1 - p[1]) * h0 / height))
+                for k, p in out.items()
+            }
         a = self.apps.get(app or "")
         if a is not None:
             out.update({f"{a.id}.{k}": p for k, p in a.spots.items()})
@@ -683,17 +702,19 @@ def catalog(*docs: Doc) -> Catalog:
     session: dict[str, Region] = {}
     session_cal: dict[str, Fraction] = {}
     spots: dict[str, Point2] = {}
+    spots_size: tuple[int, int] | None = None
     for d in (*builtin(), *docs):
         apps.update(d.apps)
         cal.update(d.calibration)
         session.update(d.session)
         session_cal.update(d.session_cal)
         spots.update(d.spots)
+        spots_size = d.spots_size or spots_size
     for (aid, vid), c in cal.items():
         if aid not in apps:
             raise AppError(f"calibration.{aid}.{vid}: no app '{aid}' is defined")
         apps[aid] = _calibrated(apps[aid], vid, c)
-    return Catalog(apps, cal, session, session_cal, spots)
+    return Catalog(apps, cal, session, session_cal, spots, spots_size)
 
 
 def load(path: Path | None = None) -> Catalog:

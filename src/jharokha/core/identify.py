@@ -46,6 +46,10 @@ class Identity:
         return self.app is not None and self.app != GENERIC
 
 
+def _bare(s: str) -> str:
+    return re.sub(r"[\W_]+", "", s)
+
+
 class _Evidence:
     """The screen, and each cue scored on it once."""
 
@@ -76,8 +80,11 @@ class _Evidence:
             # A focused box's blinking caret sits on a placeholder's first letter, and OCR
             # drops it every other frame (`ype a message`); a long cue holds without it.
             short = q[1:] if len(q) >= CARET_MIN else None
+            # OCR misreads punctuation most (`Search (Ctrl* E)` in a wider window, which loses
+            # Teams its anchor): a long cue also holds on its letters and digits alone.
+            bare = _bare(q) if len(q) >= CARET_MIN else None
             for ln, f in zip(self.lines, self.folded, strict=True):
-                if q and (q in f or (short and short in f)):
+                if q and (q in f or (short and short in f) or (bare and bare in _bare(f))):
                     m = find([ln], alt, fuzzy=False)
                     out.append((m[0].box, m[0].text) if m else (ln.box, ln.text))
         return out

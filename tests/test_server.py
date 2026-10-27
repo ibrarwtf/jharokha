@@ -260,7 +260,7 @@ class Marked(Shell):
 
     def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
         self.items = [(f"PS C:\\a> {text}", 10, 10)]
-        if "cmd /c exit 2;" in text:
+        if "cmd /c exit 2}" in text:
             out, status = [], "False:2"
         else:
             out, status = [("Friday 23 October", 10, 30)], "True:"
@@ -280,7 +280,8 @@ class Marked(Shell):
             self.items = self.items + self.pending
             self.pending = []
         self.frame_id += 1
-        f = render(self.items, bg=(12, 12, 12), ink=(204, 204, 204))
+        # Wide enough that the marked line is not taken for a row the terminal wrapped.
+        f = render(self.items, (960, 400), bg=(12, 12, 12), ink=(204, 204, 204))
         return Frame(f.width, f.height, f.bgra, self.frame_id, f.ts)
 
 
@@ -330,6 +331,17 @@ async def test_a_taskbar_spot_is_clicked_whatever_app_is_in_front(source):
         args = {"op": "click", "target": {"spot": "taskbar.teams"}, "expect": "teams"}
         r = await c.call_tool("jharokha_act", {**args, "show": "none"})
         assert not r.is_error and "at=spot" in text(r), text(r)
+
+
+async def test_the_taskbar_icon_of_the_app_in_front_is_not_clicked(source):
+    """Windows minimises the app in front when its icon is clicked."""
+    toml = POLICY_APP + "[calibration.session.spots]\n'taskbar.chat' = [0.5, 0.97]\n"
+    cat = apps.catalog(apps.parse(toml))
+    async with Client(build_server(source, allow_input=True, catalog=cat)) as c:
+        args = {"op": "click", "target": {"spot": "taskbar.chat"}, "show": "none"}
+        r = await c.call_tool("jharokha_act", args)
+        assert not r.is_error and "skipped: chat is in front already" in text(r), text(r)
+    assert not any(t.startswith("clicked") for t, _, _ in source.items)
 
 
 POLICY_APP = """format = 1

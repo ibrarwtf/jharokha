@@ -70,7 +70,7 @@ class SessionExecutor:
         size = (frame.width, frame.height)
         at = s.where(frame, lines)
         front = None if looks_locked(lines) else at.ident.app
-        spots = {k: spot_px(p, *size) for k, p in cat.spots_for(front).items()}
+        spots = {k: spot_px(p, *size) for k, p in cat.spots_for(front, *size).items()}
         regions: dict[str, Box] = {}
         for name in dict.fromkeys([*cat.session_cal, *cat.session]):
             if p := cat.session_box(name, at.panes, *size):

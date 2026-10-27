@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.30.1
+
+- Taskbar spots follow a window resize: with `size` in `[calibration.session]`, a spot keeps its pixels from the left and bottom edges. Fractions measured at one width missed the icons at another.
+- A taskbar spot of the app already in front is not clicked (`jharokha_act` says it was skipped): Windows minimises the app in front when its own icon is clicked. An action's focus step reads the whole screen before it clicks a taskbar icon, not only a glance.
+- Teams is recognised with its search box read as `Search (Ctrl* E)`: a text cue of 8 letters or more also holds on its letters and digits alone. `Activity` is one of the rail's optional labels, since it is not always shown. Teams could score under the guard's 0.6, so actions and scrolls refused and `calibration_stale` was reported with the anchor on screen.
+- A cut group-chat name with its count right after the ellipsis (`Ana Ald...,+2`) matches the chat's name, so `teams.messages` no longer fails at the header.
+- A run scrolls back down when its app still reads as itself under 0.6: `teams.messages` could leave a thread scrolled far up.
+- PowerShell's end marker prints after a terminating error too (a script's `throw`, `-ErrorAction Stop`): the command runs in `try`, the error is written again as a plain one, and the marker says `False`. Before, the prompt came back with no marker and the run waited out its timeout.
+- `terminal.run` with another app in front at its timeout says the command was typed and may still be running, instead of refusing `wrong_app` and scrolling. "The line did not show" names the case where keys are lost on this computer (another window holds the keyboard while clicks still reach the session) and its fix.
+
 ## v0.30.0
 
 Reads across scrolls are joined at an anchor, and a gap between them is reported.

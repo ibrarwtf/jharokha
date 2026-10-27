@@ -10,7 +10,13 @@ format = 1
 
 # Calibration: where things are on your setup. It comes before the built-in panes and boxes.
 
-# The session's own Windows taskbar, and spots on it (points: icons have no text).
+# The session's own Windows taskbar, and spots on it (points: icons have no text). With
+# size, the client size they were measured at, spots keep their pixels from the left and
+# bottom edges when the window is resized, as a left-aligned taskbar's icons do; without
+# it they stay fractions of the client area.
+[calibration.session]
+size = [1200, 1200]
+
 [calibration.session.regions]
 taskbar = [0, 0.95, 1, 0.05]
 

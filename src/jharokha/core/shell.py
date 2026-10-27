@@ -52,8 +52,13 @@ def marked(command: str, token: str, shell: Shell) -> str:
     if shell == "powershell":
         # $LASTEXITCODE is reset first: it keeps the last native program's code, so a
         # cmdlet after `exit 3` would report 3. $? goes outside the quotes, where `"$?:"`
-        # would read as a drive-scoped name.
-        return f'$LASTEXITCODE=0;{command.rstrip()};"{a}"+"{b}:"+$?+":"+$LASTEXITCODE'
+        # would read as a drive-scoped name. A terminating error (a script's throw, or
+        # -ErrorAction Stop) skips the rest of the line, marker and all, so the command runs
+        # in try, which keeps its scope, and the error is written again as a plain one.
+        return (
+            f"$LASTEXITCODE=0;try{{{command.rstrip()}}}catch{{Write-Error $_ -ErrorAction "
+            f'Continue}};"{a}"+"{b}:"+$?+":"+$LASTEXITCODE'
+        )
     if shell == "cmd":
         # %errorlevel% on a typed line expands before the line runs; hiding it behind a
         # caret and expanding again with `call` reads it after the command.
