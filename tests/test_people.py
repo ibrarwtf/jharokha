@@ -19,6 +19,7 @@ TABLE = {
     "chats": {
         "team": {"names": ["Ana Alder, +2", "Ana Alder, +3"], "members": ["ana", "bo", "me"]},
         "ana": {"person": "ana"},
+        "notes": {"person": "me"},
     },
 }
 
@@ -62,6 +63,36 @@ def test_a_chat_by_its_own_names_then_by_the_persons(pm: people.People):
     assert pm.chat("Ana Alder") == "ana"
     assert pm.chat("Ana Alder (Guest)") == "ana"
     assert pm.chat("Nobody") == ""
+
+
+def test_a_chat_name_cut_in_the_middle_keeps_its_tail(pm: people.People):
+    assert pm.chat("Ana Ald…, +2") == "team"
+    assert pm.chat("Ana Ald... , +3") == "team"
+    # The tail must end the name.
+    assert pm.chat("Ana Ald... , +7") == ""
+
+
+def test_a_chat_is_found_among_the_header_icons_tabs_and_counts(pm: people.People):
+    assert pm.chat_in("Ana Ald..., +2 Chat Files +4 07") == "team"
+    assert pm.chat_in("Ana Ald... , +2 (i Chat Files Recap") == "team"
+    # Your own name in the text around it does not outrank the chat's.
+    assert pm.chat_in("Ana Ald… , +3 [3 Chat Files +1 E] thank you") == "team"
+    assert pm.chat_in("Chat Files Recap") == ""
+
+
+def test_a_list_keeps_its_comma_when_the_count_or_the_ellipsis_is_lost(pm: people.People):
+    assert pm.chat_in("Ana Ald... , Chat") == "team"
+    assert pm.chat_in("Ana Ald , Chat Files +5 09") == "team"
+
+
+def test_a_persons_cut_name_is_their_chat_not_the_list_they_start(pm: people.People):
+    assert pm.chat_in("Ana Alder (... Chat") == "ana"
+    assert pm.chat_in("AA Ana Alder (Cont... Chat Files") == "ana"
+    assert pm.chat_in("Ana Alder Chat") == "ana"
+
+
+def test_the_chat_with_oneself_by_ones_own_names(pm: people.People):
+    assert pm.chat_in("Notes for Pat Example Pat Example Chat") == "notes"
 
 
 def test_parse_rejects_a_chat_of_an_unknown_person():
