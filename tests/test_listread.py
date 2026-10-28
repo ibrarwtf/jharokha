@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pytest
 
+from jharokha.core.bubbles import Bubble
 from jharokha.core.listread import Item, items, merge, parse_when, since
 from jharokha.core.models import Line
 from jharokha.core.readers import format_items
@@ -577,3 +578,78 @@ def test_a_read_below_continues_from_its_anchor_and_a_gap_is_reported():
     # Nothing shared: the list moved more than a screen between the reads.
     got, overlapped = merged([a, b], [c, d])
     assert not overlapped and len(got) == 4
+
+
+# Bubbles from the pixels (core.bubbles), in the THREAD layout: others' at x 545, yours
+# right-aligned past 680.
+STAMP = ("11/10 11:40", 1045, 160)
+
+
+def bubbled(rows: list[tuple[str, int, int]], found: list[Bubble]) -> list[Item]:
+    return items(lines_for(rows), THREAD_BOX, "messages", found)
+
+
+def test_rows_in_one_bubble_are_one_message_across_a_blank():
+    rows = [
+        ("Ana Alder 11/10 11:20", 540, 120),
+        ("first paragraph", 551, 140),
+        ("still the same", 551, 156),
+        ("after a blank", 551, 212),  # three and a half pitches below
+    ]
+    assert len(messages(rows)) == 2
+    got = bubbled(rows, [Bubble((545, 136, 300, 92), True)])
+    assert plain(got) == [
+        ("Ana Alder", "11/10 11:20", "first paragraph\nstill the same\nafter a blank", False)
+    ]
+
+
+def test_an_empty_bubble_under_a_stamp_is_a_picture_message():
+    pictures = [Bubble((800, 180, 330, 120), False), Bubble((800, 306, 330, 120), False)]
+    got = bubbled([STAMP], pictures)
+    assert plain(got) == [("", "11/10 11:40", "", True), ("", "", "", True)]
+    assert got[1].box == (800, 306, 330, 120) and got[1].refs == ()
+
+
+def test_a_bubble_inside_a_bubble_stays_with_the_outer_message():
+    rows = [
+        STAMP,
+        ("Card title here", 712, 196),
+        ("card body text", 712, 214),
+        ("Zq wlp tiny", 712, 300),  # OCR inside a picture
+        ("my reply below", 700, 395),
+    ]
+    found = [
+        Bubble((690, 180, 440, 240), True),
+        Bubble((700, 190, 420, 50), False),  # a card: its rows fill it
+        Bubble((700, 250, 420, 130), False),  # a picture: one row in all that height
+    ]
+    got = bubbled(rows, found)
+    assert plain(got) == [
+        ("", "11/10 11:40", "Card title here\ncard body text\nmy reply below", True)
+    ]
+    assert got[0].refs == (0, 1, 2, 4)
+
+
+def test_your_next_bubble_ending_flush_is_no_indented_block():
+    # Right-aligned: the narrower bubble starts further right, as a list item would.
+    rows = [
+        STAMP,
+        ("a wide first bubble", 989, 176),
+        ("it ends right there", 989, 192),
+        ("a shorter one", 1031, 220),
+    ]
+    assert plain(messages(rows)) == [
+        ("", "11/10 11:40", "a wide first bubble\nit ends right there", True),
+        ("", "", "a shorter one", True),
+    ]
+
+
+def test_a_word_in_front_of_a_time_is_no_event():
+    rows = [
+        ("Ana Alder 11/10 11:20", 540, 120),
+        ("sounds good", 551, 136),
+        ("at 14:30 works for me", 551, 172),
+    ]
+    got = messages(rows)
+    assert all(it.sender == "Ana Alder" for it in got)
+    assert got[-1].text.endswith("at 14:30 works for me")

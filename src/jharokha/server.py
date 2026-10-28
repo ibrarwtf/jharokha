@@ -378,7 +378,12 @@ def build_server(
         reg = a.named[2] if a.named else None
         inner = nested(at, a.named) if a.named else []
         its = readers.items(
-            reg.reader if reg else "text", lines, a.box, reg.kind if reg else None, inner
+            reg.reader if reg else "text",
+            lines,
+            a.box,
+            reg.kind if reg else None,
+            inner,
+            at.frame,
         )
         return reg.label if reg else "text", mapped(its)
 
@@ -390,7 +395,7 @@ def build_server(
                 got = session.place(at, ident.app, ident.view, reg.name)
                 if got:
                     inner = nested(at, (ident.app, ident.view, reg))
-                    its = readers.items(reg.reader, lines, got[0], reg.kind, inner)
+                    its = readers.items(reg.reader, lines, got[0], reg.kind, inner, f)
                     out.append(
                         {
                             "region": f"{ident.app}.{reg.name}",

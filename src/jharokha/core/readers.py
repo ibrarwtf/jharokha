@@ -22,8 +22,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from jharokha.core import listread
-from jharokha.core.models import Box, Line, union
+from jharokha.core import bubbles, listread
+from jharokha.core.models import Box, Frame, Line, union
 from jharokha.core.people import People
 from jharokha.core.text import clean, fold, wrap_untrusted
 
@@ -44,14 +44,23 @@ def items(
     box: Box,
     kind: str | None = None,
     exclude: Sequence[Box] = (),
+    frame: Frame | None = None,
 ) -> list[Any]:
     """The region's items as the reader makes them: listread Items for a list, dicts for
     the others (table, text block, row, field). Lines inside an exclude box (a region nested
-    in this one, such as a compose box) are left out."""
+    in this one, such as a compose box) are left out. frame: the pixels the lines were read
+    from, for a thread's bubbles (core.bubbles)."""
     # Left out by moving them off screen, so refs still index the lines given.
     lines = [ln if not any(_inside([ln], b) for b in exclude) else _GONE for ln in lines]
     if reader == "list":
-        return listread.items(lines, box, kind or "entries")
+        found: list[bubbles.Bubble] = []
+        if frame is not None and kind == "messages":
+            found = [
+                b
+                for b in bubbles.bubbles(frame, box, _line(_inside(lines, box)))
+                if not any(_holds(e, b.box) for e in exclude)
+            ]
+        return listread.items(lines, box, kind or "entries", found)
     if reader == "table":
         t = table(_inside(lines, box))
         return [t] if t else []
@@ -72,6 +81,18 @@ def mapped(its: Sequence[Any], people: People, now: datetime) -> list[Any]:
     if not (people.people or people.chats) or not all(isinstance(i, listread.Item) for i in its):
         return list(its)
     return listread.mapped(its, people, now)
+
+
+def _line(cells: Sequence[Cell]) -> int:
+    """The least height of a bubble: half again a line's median height, past a glyph's
+    tallest stroke (a parenthesis, an `l`) and under a one-line bubble with its padding."""
+    hs = sorted(ln.box[3] for _, ln in cells) or [12]
+    return int(1.5 * hs[len(hs) // 2])
+
+
+def _holds(b: Box, r: Box) -> bool:
+    cx, cy = r[0] + r[2] / 2, r[1] + r[3] / 2
+    return b[0] <= cx < b[0] + b[2] and b[1] <= cy < b[1] + b[3]
 
 
 def as_dicts(its: Sequence[Any]) -> list[dict[str, Any]]:

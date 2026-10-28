@@ -99,6 +99,7 @@ class SessionExecutor:
                 spots,
                 confidence=ident.confidence,
                 info=info,
+                frame=frame,
             )
         if fast:
             self._glanced = snap

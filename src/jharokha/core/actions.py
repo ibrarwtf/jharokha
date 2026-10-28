@@ -87,7 +87,7 @@ from jharokha.core.locate import (
     row_texts,
     unwrapped,
 )
-from jharokha.core.models import Box, Line, inside
+from jharokha.core.models import Box, Frame, Line, inside
 from jharokha.core.people import People
 from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.text import find, fold
@@ -394,6 +394,7 @@ class Snapshot:
     locked: bool = False
     confidence: float = 1.0
     info: dict[str, RegionInfo] = field(default_factory=dict)
+    frame: Frame | None = None  # the pixels read, for a thread's bubbles
 
 
 class Executor(Protocol):
@@ -903,7 +904,7 @@ class Runner:
         inner = list(info.inner)
         if p.get("exclude"):
             inner.append(self._box(snap, p["exclude"]))
-        return readers.items(info.reader, self._pool(snap, p), box, info.kind, inner)
+        return readers.items(info.reader, self._pool(snap, p), box, info.kind, inner, snap.frame)
 
     def _store(
         self, into: str, its: list[Any], p: dict[str, Any], shaky: set[int] | None = None
@@ -1400,7 +1401,7 @@ def _holds(
         if reg is None or reg.reader != "list":
             return False, f"{key} needs a list region (one whose reader is list)"
         assert name is not None
-        its = readers.items(reg.reader, pool, regions[name], reg.kind, list(reg.inner))
+        its = readers.items(reg.reader, pool, regions[name], reg.kind, list(reg.inner), snap.frame)
         try:
             if not test(its, str(cond[key]), datetime.now()):
                 return False, miss

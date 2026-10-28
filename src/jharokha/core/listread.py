@@ -21,6 +21,15 @@ Grouping rules, all of them:
   up to two and a quarter pitches below: indented past the row above by up to four line
   heights, or back at the message's text column under the block. A row the region's top
   cuts shows its lower part only; its top is taken a line height above its bottom.
+- Bubbles (core.bubbles, from the pixels, when the reader has them) decide before the gaps
+  and pitches: rows whose centres lie in one bubble are one message, on the side the bubble
+  is on, and a row in another bubble starts the next. Rows inside a bubble that lies inside
+  a larger one (a card, a quote, a picture in a message) stay with the outer one's message.
+  A bordered (unfilled) bubble whose own rows are too few for its height is a picture: the
+  rows inside it are what OCR made of the picture and are dropped. A bubble at least three
+  lines tall holding no rows is an image-only message with empty text: the bare stamp or
+  header just above gives it its time, and the next pictures stacked under that stamp are
+  messages without a time of their own.
 - An event row on the others' side, a stamp followed by text after a blank (`dd/mm hh:mm
   Meeting ended 16m`, `hh:mm Call ended`, an icon read as junk in front), is an item of its
   own from SYSTEM, at that stamp.
@@ -41,11 +50,12 @@ from __future__ import annotations
 
 import difflib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any
 
+from jharokha.core.bubbles import Bubble
 from jharokha.core.models import Box, Line, union
 from jharokha.core.people import People
 from jharokha.core.text import clean, normalize
@@ -76,7 +86,12 @@ _CENTRED = 0.1  # of the region's width: how far off its middle a day divider ma
 _TAIL = re.compile(rf"\s(?P<when>{_WHEN})$", re.I)
 _HEADER = re.compile(rf"^(?P<name>\D+?)\s+(?P<when>{_STAMP})$", re.I)
 # Lazy junk: `Thu 19:48 Call ended` keeps its day rather than losing it as an icon.
-_EVENT = re.compile(rf"^(?:\S{{1,3}}\s+)??(?P<when>{_STAMP})\s+(?P<text>[^\W\d_].*)$", re.I)
+# The junk in front is an icon read as one character (`o`), or as digits or symbols: a word
+# of small letters is text (`at 14:30 works for me`).
+_EVENT = re.compile(
+    rf"^(?:(?:\S|(?-i:[^\sa-z]{{2,3}}))\s+)??(?P<when>{_STAMP})\s+(?P<text>[^\W\d_].*)$",
+    re.I,
+)
 SYSTEM = "system"  # the sender of a thread's event rows: calls and meetings
 _MARKER = re.compile(r"(?:last read|new messages?|unread messages?)", re.I)
 _AVATAR = re.compile(r"^[A-Z]{2}\s+(?=[A-Z][a-z])")
@@ -95,6 +110,9 @@ _SECTION = re.compile(
 # Of the region's width. In Teams, others' text at 13%, the quotes inside their messages up
 # to 20%, your own bubbles from 32%.
 _OWN_SIDE = 0.25
+# A bubble's fill starts a padding before its text: others' bubbles from 8% (12% beside an
+# avatar), your own from 22%.
+_OWN_BUBBLE = 0.15
 _RIGHT_EDGE = 0.15  # of the region's width
 _QUOTE_INDENT = 16  # px past the message's start
 # Line heights: how far a list or code block inside a message may be indented past the row
@@ -106,8 +124,12 @@ _ALIGN = 8  # px: rows that start this close start together
 _PARAGRAPH = (2.0, 2.25)
 _TOUCH = 2  # px: a row starting this close below the region's top may be cut by it
 # A clock whose colon OCR lost (`1148`): too small a mark at a stamp's size.
-_BARE_CLOCK = re.compile(r"(?:[01]?\d|2[0-3])[0-5]\d")
+_BARE_CLOCK = re.compile(rf"(?P<day>(?:{_DAYPART})\s+)?(?:[01]?\d|2[0-3])[0-5]\d", re.I)
 _TAIL_SLACK = 4  # items before a screen's worth that a merge still searches
+# Line heights of height a picture gives each row of its own: text sits a pitch apart, and a
+# card or quote box adds little padding, while OCR finds a word or two in a whole picture.
+_SPARSE = 3
+_PICTURE = 3  # line heights: the shortest bubble without rows that is a picture
 
 
 def _said(
@@ -178,15 +200,16 @@ class Item:
         return out
 
 
-def items(lines: list[Line], box: Box, kind: str) -> list[Item]:
+def items(lines: list[Line], box: Box, kind: str, bubbles: Sequence[Bubble] = ()) -> list[Item]:
     """The items in the region box: kind is messages (a chat thread), entries (a chat list or
-    any list) or mails (an inbox). See the module docstring for how lines become items."""
+    any list) or mails (an inbox). bubbles: the thread's bubbles from the pixels
+    (core.bubbles), for messages. See the module docstring for how lines become items."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {', '.join(KINDS)}, not {kind!r}")
     rows = _rows(lines, box, clipped=kind == "messages")
-    if not rows:
-        return []
-    return _messages(rows, box) if kind == "messages" else _listed(rows, box, kind)
+    if kind == "messages":
+        return _messages(rows, box, bubbles) if rows else []
+    return _listed(rows, box, kind) if rows else []
 
 
 @dataclass
@@ -278,6 +301,8 @@ class _Draft:
     truncated: bool = False
     you: bool = False  # a header named You on the other side
     text_x: int = 0  # where its first row of text starts
+    bubble: int | None = None  # the bubble its rows are in
+    pictures: list[Box] = field(default_factory=list)  # its own, without text
 
     def item(self) -> Item:
         quote = None
@@ -286,7 +311,7 @@ class _Draft:
         refs = tuple(sorted(i for r in self.rows for i, _ in r.parts))
         return Item(
             "message",
-            union(r.box for r in self.rows),
+            union([r.box for r in self.rows] + self.pictures),
             refs,
             time=self.time,
             sender=self.sender,
@@ -314,11 +339,16 @@ def _pitch(rows: list[_Row], h: int) -> int:
     return steps[len(steps) // 2] if steps else 0
 
 
-def _block(x: int, x_above: int, start: int, h: int) -> bool:
+def _block(x: int, x_above: int, start: int, h: int, flush: bool = False) -> bool:
     """Whether a row at x, under a row at x_above in a message whose text starts at start,
     is in or after an indented block of it (a list, a code block) rather than the next
     bubble: indented past the row above by a few characters, or back at the message's start
-    under the block. A narrower bubble below may start any distance to the right."""
+    under the block. A narrower bubble below may start any distance to the right. flush:
+    the row is on your side and ends where the row above ends: your bubbles are aligned
+    right, a narrower one starting further right, while a list in one bubble does not end
+    flush with the row above."""
+    if flush:
+        return False
     indented = _QUOTE_INDENT <= x - x_above <= _INDENT * h
     back = abs(x - start) <= _ALIGN and x_above >= start + _QUOTE_INDENT
     return indented or back
@@ -333,43 +363,130 @@ def _stamp_edges(rows: list[_Row], side: float) -> list[int]:
     return [_right(r) for r in rows if r.box[0] > side and _IS_STAMP.fullmatch(r.text)]
 
 
-def _messages(rows: list[_Row], box: Box) -> list[Item]:
+def _holds(b: Box, r: Box) -> bool:
+    """Whether r's centre lies in b."""
+    cx, cy = r[0] + r[2] / 2, r[1] + r[3] / 2
+    return b[0] <= cx < b[0] + b[2] and b[1] <= cy < b[1] + b[3]
+
+
+def _within(a: Box, b: Box) -> bool:
+    """Whether a lies inside b, and is not b. A side found along a picture's own edge may
+    run a pixel or two past it."""
+    e = _TOUCH
+    return (
+        a != b
+        and b[0] - e <= a[0]
+        and b[1] - e <= a[1]
+        and a[0] + a[2] <= b[0] + b[2] + e
+        and a[1] + a[3] <= b[1] + b[3] + e
+        and a[2] * a[3] < b[2] * b[3]
+    )
+
+
+def _bubbled(
+    rows: list[_Row], bubbles: Sequence[Bubble], h: int
+) -> tuple[list[_Row], list[int | None], list[int]]:
+    """rows without those OCR read out of a picture, the outermost bubble each one left is
+    in (an index into bubbles), and the outermost bubbles that hold none of them and are tall
+    enough to be a picture."""
+    boxes = [b.box for b in bubbles]
+    outer = [i for i, b in enumerate(boxes) if not any(_within(b, o) for o in boxes)]
+    holders = [[i for i, b in enumerate(boxes) if _holds(b, r.box)] for r in rows]
+    innermost = [min(hs, key=lambda i: boxes[i][2] * boxes[i][3]) if hs else None for hs in holders]
+    pictures = set()
+    for i, (b, filled) in enumerate(bubbles):
+        if filled:
+            continue
+        own = sum(k == i for k in innermost)
+        inside = [c for c in boxes if _within(c, b)]
+        # Height its own rows could fill: not what a bubble across it takes (a picture or a
+        # card above its text); one beside text leaves the rows their height.
+        free = b[3] - sum(
+            c[3] for c in inside if 3 * c[2] >= 2 * b[2] and not any(_within(c, o) for o in inside)
+        )
+        if own * _SPARSE * h < free:
+            pictures.add(i)
+    keep = [k for k, hs in enumerate(holders) if not pictures.intersection(hs)]
+    where = [next((i for i in outer if i in holders[k]), None) for k in keep]
+    empty = [i for i in outer if i not in where and boxes[i][3] >= _PICTURE * h]
+    return [rows[k] for k in keep], where, empty
+
+
+def _messages(rows: list[_Row], box: Box, bubbles: Sequence[Bubble] = ()) -> list[Item]:
     side = box[0] + _OWN_SIDE * box[2]
+    bubble_side = box[0] + _OWN_BUBBLE * box[2]
     middle = box[0] + box[2] / 2
     h = _median_height(rows)
+    where: list[int | None] = [None] * len(rows)
+    empty: list[int] = []
+    if bubbles:
+        rows, where, empty = _bubbled(rows, bubbles, h)
+        if not rows and not empty:
+            return []
+        h = _median_height(rows) if rows else h
     pitch = _pitch(rows, h)
     drafts: list[_Draft] = []
     cur: _Draft | None = None
     above: int | None = None
     top: int | None = None
     day = ""
-    left = 0  # where the row above starts
+    left = right = 0  # where the row above starts and ends
     stamps = _stamp_edges(rows, side)
-    for r in rows:
+    stream: list[tuple[_Row | None, int | None]] = [*zip(rows, where, strict=True)]
+    stream += [(None, i) for i in empty]
+    stream.sort(key=lambda p: p[0].box[1] if p[0] is not None else bubbles[p[1] or 0].box[1])
+    for r, bub in stream:
+        if r is None:
+            assert bub is not None
+            pic = bubbles[bub].box
+            own = pic[0] > bubble_side
+            above, top, left, right = pic[1] + pic[3], pic[1], pic[0], pic[0] + pic[2]
+            if not (
+                cur is not None
+                and cur.own == own
+                and not cur.text
+                and not cur.pictures
+                and not cur.quote
+                and (cur.time or cur.sender)
+            ):
+                # The next picture under the same stamp or header has no time of its own.
+                same = cur is not None and cur.own == own
+                sender = cur.sender if cur is not None and same else ""
+                you = cur.you if cur is not None and same else False
+                cur = _Draft(own=own, x=pic[0], sender=sender, you=you, cut=not drafts)
+                drafts.append(cur)
+            cur.pictures.append(pic)
+            cur.bubble = bub
+            continue
         x, t = r.box[0], _EDITED.sub("", r.text)
         gap = r.box[1] - above if above is not None else None
         step = r.box[1] - top if top is not None else None
         above, top, left, x_above = r.box[1] + r.box[3], r.box[1], x, left
+        right_above, right = right, _right(r)
         if r.box[1] - box[1] <= _TOUCH and r.box[3] < h:
             # Cut by the region's top, the row shows its lower part: it starts a line above
             # its bottom.
             top = above - h
+        # In the bubble the message above is in: part of that message, whatever the gap.
+        held = bub is not None and cur is not None and cur.bubble == bub
         if (
             x > side
             and _BARE_CLOCK.fullmatch(t)
             and any(abs(e - _right(r)) <= _ALIGN for e in stamps)
         ):
-            # A stamp of yours whose colon OCR lost, ending where your stamps end.
+            # A stamp of yours whose colon OCR lost, ending where your stamps end, its day
+            # in front or not.
             t = f"{t[:-2]}:{t[-2:]}"
         centred = abs(x + r.box[2] / 2 - middle) <= _CENTRED * box[2] and x > side
-        if centred and _IS_DAY.fullmatch(t):
+        if not held and centred and _IS_DAY.fullmatch(t):
             day, cur = t, None
             continue
-        if centred and _MARKER.fullmatch(t):
+        if not held and centred and _MARKER.fullmatch(t):
             continue
-        own = x > side
+        # A bubble is on one side as a whole, wherever a row in it starts.
+        own = bubbles[bub].box[0] > bubble_side if bub is not None else x > side
         event = _EVENT.match(t)
-        if event and not own and (gap is None or gap >= 0.8 * h):
+        if not held and event and not own and (gap is None or gap >= 0.8 * h):
             when = _dated(event["when"], day)
             ev = _Draft(own=False, x=x, sender=SYSTEM, time=when, text=[event["text"]])
             ev.rows.append(r)
@@ -377,7 +494,7 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
             # One row: what follows has a header of its own, or is no part of the event.
             cur = None
             continue
-        if own and _IS_STAMP.fullmatch(t):
+        if not held and own and _IS_STAMP.fullmatch(t):
             cur = _Draft(own=True, x=x, time=_dated(t, day))
             drafts.append(cur)
             cur.rows.append(r)
@@ -390,16 +507,20 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
         quoted = bool(head and _YEAR_IN.search(head["when"]))
         indented = cur is not None and not cur.own and x >= cur.x + _QUOTE_INDENT
         if head and (own or quoted or indented):
-            if cur is None or (own and (not cur.own or cur.quote)) or (quoted and cur.quote):
+            if not held and (
+                cur is None or (own and (not cur.own or cur.quote)) or (quoted and cur.quote)
+            ):
                 cur = _Draft(own=own, x=x, cut=not drafts)
                 drafts.append(cur)
+            assert cur is not None
             if cur.quote is None:
                 name, trunc = _name(head["name"])
                 cur.quote, cur.quote_x, cur.quoting = (name, head["when"]), x, True
                 cur.truncated |= trunc
                 cur.rows.append(r)
+                cur.bubble = bub if bub is not None else cur.bubble
                 continue
-        if head and not own and (gap is None or gap >= 0.8 * h):
+        if not held and head and not own and (gap is None or gap >= 0.8 * h):
             name, trunc = _name(head["name"])
             when = _dated(head["when"], day)
             you = name.casefold() in _YOU
@@ -411,10 +532,12 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
             cur.quote_text.append(t)
             cur.rows.append(r)
             continue
-        if cur is None or own != cur.own:
+        if held:
+            pass
+        elif cur is None or own != cur.own:
             cur = _Draft(own=own, x=x, cut=not drafts)
             drafts.append(cur)
-        elif (
+        elif (bub is not None and cur.bubble is not None and (cur.text or cur.pictures)) or (
             cur.text
             and not cur.quoting
             and gap is not None
@@ -423,13 +546,17 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
                 step
                 and pitch
                 and step <= _PARAGRAPH[1] * pitch
-                and (step >= _PARAGRAPH[0] * pitch or _block(x, x_above, cur.text_x, h))
+                and (
+                    step >= _PARAGRAPH[0] * pitch
+                    or _block(x, x_above, cur.text_x, h, own and abs(right - right_above) <= _ALIGN)
+                )
             )
         ):
             # The sender's next message under the same header.
             nxt = _Draft(own=cur.own, x=cur.x, sender=cur.sender, you=cur.you)
             cur = nxt
             drafts.append(cur)
+        assert cur is not None
         if not own and not cur.text and cur.sender and x < cur.x - _ALIGN:
             # The sender's avatar sits left of the header's column, beside the first row:
             # its initials, or what OCR makes of a photo, are no part of the text.
@@ -441,6 +568,7 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
         cur.quoting = False
         cur.text.append(t)
         cur.rows.append(r)
+        cur.bubble = bub if bub is not None else cur.bubble
     return [d.item() for d in drafts]
 
 
