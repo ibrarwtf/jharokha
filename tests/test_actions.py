@@ -3,6 +3,9 @@ OCR), then the built-in actions on the simulated session with the real Windows O
 
 from __future__ import annotations
 
+import hashlib
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
@@ -26,8 +29,8 @@ def test_builtin_actions_parse():
     acts = actions.builtin()
     assert set(acts) == {
         "terminal.run",
-        "terminal.glyphs",
-        "terminal.put_file",
+        "terminal.setup",
+        "terminal.read_file",
         "terminal.write_file",
         "teams.open_chat",
         "teams.messages",
@@ -375,14 +378,13 @@ def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():
         r = Runner(ex, "irreversible")
         r.action = actions.builtin()["terminal.run"]
         r.res = actions.Result("terminal.run")
-        r._send(line)
-        return ex.inputs, r.res.fields["input"]
+        return ex.inputs, r._put_line(line)
 
     long = "Get-ChildItem C:/Windows | Select-Object -First 3 Name, Length, LastWriteTime | ft" * 3
-    assert send("Get-Date") == (["type Get-Date", "press enter"], "typed")
-    assert send(long) == ([f"paste {long}", "press enter"], "pasted")
+    assert send("Get-Date") == (["type Get-Date"], "typed")
+    assert send(long) == ([f"paste {long}"], "pasted")
     assert send(long, fail=True) == (
-        ["press escape", f"type {long}", "press enter"],
+        ["press escape", f"type {long}"],
         "typed: the paste did not arrive",
     )
 
@@ -408,25 +410,44 @@ def test_a_row_the_terminal_wrapped_is_joined_to_the_next():
 
 # terminal.run on a scripted shell
 
+ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in range(80, 127)))
+_WRAPPED = re.compile(r"\. \{ (.*) \} 2>&1 \| Out-String -Stream \| jk(?: (\d+))?")
+_PAGE = re.compile(r"\$__jk\.GetRange\((\d+), (\d+)\) \| jk (\d+) -p")
+
 
 class Shell(Scripted):
-    """A shell in a 10-row view: a typed line shows on the prompt's row (unless dropped),
-    Enter runs it (cls clears the rows above, echo and all), printing output then the
-    marker unless it never finishes; the wheel moves the view a row a notch."""
+    """A PowerShell in a 10-row view, prepared as core.shell prepares one (the state prompt,
+    the `jk` filter and its variable), scripted: a typed line shows on the input row
+    (unless dropped), Enter runs it (cls clears the rows above), a wrapped command prints
+    its output numbered, a page shows part of it again, and the next state prompt follows
+    unless the command never finishes; the wheel moves the view a row a notch."""
 
-    def __init__(self, output: list[str], drop: int = 0, finish: bool = True) -> None:
+    def __init__(
+        self, output: list[str], drop: int = 0, finish: bool = True, prepared: bool = True
+    ) -> None:
         super().__init__({}, "terminal", regions={"terminal": dict(SCREEN_REGIONS)})
         self.output, self.drop, self.finish = output, drop, finish
+        self.n = 1 if prepared else 0  # the prompt counter; 0 before the tab is prepared
+        self.ok, self.code = True, 0
         self.rows: list[str] = []
         self.typed = ""
         self.view = 0  # rows scrolled up from the bottom
         self.running = False
+        self.kept: list[str] = []  # $__jk
+        self.ran: list[str] = []  # the bare commands, in order
+        self.held: list[str | None] = []  # the clipboard: held, then None when put back
+
+    def _prompt(self) -> list[str]:
+        if not self.n:
+            return [r"PS C:\> " + self.typed]
+        return [f"JK{self.n} 2030-10-23 10:00:00 {self.ok} {self.code} ..\\a\\b", "> " + self.typed]
 
     def _all(self) -> list[str]:
-        return self.rows + ([] if self.running else [r"PS C:\> " + self.typed])
+        return self.rows + ([] if self.running else self._prompt())
 
     def read(self) -> Snapshot:
-        rows = self._all()
+        # 80 columns: a longer row wraps, as a terminal's does.
+        rows = [t[i : i + 80] or t for t in self._all() for i in range(0, max(1, len(t)), 80)]
         end = len(rows) - self.view
         shown = rows[max(0, end - 10) : end]
         lines = lines_for([(t, 10, 10 + 38 * i) for i, t in enumerate(shown) if t])
@@ -439,25 +460,48 @@ class Shell(Scripted):
         else:
             self.typed = text
 
+    def clipboard(self, text: str) -> Callable[[], None]:
+        self.held.append(text)
+        return lambda: self.held.append(None)
+
+    def command(self, cmd: str) -> list[str]:
+        """What a bare command prints: the scripted output, whatever the command."""
+        self.ran.append(cmd)
+        return self.output
+
     def press(self, keys: str) -> None:
         super().press(keys)
         if keys == "escape":
             self.typed = ""
         elif keys == "enter":
-            import re
-
             line, self.typed = self.typed, ""
-            m = re.search(r'"(\w\w)"\+"(\w{4}):"', line)
-            self.rows = [] if line.startswith("cls;") else [*self.rows, rf"PS C:\> {line}"]
-            self.rows += self.output
-            if m and self.finish:
-                self.rows.append(f"{m[1]}{m[2]}:True:0")
+            if line.startswith("cls; "):
+                self.rows, line = [], line[5:]
+            else:
+                self.rows += self._prompt()[:-1] + [self._prompt()[-1] + line]
+            if line.startswith("function prompt"):
+                self.n = 0
+                self.rows = list(ALPHABET)
+            elif line == "-join [char[]](33..79); -join [char[]](80..126)":
+                self.rows += ALPHABET
+            elif m := _WRAPPED.fullmatch(line):
+                base = int(m[2] or 0)
+                self.kept = self.command(m[1])
+                self.rows += [f"{base + i + 1:4d} {t}" for i, t in enumerate(self.kept)]
+            elif m := _PAGE.fullmatch(line):
+                a, c, b = (int(x) for x in m.groups())
+                self.rows += [f"{b + i + 1:4d} {t}" for i, t in enumerate(self.kept[a : a + c])]
+            else:
+                self.rows += [f"? {line}"]
+            if self.finish:
+                self.n += 1
             else:
                 self.running = True
 
     def scroll(self, x: int, y: int, ticks: int) -> None:
         super().scroll(x, y, ticks)
         self.view = max(0, min(self.view + ticks, len(self._all()) - 10))
+        self.view = max(0, self.view)
 
 
 SCREEN_REGIONS: dict[str, Box] = {"terminal.body": SCREEN}
@@ -467,19 +511,29 @@ def run(ex: Shell, **args: object) -> actions.Result:
     return Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-Thing", **args})
 
 
-def test_a_reply_longer_than_the_screen_is_read_up_the_scrollback():
-    ex = Shell([f"row {i}" for i in range(25)])
-    r = run(ex)
-    assert r.ok and r.exit_code == 0
-    assert r.output == [f"row {i}" for i in range(25)]
-    assert ex.view == 0  # scrolled back down
-    assert [i for i in ex.inputs if i.startswith("scroll")][-1] == "scroll -25"
-
-
-def test_a_short_reply_scrolls_nothing():
+def test_a_command_is_wrapped_numbered_and_read_up_to_the_next_prompt():
     ex = Shell(["one", "two"])
     r = run(ex)
-    assert r.ok and r.output == ["one", "two"] and not any("scroll" in i for i in ex.inputs)
+    assert r.ok and r.output == ["one", "two"] and r.exit_code == 0 and r.fields["ok"] is True
+    assert r.fields["lines"] == 2 and r.fields["cwd"] == "..\\a\\b"
+    assert ex.inputs == ["type cls; . { Get-Thing } 2>&1 | Out-String -Stream | jk", "press enter"]
+    assert ex.ran == ["Get-Thing"] and not any("scroll" in i for i in ex.inputs)
+
+
+def test_status_and_exit_code_come_from_the_prompt():
+    ex = Shell(["Exception: x"])
+    ex.ok, ex.code = False, 3
+    r = run(ex)
+    assert r.ok and r.output == ["Exception: x"] and r.exit_code == 3 and r.fields["ok"] is False
+
+
+def test_a_reply_longer_than_the_screen_is_paged_back_from_the_shell():
+    ex = Shell([f"row {i}" for i in range(25)])
+    r = run(ex)
+    assert r.ok and r.output == [f"row {i}" for i in range(25)] and r.fields["lines"] == 25
+    pages = [i for i in ex.inputs if "GetRange" in i]
+    assert pages[0] == "type cls; $__jk.GetRange(11, 6) | jk 11 -p" and len(pages) == 3
+    assert r.fields["pages"] == 4 and not any("scroll" in i for i in ex.inputs)
 
 
 def test_a_long_command_behind_another_app_times_out_without_wrong_app():
@@ -508,40 +562,81 @@ def test_a_timeout_returns_what_was_printed_so_far():
     assert not bad.ok and bad.failed["code"] == "bad_argument"  # type: ignore[index]
 
 
-def test_a_line_that_never_shows_is_not_run():
+def test_a_line_that_does_not_show_is_sent_again_then_cleared_and_not_run():
     ex = Shell(["x"], drop=2)
     r = run(ex)
-    assert not r.ok and "did not show" in r.failed["reason"]  # type: ignore[index]
+    assert not r.ok and "where the sent line should be" in r.failed["reason"]  # type: ignore[index]
     assert "press enter" not in ex.inputs and ex.inputs[-1] == "press escape"
     ex = Shell(["x"], drop=1)
     r = run(ex)
-    assert r.ok and r.output == ["x"] and "typed again" in r.fields["input"]
+    assert r.ok and r.output == ["x"] and r.fields["input"] == "typed; typed again"
 
 
-def test_scrollback_pages_join_where_they_overlap():
-    from jharokha.core.actions import _overlap
+def test_a_line_half_in_is_waited_for_not_run():
+    class Slow(Shell):
+        """The line shows in three parts, a look apart each."""
 
-    assert _overlap(["a", "b", "c", "d"], ["c", "d", "e"]) == ["a", "b", "c", "d", "e"]
-    # The page's last row and the run's first are wrapped lines read in part.
-    assert _overlap(["a", "b", "c", "d-cut"], ["d-tail", "b", "c", "d", "e"]) == [
-        "a",
-        "b",
-        "c",
-        "d",
-        "e",
-    ]
-    assert _overlap(["a", "b"], ["x", "y"]) == ["a", "b", "…", "x", "y"]
+        def type(self, text: str) -> None:
+            Scripted.type(self, text)
+            self.parts = [text[: len(text) // 3], text[: 2 * len(text) // 3], text]
 
+        def read(self) -> Snapshot:
+            if getattr(self, "parts", None):
+                self.typed = self.parts.pop(0)
+            return super().read()
 
-def test_a_chunk_is_confirmed_by_its_length_when_the_index_is_misread():
-    from jharokha.core.actions import _confirmed
-
-    assert _confirmed("0:344", "0:344") and _confirmed("0344", "0:344")
-    assert _confirmed("8:344", "0:344")
-    assert not _confirmed("0:343", "0:344")
+    ex = Slow(["done"])
+    r = run(ex)
+    assert r.ok and r.output == ["done"] and r.fields["input"] == "typed"
+    assert ex.inputs.count("press escape") == 0
 
 
-def test_the_font_is_learned_before_the_first_command():
+def test_text_already_in_the_input_refuses_the_run():
+    ex = Shell(["x"])
+    ex.typed = "gc Dockerfile"
+    r = run(ex)
+    assert not r.ok and "someone typed into it" in r.failed["reason"]  # type: ignore[index]
+    assert ex.inputs == []
+
+
+def test_a_shell_without_an_empty_prompt_is_not_typed_into():
+    ex = Shell(["x"])
+    ex.rows = [*ex._prompt()[:-1], "> Start-Sleep 99", "working"]
+    ex.running = True  # a command running: no prompt at the bottom
+    r = run(ex, timeout_s=2)
+    assert not r.ok and "no empty prompt" in r.failed["reason"]  # type: ignore[index]
+    assert [i for i in ex.inputs if i.startswith("type")] == []
+    assert "scroll -300" in ex.inputs  # brought down once, in case it was scrolled up
+
+
+def test_an_unprepared_tab_is_prepared_first():
+    ex = Shell(["out"], prepared=False)
+    r = run(ex)
+    assert r.ok and r.output == ["out"] and r.fields["prepared"] is True
+    assert ex.inputs[0].startswith("type function prompt") and ex.inputs[1] == "press enter"
+    assert "warning" in r.fields  # no glyph learner in this executor
+    r = run(ex)
+    assert r.ok and not any("function prompt" in i for i in ex.inputs[4:])
+
+
+def test_setup_prepares_again_and_learns_the_font():
+    class Learning(Shell):
+        known = 0
+
+        def glyphs(self) -> int:
+            return self.known
+
+        def learn_glyphs(self) -> int:
+            self.known = 94
+            return 94
+
+    ex = Learning([])
+    r = Runner(ex).run(actions.builtin()["terminal.setup"], {})
+    assert r.ok and r.fields["glyphs"] == 94 and ex.n == 1
+    assert ex.inputs[0].startswith("type function prompt") and "warning" not in r.fields
+
+
+def test_the_font_is_learned_before_the_first_command_in_a_prepared_tab():
     class Unlearned(Shell):
         known = 0
 
@@ -555,9 +650,47 @@ def test_the_font_is_learned_before_the_first_command():
     ex = Unlearned(["out"])
     r = run(ex)
     assert r.ok and r.output == ["out"] and r.fields["glyphs"] == 94
+    assert ex.inputs[0] == "type cls; -join [char[]](33..79); -join [char[]](80..126)"
     assert ex.inputs.count("press enter") == 2
     r = run(ex)
     assert ex.inputs.count("press enter") == 3  # learned once
+
+
+def test_read_file_numbers_from_the_first_line_asked_for():
+    ex = Shell(["five", "six", "seven"])
+    a = actions.builtin()["terminal.read_file"]
+    r = Runner(ex).run(a, {"path": "a.txt", "from": 5, "count": 3})
+    assert r.ok and r.output == ["five", "six", "seven"] and r.fields["lines"] == 7
+    assert ex.ran == ["Get-Content -LiteralPath 'a.txt' | Select-Object -Skip (5-1) -First 3"]
+    assert ex.inputs[0].endswith("| jk 4")
+    bad = Runner(ex).run(a, {"path": "it's.txt"})
+    assert not bad.ok and bad.failed["code"] == "bad_argument"  # type: ignore[index]
+
+
+def test_write_file_holds_the_clipboard_types_one_command_and_checks_the_hash():
+    text = "line one\nline two with 'quotes'\n"
+
+    class Writing(Shell):
+        def command(self, cmd: str) -> list[str]:
+            self.ran.append(cmd)
+            assert self.held and self.held[-1] == text  # read while the clipboard holds it
+            return [hashlib.sha256(text.encode()).hexdigest().upper()]
+
+    ex = Writing([])
+    a = actions.builtin()["terminal.write_file"]
+    r = Runner(ex).run(a, {"path": "C:\\t\\out.txt", "text": text})
+    assert r.ok and r.fields["hash_check"] == "exact" and r.fields["size"] == len(text)
+    assert ex.ran == [
+        "Get-Clipboard -Raw | Set-Content -NoNewline -Encoding utf8 -LiteralPath 'C:\\t\\out.txt'; "
+        "(Get-FileHash -Algorithm SHA256 -LiteralPath 'C:\\t\\out.txt').Hash"
+    ]
+    assert ex.held == [text, None] and not any(i.startswith("paste") for i in ex.inputs)
+    assert not any(text.split("\n")[0] in i for i in ex.inputs)  # nothing of it typed
+
+    ex = Shell(["0" * 64])
+    r = Runner(ex).run(a, {"path": "out.txt", "text": text})
+    assert not r.ok and "SHA-256" in r.failed["reason"] and ex.held == [text, None]  # type: ignore[index]
+    assert r.fields["hash_check"] == "mismatch"
 
 
 def test_a_scroll_back_doubles_its_stride_and_a_run_ends_scrolled_down():

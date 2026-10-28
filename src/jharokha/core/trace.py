@@ -15,8 +15,9 @@ from typing import Any
 
 from jharokha.core.models import Box, Point
 
-# "do": an action refused before any of its input (its inputs are traced one by one).
-ACTIONS = frozenset({"click", "type", "press", "scroll", "do"})
+# "do": an action refused before any of its input (its inputs are traced one by one);
+# "clipboard": text held for the session to read by a command (write_file).
+ACTIONS = frozenset({"click", "type", "press", "scroll", "clipboard", "do"})
 
 
 def _now() -> datetime:

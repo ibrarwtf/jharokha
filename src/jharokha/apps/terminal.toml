@@ -16,10 +16,11 @@ text = ["PowerShell", "Command Prompt", "Ubuntu"]
 weight = 0.5
 
 # The terminal's own text: a tab title (with the spellings OCR leaves of it: `owerShelI`,
-# `:ommand Prompt`, `Jbuntu`) or a prompt at the start of a line: PowerShell's, cmd's, or
-# user@host:path$ (OCR may space the colon, drop a drive letter or read ~ as N).
+# `:ommand Prompt`, `Jbuntu`) or a prompt at the start of a line: PowerShell's, cmd's,
+# user@host:path$ (OCR may space the colon, drop a drive letter or read ~ as N), or the
+# state row of a tab core.shell prepared (`JK12 2030-10-28 18:17:42 True 0 ..\dir`).
 [[app.terminal.cue]]
-regex = 'owerShel|ommand ?Prompt|buntu|\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$)'
+regex = 'owerShel|ommand ?Prompt|buntu|\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$|[I1l]A\d+ ?\d{4}-\d\d-\d\d ?\d\d:\d\d:\d\d)'
 weight = 3
 
 [[app.terminal.cue]]

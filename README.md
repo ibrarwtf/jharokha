@@ -53,9 +53,10 @@ An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/app
 | `teams.messages {chat, from, to}` | The messages from one day to another, oldest first, scrolling back to `from` and down past `to`. |
 | `teams.open_chat {name}`, `teams.draft {chat, text}` | Open a chat; type a draft and never send. |
 | `outlook.unread {folder}`, `outlook.open {subject}` | A folder's unread mails; one mail's reading pane. |
-| `terminal.run {command}` | A command's output and exit code, read up to an end marker it prints. |
-| `terminal.glyphs` | Prints the ASCII alphabet once and learns the terminal's font, so terminal reads are exact cell by cell instead of OCR. |
-| `terminal.put_file`, `browser.goto`, `browser.click_sequence` | Write a file through the shell; go to a URL; click buttons in order. |
+| `terminal.run {command}` | A command's output, exit code and status, read up to the shell's next state prompt; long output paged back from the shell. |
+| `terminal.read_file {path, from, count}`, `terminal.write_file {path, text}` | A page of a file's lines, numbered; a file written from this machine's clipboard and checked by its SHA-256, nothing of it typed. |
+| `terminal.setup` | Prepares the PowerShell tab: a prompt that shows the command counter, date, time, status, exit code and directory, no colours or predictions, and the font learned from the alphabet it prints. `terminal.run` does it itself when the prompt is not there. |
+| `browser.goto`, `browser.click_sequence` | Go to a URL; click buttons in order. |
 
 ## Input safety
 
@@ -78,7 +79,7 @@ An action does in one call what an agent would otherwise do in many scrolls and 
 ## Limits
 
 - RDP sends no frames to a minimized window; covered is fine.
-- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (run `terminal.glyphs` once a session), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
+- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (`terminal.setup`, which `terminal.run` does itself), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
 - Keep the session window one size: calibration holds at the size and zoom it was measured at. Taskbar spots follow a resize when `[calibration.session]` has the `size` they were measured at.
 - Apps are recognised by their English UI text.
 - Windows only; a port would sit beside `src/jharokha/win/` and reuse `core/`.

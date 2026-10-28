@@ -255,37 +255,75 @@ async def test_a_command_typed_with_until_waits_for_its_prompt():
         assert "Friday 18 October" in r and "until_ms=" in r
 
 
+ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in range(80, 127)))
+
+
 class Marked(Shell):
-    """A PowerShell that answers a marked command with its output and the end marker."""
+    """A PowerShell that core.shell prepares (the setup line brings its state prompt up)
+    and that answers a wrapped command with its numbered output under the next prompt."""
+
+    n = 0
+    typed = ""
+    setting_up = False
+
+    def _state(self, ok: str = "True", code: int = 0) -> str:
+        return f"IA{self.n} 2030-10-28 10:00:00 {ok} {code} C:\a"
 
     def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
-        self.items = [(f"PS C:\\a> {text}", 10, 10)]
-        if "cmd /c exit 2}" in text:
-            out, status = [], "False:2"
-        else:
-            out, status = [("Friday 23 October", 10, 30)], "True:"
-        a, b = re.search(r'"(\w\w)"\+"(\w{4}):', text).groups()  # type: ignore[union-attr]
-        self.pending = [*out, (f"{a}{b}:{status}", 10, 50), ("PS C:\\a>", 10, 70)]
+        if text.startswith("function prompt"):
+            self.setting_up = True
+            self.items = [("PS C:\a> function prompt { ...", 10, 10)]
+            return
+        self.typed = text
+        self.items = [(self._state(), 10, 10), (f"> {text}", 10, 30)]
 
     def paste_line(self, w, text):  # noqa: ANN001, ANN201
         self.type_text(w, text)
         return False
 
     def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
-        if combo == "ctrl+l":
-            self.items = [("PS C:\\a>", 10, 10)]
+        if combo != "enter":
+            return
+        if self.setting_up:
+            self.setting_up, self.n = False, 1
+            self.pending = [
+                (ALPHABET[0], 10, 10),
+                (ALPHABET[1], 10, 30),
+                (self._state(), 10, 50),
+                ("> ", 10, 70),
+            ]
+            return
+        if self.typed.startswith("cls; -join [char[]]"):
+            self.n += 1  # the alphabet, printed again for a font not learned yet
+            self.pending = [
+                (ALPHABET[0], 10, 10),
+                (ALPHABET[1], 10, 30),
+                (self._state(), 10, 50),
+                ("> ", 10, 70),
+            ]
+            return
+        m = re.fullmatch(r"cls; \. \{ (.*) \} 2>&1 \| Out-String -Stream \| jk", self.typed)
+        assert m, self.typed
+        self.n += 1
+        if m[1] == "cmd /c exit 2":
+            out, ok, code = [], "False", 2
+        else:
+            out, ok, code = ["Friday 18 October"], "True", 0
+        rows = [(f"{i + 1:4d} {t}", 10, 10 + 20 * i) for i, t in enumerate(out)]
+        y = 10 + 20 * len(out)
+        self.pending = [*rows, (self._state(ok, code), 10, y), ("> ", 10, y + 20)]
 
     def frame(self, w):  # noqa: ANN001, ANN201
         if getattr(self, "pending", None):
-            self.items = self.items + self.pending
+            self.items = self.pending
             self.pending = []
         self.frame_id += 1
-        # Wide enough that the marked line is not taken for a row the terminal wrapped.
+        # Wide enough that no row is taken for one the terminal wrapped.
         f = render(self.items, (960, 400), bg=(12, 12, 12), ink=(204, 204, 204))
         return Frame(f.width, f.height, f.bgra, self.frame_id, f.ts)
 
 
-async def test_terminal_run_through_do_reads_its_end_marker_and_exit_code():
+async def test_terminal_run_through_do_prepares_the_tab_and_reads_status_and_output():
     shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
     async with Client(build_server(shell, allow_input=True)) as c:
 

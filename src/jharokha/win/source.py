@@ -144,6 +144,26 @@ class WindowsSource:
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self._input(w, "press", combo, focus_at)
 
+    def clipboard(self, w: WindowInfo, text: str) -> Callable[[], None]:
+        """text into this machine's clipboard, which the session mirrors; what was there
+        goes back when the returned call is made. No key is sent, so the lease and the
+        user's own activity are not in question here: the command that reads it is."""
+        from jharokha.win import input
+
+        try:
+            old = input.clipboard()
+            input.set_clipboard(text)
+        except input.ClipboardBusy as e:
+            raise ScreenError("clipboard_busy", f"{e}; nothing was sent. Retry.") from e
+
+        def restore() -> None:
+            try:
+                input.set_clipboard(old)
+            except input.ClipboardBusy:
+                pass  # another program took it meanwhile: theirs to keep
+
+        return restore
+
     def paste_line(self, w: WindowInfo, text: str) -> bool:
         """One line pasted, no Enter, returning once it is on screen (win.input.paste_line);
         True when a terminal's paste warning was accepted on the way."""

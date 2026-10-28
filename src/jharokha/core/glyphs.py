@@ -38,15 +38,8 @@ else:
 ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in range(80, 127)))
 """The two lines `terminal.glyphs` prints: every printable ASCII glyph but the space, in
 order, 47 to a line."""
-COMMAND = {
-    "powershell": "-join [char[]](33..79); -join [char[]](80..126)",
-    "cmd": 'powershell -c "-join [char[]](33..79); -join [char[]](80..126)"',
-    "bash": (
-        'awk \'BEGIN{for(i=33;i<80;i++)printf "%c",i;print "";'
-        'for(i=80;i<127;i++)printf "%c",i;print ""}\''
-    ),
-}
-"""What prints ALPHABET in each shell."""
+ALPHABET_COMMAND = "-join [char[]](33..79); -join [char[]](80..126)"
+"""What prints ALPHABET in PowerShell."""
 KNOWN = 1.5  # L2 distance to the nearest template at or under which a cell is that glyph
 # Median distance of a read's inked cells above which the grid is off its cells (a pixel
 # moves every glyph past KNOWN), when the read held at least OFF_GRID_CELLS of them.

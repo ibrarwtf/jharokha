@@ -28,12 +28,12 @@ and `timeout_s`:
               since a time (a list region); zoom reads it close
     extract   regex on a region into result fields, or a field of collected items
     repeat    times | each (a list argument) | until, max; steps inside
-    run       command in the shell in front, ended by core.shell's marker; exit code;
-              clear (cls) first; learn = "glyphs" prints the alphabet instead and learns
-              the terminal's glyphs from it (core.glyphs)
-    put_file  path, content_base64; per-chunk confirmation, then the SHA-256 checked
-    write_file  path, text: the text's lines typed in batches, each confirmed by the line
-              count, then written as UTF-8 and the SHA-256 checked
+    run       command in the prepared shell in front (core.shell: ended by its next state
+              prompt, output numbered and paged), its exit code and status; clear (cls)
+              first; first = the number of its first output line; setup = true prepares
+              the tab instead and learns the terminal's glyphs (core.glyphs)
+    write_file  path, text: the text put in this machine's clipboard, written from it by
+              one command and its SHA-256 checked; nothing of it typed or shown
 
 Items are what jharokha_read format=items gives for the region (a Teams thread's
 messages: sender, time, text); `fields = { who = "sender" }` renames their fields. A
@@ -60,8 +60,6 @@ is none of the guard's business: its app's policy names no key."""
 
 from __future__ import annotations
 
-import base64
-import binascii
 import difflib
 import re
 import tomllib
@@ -93,11 +91,10 @@ from jharokha.core.text import find, fold
 
 FORMAT = 1
 NEWLINES = ("enter", "shift+enter", "forbid")
-ARG_TYPES = ("text", "number", "list", "base64", "choice")
-SHELLS = ("powershell", "cmd", "bash")
+ARG_TYPES = ("text", "number", "list", "choice")
 COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before", "after")
 COMMON = ("do", "expect", "unless", "timeout_s", "label")
-INPUT = ("click", "type", "press", "scroll", "run", "put_file", "write_file")
+INPUT = ("click", "type", "press", "scroll", "run", "write_file")
 # Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
 REFUSALS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked")
 PARAMS: dict[str, tuple[str, ...]] = {
@@ -122,26 +119,23 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
-    "run": ("command", "shell", "region", "clear", "learn"),
-    "put_file": ("path", "content_base64", "shell", "region"),
-    "write_file": ("path", "text", "shell", "region"),
+    "run": ("command", "region", "clear", "first", "setup"),
+    "write_file": ("path", "text", "region"),
 }
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
 POLL_S = 0.1
 MAX_REPEAT = 50  # passes of a repeat, whatever times says
 STILL_ENDS = 3  # scrolls in a row that change nothing: the end of a list
-# Characters pasted as one line: Windows Terminal asks before pasting more than 5 KiB.
-PASTE_MAX = 4000
-# A line this short is typed: under 1.6 s at about 126 characters a second, what a paste
-# takes to arrive and settle.
+# A line this short is typed: under 2 s at about 100 characters a second, what a
+# paste takes to arrive and settle.
 TYPE_MAX = 200
-ARRIVE_S = 2.0  # for a sent line to show in the shell before Enter
+ARRIVE_S = 2.0  # for a sent line to start showing in the shell
+ARRIVE_CPS = 40  # characters a second a line is given to show, at the slowest measured
+STABLE_S = 1.0  # an input row unchanged this long has stopped arriving
 BOTTOM_TICKS = 300  # wheel notches down that bring any view back to its newest rows
-# Wheel notches up the scrollback a page: Windows scrolls 3 rows a notch by default, so a
-# third of a 45-row screen, and pages overlap wherever the setting is up to 8.
-PAGE_TICKS = 5
-MAX_PAGES = 60
+PAGE_MAX = 40  # pages of output fetched from the shell's variable at most
+ROW_PX = 23  # a terminal row's pitch when the screen shows too little to measure it
 GLYPHS_MIN = 60  # templates a terminal needs before its cells read without OCR
 UNKNOWN_WARN = 20  # cells read by OCR in a reply, past which the result warns
 AGREE_S = 0.3  # between the two looks a read of items takes
@@ -277,20 +271,15 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         raise ActionError(f'{where}.fields renames item fields, like {{ who = "sender" }}')
     if kind == "type" and params.get("newline", "forbid") not in NEWLINES:
         raise ActionError(f"{where}.newline must be one of {', '.join(NEWLINES)}")
-    if (
-        kind in ("run", "put_file", "write_file")
-        and params.get("shell", "powershell") not in SHELLS
-    ):
-        if not _PLACEHOLDER.fullmatch(str(params.get("shell"))):
-            raise ActionError(f"{where}.shell must be one of {', '.join(SHELLS)}")
-    if kind == "run" and params.get("learn") not in (None, "glyphs"):
-        raise ActionError(f"{where}.learn must be 'glyphs'")
+    if kind == "run" and "first" in params:
+        first = params["first"]
+        if not (isinstance(first, int) and first > 0) and not _PLACEHOLDER.fullmatch(str(first)):
+            raise ActionError(f"{where}.first must be a line number or an argument")
     for need in {
         "type": ("text",),
         "press": ("keys",),
         "click": ("target",),
-        "run": () if params.get("learn") else ("command",),
-        "put_file": ("path", "content_base64"),
+        "run": () if params.get("setup") else ("command",),
         "write_file": ("path", "text"),
         "read": ("region", "into"),
         "scroll": ("region",),
@@ -505,11 +494,6 @@ def check_args(action: Action, args: Mapping[str, Any]) -> dict[str, Any]:
             raise ActionError(f"{name} must be text")
         if a.type == "choice" and v not in a.choices:
             raise ActionError(f"{name} must be one of {', '.join(a.choices)}")
-        if a.type == "base64":
-            try:
-                base64.b64decode(str(v), validate=True)
-            except (binascii.Error, ValueError) as e:
-                raise ActionError(f"{name} must be base64: {e}") from e
         for x in v if isinstance(v, list) else [v]:
             if a.max_len is not None and isinstance(x, str) and len(x) > a.max_len:
                 raise ActionError(f"{name} is longer than {a.max_len} characters")
@@ -1006,21 +990,263 @@ class Runner:
         regions = self._regions(snap)
         return regions[region] if region and region in regions else (0, 0, *snap.size)
 
-    def _reply(
-        self, p: dict[str, Any], token: str, timeout: float, partial: bool = True
+    # The shell (core.shell): a tab prepared to show its state in its prompt
+
+    def _rows(self, snap: Snapshot, p: dict[str, Any]) -> list[str]:
+        """The shell's rows as text, a wrapped row joined to the one it continues on."""
+        box = self._shell_box(snap, p)
+        return unwrapped(inside(snap.lines, box), box[0] + box[2])
+
+    def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
+        if p.get("setup"):
+            return self._setup(s, p)
+        self._prepare(s, p)
+        command = str(p["command"])
+        if "\n" in command or "\r" in command:
+            raise _Fail("a command is one line; nothing was typed")
+        base = int(p.get("first", 1)) - 1
+        r = self._command(s, p, command, base=base, clear=bool(p.get("clear", True)))
+        assert r.prompt is not None
+        self.res.output = r.lines
+        self.res.exit_code = r.prompt.code
+        self.res.fields["ok"] = r.prompt.ok
+        self.res.fields["lines"] = r.last
+        self.res.fields["cwd"] = r.prompt.cwd
+        unknown = getattr(self.ex, "unknown_cells", None)
+        if unknown and (k := unknown()) > UNKNOWN_WARN:
+            self.res.fields["warning"] = (
+                f"{k} cells matched no learned glyph and were read by OCR, which garbles "
+                "terminal text: run terminal.setup (again after a zoom, font or window "
+                "size change) and read the output again"
+            )
+        return f"exit {r.prompt.code}"
+
+    def _prepare(self, s: Step, p: dict[str, Any]) -> None:
+        """The tab prepared when its state prompt is not on screen, and the font learned
+        when this executor knows no glyph of it yet (a new process over a prepared tab):
+        until then its cells go to the engine, which garbles lookalikes."""
+        rows = self._rows(self._look(), p)
+        if not sh.prepared(rows):
+            self._setup(s, p)
+            return
+        known = getattr(self.ex, "glyphs", None)
+        n = known() if known else None
+        if n is not None and n < GLYPHS_MIN:
+            self._command(s, p, glyphs.ALPHABET_COMMAND, raw=True)
+            self._learn()
+
+    def _setup(self, s: Step, p: dict[str, Any]) -> str:
+        """core.shell.SETUP sent and its first state prompt waited for, then the glyphs
+        learned from the alphabet it printed. The line cannot be checked letter by letter
+        before the font is known: it is sent once the screen holds still, and the state
+        row is what tells it ran."""
+        snap = self._look()
+        self._guard(snap)
+        how = self._put_line(sh.SETUP)
+        self.ex.settle()
+        self.ex.press("enter")
+        self.res.fields["input"] = how
+        end = self.ex.now() + s.timeout_s
+        while True:
+            rows = self._rows(self._look(), p)
+            # The line clears the screen as it runs: a state row with the typed line gone
+            # is the new prompt, whether the glyphs are known yet or not.
+            if sh.prepared(rows) and not any("function prompt" in r for r in rows):
+                break
+            if self.ex.now() >= end:
+                raise _Fail(
+                    f"the setup line brought no state prompt up within {s.timeout_s:g} s. "
+                    "Read terminal.body: the shell may be busy, or not the one in front; if "
+                    "it is idle, the keys are lost on this computer (another window holds "
+                    "the keyboard while clicks still reach the session): click once inside "
+                    "the session window and retry"
+                )
+            self.ex.wait(POLL_S)
+        self.res.fields["prepared"] = True
+        n = self._learn()
+        return f"prepared, {n} glyphs learned"
+
+    def _learn(self) -> int:
+        learner = getattr(self.ex, "learn_glyphs", None)
+        n = learner() if learner else 0
+        self.res.fields["glyphs"] = n
+        if not n:
+            self.res.fields["warning"] = (
+                "the alphabet lines were not found on screen, so the font was not learned "
+                "and terminal text is read by OCR; run terminal.setup"
+            )
+        return n
+
+    def _command(
+        self,
+        s: Step,
+        p: dict[str, Any],
+        command: str,
+        base: int = 0,
+        clear: bool = True,
+        raw: bool = False,
+        typed: bool = False,
     ) -> sh.Reply:
-        """The reply to the line marked with token: the shell's rows as the executor reads
-        them (a terminal's by its glyphs), polled until the end marker is on screen. The
-        marker is what tells a finished command, never the prompt. At the timeout the view
-        is scrolled to its bottom once and looked at again, since a view scrolled up does
-        not follow new output; then, when partial, what the command printed so far goes
-        into the result with the failure."""
+        """command run in the prepared shell: sent as one line (wrapped for numbering
+        unless raw), ended by the next state prompt, its start fetched by paging when it
+        scrolled off the top. typed sends it key by key whatever its length: a paste would
+        replace the clipboard a write_file holds."""
+        prompt = self._idle(s, p)
+        if raw:
+            line = "cls; " + command if clear else command
+        else:
+            line = sh.wrapped(command, base, clear)
+        self.res.fields["input"] = self._send(line, p, prompt, typed)
+        r = self._reply(p, prompt.n, base, s.timeout_s)
+        lines, n = r.lines, prompt.n + 1
+        pages = 0
+        while r.first > base + 1 and pages < PAGE_MAX:
+            # The start scrolled off: the lines before the first on screen, a screen at a
+            # time, each page a command of its own under the next prompt number.
+            fit = max(1, self._fit(p))
+            first = max(base + 1, r.first - fit)
+            pg = self._page(s, p, first, r.first - first, base, n)
+            if pg.first >= r.first:
+                break  # nothing more came: what is read is what there is
+            lines = pg.lines + lines
+            r, n = replace(r, first=pg.first), n + 1
+            pages += 1
+        if pages:
+            self.res.fields["pages"] = pages + 1
+        return replace(r, lines=lines)
+
+    def _page(
+        self, s: Step, p: dict[str, Any], first: int, count: int, base: int, n: int
+    ) -> sh.Reply:
+        self.res.fields["input"] = self._send(sh.page(first, count, base), p, self._idle(s, p))
+        return self._reply(p, n, first - 1, s.timeout_s)
+
+    def _fit(self, p: dict[str, Any]) -> int:
+        """Lines a page may hold: the rows the shell's box shows, less the prompt's two
+        and a margin for lines that wrap."""
+        snap = self._look()
+        box = self._shell_box(snap, p)
+        tops = sorted({ln.box[1] for ln in inside(snap.lines, box)})
+        gaps = [b - a for a, b in zip(tops, tops[1:], strict=False) if b - a > 2]
+        pitch = min(gaps) if gaps else ROW_PX
+        return box[3] // pitch - 4
+
+    def _idle(self, s: Step, p: dict[str, Any]) -> sh.Prompt:
+        """The empty prompt at the bottom of the screen, waited for a few seconds (the
+        shell drawing its prompt after the command before); a view scrolled up is brought
+        down once. Fails when the input holds text (someone typed into the shell) or no
+        prompt comes (a command still running)."""
+        end = self.ex.now() + TIMEOUT_S
+        bottomed = False
+        while True:
+            snap = self._look()
+            rows = self._rows(snap, p)
+            if p_ := sh.idle(rows):
+                return p_
+            if self.ex.now() >= end:
+                ps = sh.prompts(rows)
+                # Text after the last prompt with nothing under it, still there after the
+                # wait, is typed by hand: a running command prints or finishes.
+                if ps and (got := sh.typed(rows, ps[-1])) and ps[-1].row + 2 >= len(rows):
+                    raise _Fail(
+                        f"the shell's input already holds {got[:80]!r}: someone typed into "
+                        "it. Nothing was sent; clear it (jharokha_act press escape) and retry"
+                    )
+                if not bottomed:
+                    bottomed = True
+                    self._guard(snap)
+                    box = self._shell_box(snap, p)
+                    self.ex.scroll(box[0] + box[2] // 2, box[1] + box[3] // 2, -BOTTOM_TICKS)
+                    self.ex.settle(box)
+                    end = self.ex.now() + TIMEOUT_S / 2
+                    continue
+                raise _Fail(
+                    "no empty prompt at the bottom of the shell: a command may still be "
+                    "running (wait, or press ctrl+c with jharokha_act: the next state row "
+                    "says when it stopped), or this is not the prepared tab. Nothing was sent"
+                )
+            self.ex.wait(POLL_S)
+
+    def _put_line(self, line: str) -> str:
+        """line into the shell's input: typed when short, pasted when long (the session
+        fetches the clipboard, a second or so), typed when the paste never arrives."""
+        paste = getattr(self.ex, "paste", None)
+        if paste is None or len(line) <= TYPE_MAX:
+            self.ex.type(line)
+            return "typed"
+        try:
+            return "pasted after its warning" if paste(line) else "pasted"
+        except ScreenError as e:
+            if e.code != "paste_failed":
+                raise
+            self.ex.press("escape")  # whatever part of it came in
+            self.ex.type(line)
+            return "typed: the paste did not arrive"
+
+    def _send(self, line: str, p: dict[str, Any], prompt: sh.Prompt, typed: bool = False) -> str:
+        """line into the input row after prompt, and Enter only once the row shows exactly
+        it: a line is never run with a key dropped or half of it in. Sent again once when
+        it does not; then Escape clears it and nothing is run."""
+        snap = self._look(fast=True)
+        self._guard(snap)
+        self._keys(snap, ["enter"])
+        if typed:
+            self.ex.type(line)
+            how = "typed"
+        else:
+            how = self._put_line(line)
+        for attempt in (1, 2):
+            seen = self._arrived(line, p, prompt)
+            if seen is None:
+                break
+            self.ex.press("escape")
+            if attempt == 1:
+                self.ex.type(line)
+                how += "; typed again"
+                continue
+            raise _Fail(
+                f"the shell's input showed {seen[:80]!r} where the sent line should be, "
+                "twice; Escape cleared it and nothing was run. Read terminal.body: the "
+                "shell may be busy, or not the one in front; if it is idle, keys are lost "
+                "on this computer (another window holds the keyboard while clicks still "
+                "reach the session): click once inside the session window and retry"
+            )
+        self.ex.press("enter")
+        return how
+
+    def _arrived(self, line: str, p: dict[str, Any], prompt: sh.Prompt) -> str | None:
+        """None once the input row shows line; else what it showed when it stopped
+        changing, or when the time a line of that length can take had passed."""
+        end = self.ex.now() + ARRIVE_S + len(line) / ARRIVE_CPS
+        last: str | None = None
+        quiet = self.ex.now()
+        while True:
+            rows = self._rows(self._look(), p)
+            at = next((q for q in sh.prompts(rows) if q.n == prompt.n), None)
+            got = sh.typed(rows, at) if at else None
+            if got is not None and sh.looks_like(got, line):
+                return None
+            now = self.ex.now()
+            if got != last:
+                last, quiet = got, now
+            elif now - quiet >= STABLE_S and (got or now >= end):
+                return got or ""
+            if now >= end:
+                return got or ""
+            self.ex.wait(POLL_S)
+
+    def _reply(self, p: dict[str, Any], n: int, base: int, timeout: float) -> sh.Reply:
+        """What command n printed, polled until the state prompt n+1 is on screen. At the
+        timeout the view is brought to its bottom once (a view scrolled up does not follow
+        new output) and looked at again; then what was printed so far goes into the
+        result with the failure."""
         end = self.ex.now() + timeout
         bottomed = False
         while True:
             snap = self._look()
             box = self._shell_box(snap, p)
-            if r := sh.read_reply(inside(snap.lines, box), token):
+            r = sh.reply(self._rows(snap, p), n, base)
+            if r.prompt is not None:
                 return r
             if self.ex.now() >= end:
                 if snap.app not in (self.action.app, GENERIC, None):
@@ -1028,10 +1254,10 @@ class Runner:
                     # fail wrong_app though it was typed and is running.
                     self.res.fields["finished"] = False
                     raise _Fail(
-                        f"no end marker within {timeout:g} s, and {snap.app} is in front now: "
-                        "the command was typed and may still be running behind it; nothing "
-                        "more was sent. Bring the terminal forward when the user is done and "
-                        "read terminal.body for its output"
+                        f"no state prompt within {timeout:g} s, and {snap.app} is in front "
+                        "now: the command was typed and may still be running behind it; "
+                        "nothing more was sent. Bring the terminal forward when the user is "
+                        "done and read terminal.body for its output"
                     )
                 if not bottomed:
                     bottomed = True
@@ -1039,198 +1265,44 @@ class Runner:
                     self.ex.scroll(box[0] + box[2] // 2, box[1] + box[3] // 2, -BOTTOM_TICKS)
                     self.ex.settle(box)
                     continue
-                if partial:
-                    so_far, _ = sh.after_echo(inside(snap.lines, box), token)
-                    self.res.output = unwrapped(so_far, box[0] + box[2])
-                    self.res.fields["finished"] = False
+                self.res.output = r.lines
+                self.res.fields["finished"] = False
                 raise _Fail(
-                    f"no end marker within {timeout:g} s: the command may still be running "
-                    "(output holds what it printed so far: wait, read the screen, or press "
-                    "ctrl+c; give the next one a longer timeout_s), or it went somewhere else"
+                    f"no state prompt within {timeout:g} s: the command may still be running "
+                    "(output holds what it printed so far: wait, read terminal.body, or press "
+                    "ctrl+c with jharokha_act; the next state row says when it stopped; give "
+                    "the next one a longer timeout_s), or it went somewhere else"
                 )
             self.ex.wait(POLL_S)
-
-    def _send(self, line: str, token: str | None = None) -> None:
-        """line into the shell, then Enter. A short line is typed (faster than a paste,
-        which waits about a second for the session to fetch the clipboard); a long one is
-        pasted, and typed when the paste never arrives. With the line's token, Enter waits
-        until the line shows in the shell: a paste can come in empty, and an Enter alone
-        would leave the run waiting for a marker that never comes."""
-        snap = self._look(fast=True)
-        self._guard(snap)
-        self._keys(snap, ["enter"])
-        paste = getattr(self.ex, "paste", None)
-        how = "typed"
-        if paste is not None and TYPE_MAX < len(line) <= PASTE_MAX:
-            try:
-                how = "pasted after its warning" if paste(line) else "pasted"
-                self.ex.settle()  # all of it in before Enter
-            except ScreenError as e:
-                if e.code != "paste_failed":
-                    raise
-                self.ex.press("escape")  # whatever part of it came in
-                self.ex.type(line)
-                how = "typed: the paste did not arrive"
-        else:
-            self.ex.type(line)
-        if token and not self._shows(token):
-            self.ex.press("escape")
-            self.ex.type(line)
-            how += "; typed again: it did not show"
-            if not self._shows(token):
-                self.ex.press("escape")
-                raise _Fail(
-                    "the line did not show in the shell after it was sent twice (nothing, or "
-                    "only part of it, arrived); Escape cleared it and nothing was run. Read "
-                    "the screen: the shell may be busy, or not the one in front. If it is "
-                    "idle and in front, the keys are lost on this computer: another window "
-                    "(a dictation or chat overlay) holds the keyboard while clicks still "
-                    "reach the session. Ask the user to click once inside the session "
-                    "window and leave it active, then retry"
-                )
-        self.ex.press("enter")
-        self.res.fields["input"] = how
-
-    def _shows(self, token: str) -> bool:
-        end = self.ex.now() + ARRIVE_S
-        while True:
-            if sh.echoed(self._look().lines, token):
-                return True
-            if self.ex.now() >= end:
-                return False
-            self.ex.wait(POLL_S)
-
-    def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
-        shell = p.get("shell", "powershell")
-        if p.get("learn"):
-            return self._learn(s, p, shell)
-        command = str(p["command"])
-        if "\n" in command or "\r" in command:
-            raise _Fail("a command is one line; nothing was typed")
-        known = getattr(self.ex, "glyphs", None)
-        n = known() if known else None
-        if n is not None and n < GLYPHS_MIN:
-            # Until the font is learned, cells go to the engine, which garbles lookalikes
-            # and takes seconds: the alphabet first, once, and the command after it.
-            try:
-                self._learn(s, p, shell)
-            except _Fail as e:
-                self.res.fields["warning"] = f"terminal.glyphs did not learn the font: {e}"
-        code = self._command(s, p, shell, command)
-        unknown = getattr(self.ex, "unknown_cells", None)
-        if unknown and (k := unknown()) > UNKNOWN_WARN:
-            self.res.fields["warning"] = (
-                f"{k} cells matched no learned glyph and were read by OCR, which garbles "
-                "terminal text: run terminal.glyphs (again after a zoom, font or window "
-                "size change) and read the output again"
-            )
-        return f"exit {code}"
-
-    def _learn(self, s: Step, p: dict[str, Any], shell: sh.Shell) -> str:
-        code = self._command(s, p, shell, glyphs.COMMAND[shell])
-        learner = getattr(self.ex, "learn_glyphs", None)
-        n = learner() if learner else 0
-        self.res.fields["glyphs"] = n
-        if not n:
-            raise _Fail("the alphabet lines were not found on screen; nothing was learned")
-        return f"exit {code}, {n} glyphs learned"
-
-    def _command(self, s: Step, p: dict[str, Any], shell: sh.Shell, command: str) -> int | None:
-        token = sh.new_token()
-        # Cleared by the line itself: the reply is then all the text above the marker.
-        line = (sh.CLEAR[shell] if p.get("clear") else "") + sh.marked(command, token, shell)
-        self._send(line, token)
-        reply = self._reply(p, token, s.timeout_s)
-        ok, code = sh.status(reply.payload, shell)
-        if code is None and ok is not None:
-            # $LASTEXITCODE is empty until a native program has run in the session: a
-            # cmdlet's success is PowerShell's own exit code, 0, or 1 when it failed.
-            code = 0 if ok else 1
-        box = self._shell_box(self._look(fast=True), p)
-        out = unwrapped(reply.output, box[0] + box[2])
-        if not reply.echoed and _filled(reply, box):
-            out = self._scrollback(p, box, token, out)
-        self.res.output = out
-        self.res.exit_code = code
-        self.res.fields["ok"] = ok
-        return code
-
-    def _scrollback(self, p: dict[str, Any], box: Box, token: str, out: list[str]) -> list[str]:
-        """out with the start of the output that scrolled off the top: the scrollback read
-        going up a few rows at a time, until the command's own line shows or the view stops
-        moving (its top, or what the command's cls left), then scrolled back down."""
-        x, y, right = box[0] + box[2] // 2, box[1] + box[3] // 2, box[0] + box[2]
-        last = unwrapped(inside(self._look().lines, box), right)
-        up = 0
-        try:
-            for _ in range(MAX_PAGES):
-                self._guard(self._look(fast=True))
-                self.ex.scroll(x, y, PAGE_TICKS)
-                up += PAGE_TICKS
-                self.ex.settle(box)
-                lines = inside(self._look().lines, box)
-                screen = unwrapped(lines, right)
-                if screen == last:
-                    return out
-                last = screen
-                page, found = sh.after_echo(lines, token)
-                out = _overlap(unwrapped(page, right), out)
-                if found:
-                    return out
-            return ["…", *out]
-        finally:
-            if up:
-                self.ex.scroll(x, y, -up)
-                self.ex.settle(box)
-
-    def _put_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
-        shell = p.get("shell", "powershell")
-        data = base64.b64decode(str(p["content_base64"]).encode())
-        plan = sh.put_file(str(p["path"]), data, shell)
-        return self._put(s, p, shell, plan, "chunk")
 
     def _write_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
-        shell = p.get("shell", "powershell")
+        """The text into this machine's clipboard, one command that writes the clipboard
+        to the file and prints its SHA-256, checked against the text's. Nothing of the
+        text is typed or shown."""
+        text, path = str(p["text"]), str(p["path"])
+        hold = getattr(self.ex, "clipboard", None)
+        if hold is None:
+            raise _Fail("this executor cannot hold the clipboard; nothing was sent")
+        self._prepare(s, p)
+        want = sh.sha256(text)
+        restore = hold(text)
         try:
-            plan = sh.write_text(str(p["path"]), str(p["text"]), shell)
-        except ValueError as e:
-            raise _Fail(f"{e}; nothing was typed") from None
-        self.res.fields["lines"] = int(str(plan.steps[-2].expect).rpartition(":")[2])
-        return self._put(s, p, shell, plan, "batch")
-
-    def _put(self, s: Step, p: dict[str, Any], shell: sh.Shell, plan: sh.PutPlan, what: str) -> str:
-        """plan's steps typed in order, each confirmed by what it prints (retyped up to
-        three times: each is safe to repeat), then the last, which writes the file and
-        prints its SHA-256, checked against the one sent."""
-        for k, st in enumerate(plan.steps[:-1]):
-            seen: list[str] = []
-            for attempt in range(3):
-                if attempt:
-                    st = _retoken(st, shell)
-                self._send(st.command, st.token)
-                try:
-                    # A chunk is stored at once: a reply not read by then is retyped.
-                    reply = self._reply(p, st.token, min(s.timeout_s, 5.0), partial=False)
-                except _Fail:
-                    reply = None
-                seen.append(repr(reply.payload) if reply else "no marker")
-                if reply and st.expect and _confirmed(reply.payload, st.expect):
-                    break
-                if attempt == 2:
-                    raise _Fail(
-                        f"{what} {k} was not confirmed after 3 tries: expected {st.expect!r} "
-                        f"after the marker, read {', '.join(seen)}"
-                    )
-        last = plan.steps[-1]
-        self._send(last.command, last.token)
-        reply = self._reply(p, last.token, s.timeout_s)
-        ok, code = sh.status(reply.payload, shell)
-        check = sh.check_hash(reply.output, plan.sha256)
-        self.res.fields.update({"sha256": plan.sha256, "size": plan.size, "hash_check": check})
-        self.res.exit_code = code
-        if check == "mismatch" or ok is False:
-            raise _Fail(f"the file's SHA-256 on the remote side is not {plan.sha256}")
-        return f"{len(plan.steps) - 1} × {what}, hash {check}"
+            r = self._command(s, p, sh.write_file(path), typed=True)
+        finally:
+            restore()
+        assert r.prompt is not None
+        check = sh.check_hash(r.lines, want)
+        size = len(text.encode("utf-8"))
+        self.res.fields.update({"sha256": want, "size": size, "hash_check": check})
+        self.res.exit_code = r.prompt.code
+        if check == "mismatch" or not r.prompt.ok:
+            shown = r.lines[0][:80] if r.lines else "nothing"
+            raise _Fail(
+                f"the file's SHA-256 on the remote side is not {want}: the shell printed "
+                f"{shown!r}. The clipboard did not reach the session as sent, or the path "
+                "cannot be written"
+            )
+        return f"{size} bytes, hash {check}"
 
     # Conditions
 
@@ -1244,57 +1316,6 @@ class Runner:
             if self.ex.now() >= end:
                 raise _Fail(f"{what} {_describe(cond)} within {timeout:g} s: {why}")
             self.ex.wait(POLL_S)
-
-
-def _retoken(step: sh.Step, shell: str) -> sh.Step:
-    """step with a new token, for a retry: a reply read under the old one could be the
-    failed attempt's."""
-    new = sh.new_token()
-    a, b, x, y = step.token[:2], step.token[2:], new[:2], new[2:]
-    joins = {"powershell": ('"{}"+"{}', '"{}"+"{}'), "bash": ('"{}""{}', '"{}""{}')}
-    old_s, new_s = joins.get(shell, ("{}^{}", "{}^{}"))
-    command = step.command.replace(old_s.format(a, b), new_s.format(x, y))
-    return sh.Step(command, new, step.expect) if command != step.command else step
-
-
-def _confirmed(payload: str, expect: str) -> bool:
-    """A chunk's `index:length`, also when OCR dropped the colon between them (a length
-    never starts with 0, so the digits alone still tell them apart) or misread the index:
-    the marker's token is this chunk's own, so the length it ends with is the one that
-    says the chunk arrived whole."""
-    if sh.confirms(payload, expect):
-        return True
-    digits = re.sub(r"\D", "", payload.translate(sh._DIGIT))
-    if digits == expect.replace(":", ""):
-        return True
-    length = expect.rpartition(":")[2]
-    got = re.split(f"[{sh._SEPS}]", payload.translate(sh._DIGIT))
-    return ":" in expect and len(got) > 1 and got[-1].strip() == length
-
-
-def _filled(reply: sh.Reply, box: Box) -> bool:
-    """Whether the output reached both ends of the shell's box: its start may then have
-    scrolled off the top."""
-    tops = sorted({ln.box[1] for ln in reply.output})
-    if len(tops) < 2:
-        return False
-    pitch = (tops[-1] - tops[0]) / (len(tops) - 1)  # rows apart, blank rows averaged in
-    return tops[0] <= box[1] + pitch and reply.bottom >= box[1] + box[3] - 3 * pitch
-
-
-def _overlap(above: list[str], below: list[str]) -> list[str]:
-    """Rows read at two places in a scrollback as one run, joined where the end of above is
-    the start of below. Either edge row may be a wrapped line read in part, so each may be
-    left out of the match; where nothing matches, `…` marks rows that were not read."""
-    for k in range(min(len(above), len(below)), 0, -1):
-        if k < 2 and min(len(above), len(below)) > 1:
-            break  # one row alike is chance: a blank-ish line, a repeated divider
-        for da in (0, 1):
-            for db in (0, 1):
-                a = above[len(above) - da - k : len(above) - da]
-                if len(a) == k and a == below[db : db + k]:
-                    return above[: len(above) - da] + below[db + k :]
-    return [*above, "…", *below]
 
 
 def _on(snap: Snapshot) -> str:
@@ -1446,8 +1467,6 @@ def _plan(
         except KeyError:
             p = dict(s.params)
         p.pop("step", None)
-        if s.kind == "put_file":
-            p["content_base64"] = f"<{len(str(p.get('content_base64', '')))} characters>"
         if s.kind == "write_file":
             p["text"] = f"<{len(str(p.get('text', '')))} characters>"
         row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind}

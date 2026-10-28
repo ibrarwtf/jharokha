@@ -4,6 +4,7 @@ know the ground truth and the real OCR can be checked against the same picture."
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,7 @@ class FakeSource:
     misreads: dict[str, str] = field(default_factory=dict)  # what the first OCR gets wrong
     reread_boxes: list[Box] = field(default_factory=list)
     warnings: list[dict] = field(default_factory=list)
+    clipboards: list[str | None] = field(default_factory=list)  # held, then None when put back
 
     def window(self, window_title: str | None) -> WindowInfo | None:
         if not self.present or (window_title and window_title.lower() not in self.title.lower()):
@@ -101,6 +103,14 @@ class FakeSource:
     def paste_line(self, w: WindowInfo, text: str) -> bool:
         self.items.append((f"pasted {text}", 10, 230))
         return False
+
+    def clipboard(self, w: WindowInfo, text: str) -> Callable[[], None]:
+        self.clipboards.append(text)
+
+        def restore() -> None:
+            self.clipboards.append(None)
+
+        return restore
 
     def guard_state(self, w: WindowInfo) -> dict[str, Any]:
         return {"warnings": list(self.warnings), "input": {"lease": None, "user_idle_s": 42.0}}

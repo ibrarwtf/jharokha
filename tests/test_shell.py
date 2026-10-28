@@ -1,350 +1,150 @@
-"""core/shell.py on synthetic OCR lines, damaged the way terminal OCR damages them."""
+"""core/shell.py: the state prompt, the numbered output and the file write, on synthetic
+rows as the glyph reader gives them (exact) and as OCR gives them (damaged)."""
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import re
 
-import pytest
+from jharokha.core import shell as sh
 
-from jharokha.core.models import Line, Word
-from jharokha.core.shell import (
-    CHUNK,
-    Shell,
-    check_hash,
-    confirms,
-    marked,
-    new_token,
-    put_file,
-    read_reply,
-    status,
-)
-
-TOKEN = "KX7R4C"
-PROMPT = "PS C:\\Users\\X>"
+STATE = "JK{n} 2030-10-23 18:17:42 {ok} {code} ..\\work\\some-project"
 
 
-class Run:
-    """read_reply with its status parsed, as the runner's run step reads it."""
-
-    def __init__(self, output: list[Line], echoed: bool, ok: bool | None, code: int | None):
-        self.output, self.echoed, self.ok, self.code = output, echoed, ok, code
+def state(n: int, ok: bool = True, code: int = 0) -> str:
+    return STATE.format(n=n, ok=ok, code=code)
 
 
-def read_run(lines: list[Line], token: str, shell: Shell) -> Run | None:
-    reply = read_reply(lines, token)
-    if reply is None:
-        return None
-    return Run(reply.output, reply.echoed, *status(reply.payload, shell))
+def test_setup_is_one_ascii_line_that_ends_with_the_alphabet():
+    assert "\n" not in sh.SETUP and sh.SETUP.isascii()
+    assert sh.SETUP.endswith("-join [char[]](33..79); -join [char[]](80..126)")
+    assert "function prompt" in sh.SETUP and "function jk" in sh.SETUP
+    assert "PredictionSource None" in sh.SETUP and "OutputRendering='PlainText'" in sh.SETUP
+    assert "TERM" not in sh.SETUP  # git's pager says the terminal is not functional under TERM=dumb
+    assert "core.pager=" in sh.SETUP
+    assert "function prompt" in sh.UNDO and "\n" not in sh.UNDO
 
 
-def screen(*rows: str | tuple[str, ...]) -> list[Line]:
-    """One row per argument, 20 px apart; a tuple is a row OCR split into pieces."""
-    out = []
-    for i, row in enumerate(rows):
-        x = 10
-        for piece in (row,) if isinstance(row, str) else row:
-            box = (x, 20 * i, 8 * len(piece), 14)
-            out.append(Line(piece, box, (Word(piece, box),)))
-            x += 8 * len(piece) + 8
-    return out
+def test_the_prompt_resets_the_exit_code_and_cuts_the_directory():
+    assert "$global:LASTEXITCODE=0" in sh.SETUP
+    assert f"$d.Length -gt {sh.DIR_WIDTH}" in sh.SETUP and "'..'+" in sh.SETUP
 
 
-def texts(lines: list[Line]) -> list[str]:
-    return [ln.text for ln in lines]
+def test_state_rows_are_parsed_exactly():
+    rows = ["   1 hello", state(3, False, 2), "> "]
+    (p,) = sh.prompts(rows)
+    assert (p.n, p.date, p.time, p.ok, p.code, p.row) == (3, "2030-10-23", "18:17:42", False, 2, 1)
+    assert p.cwd == "..\\work\\some-project"
+    assert sh.prompts(["JK3 2030-10-23 18:17:42 True 0"])[0].cwd == ""  # a root with no dir
+    assert sh.prompts(["JK 2030-10-23 18:17:42 True 0 x", "JKx", "  JK3"]) == []
 
 
-def echo(command: str = "Get-ChildItem", shell: str = "powershell") -> str:
-    return PROMPT + " " + marked(command, TOKEN, shell)  # type: ignore[arg-type]
+def test_a_prepared_tab_is_told_from_an_ocr_read_too():
+    assert sh.prepared([state(1), ">"])
+    assert sh.prepared(
+        ["lA1 2O26-1O-28 18:17:42 True O ..\\x"]
+    )  # OCR before the glyphs are learned
+    assert not sh.prepared(["PS C:\\Users\\X>", "Dockerfile"])
+    assert not sh.prepared([])
 
 
-def test_token_is_short_and_free_of_lookalikes():
-    for _ in range(200):
-        t = new_token()
-        assert len(t) == 6
-        assert not set(t) & set("O0QDI1lS5B8Z2G6UVFT")
-    assert len({new_token() for _ in range(50)}) == 50
+def test_idle_is_the_empty_prompt_at_the_bottom():
+    assert sh.idle([state(1), "> "]) is not None
+    assert sh.idle([state(1), ">"]) is not None
+    assert sh.idle([state(1), "> gc Dockerfile"]) is None  # text typed
+    assert sh.idle([state(1), "> ", "output of a running command"]) is None
+    assert sh.idle(["   1 out", state(2)]) is None  # input row not on screen yet
+    assert sh.idle(["PS C:\\>"]) is None
 
 
-@pytest.mark.parametrize("shell", ["powershell", "cmd", "bash"])
-def test_the_echo_never_holds_the_joined_token(shell):
-    for _ in range(50):
-        t = new_token()
-        typed = marked("dir", t, shell)
-        assert t not in typed.upper()
-        assert t in re.sub(r"[\"+^]", "", typed)
-
-
-def test_suffixes():
-    assert marked("dir  ", TOKEN, "powershell") == (
-        "$LASTEXITCODE=0;try{dir}catch{Write-Error $_ -ErrorAction Continue};"
-        '"KX"+"7R4C:"+$?+":"+$LASTEXITCODE'
-    )
-    assert marked("dir", TOKEN, "cmd") == "dir & call echo KX^7R4C:%^errorlevel%"
-    assert marked("ls", TOKEN, "bash") == 'ls; echo "KX""7R4C:$?"'
-
-
-def test_reads_output_between_echo_and_marker_and_keeps_boxes():
-    lines = screen(PROMPT, echo(), "a.txt", "b.txt", "KX7R4C:True:0", PROMPT)
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None
-    assert texts(run.output) == ["a.txt", "b.txt"]
-    assert run.output[0] is lines[2] and run.output[0].box == (10, 40, 40, 14)
-    assert (run.echoed, run.ok, run.code) == (True, True, 0)
-
-
-def test_none_while_running():
-    assert read_reply(screen(PROMPT, echo(), "a.txt"), TOKEN) is None
-    assert read_reply(screen("old output"), TOKEN) is None
-
-
-def test_case_and_lookalikes_in_the_marker():
-    lines = screen(echo(), "out", "kx7r4c : FaIse : 1")
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None and (run.ok, run.code) == (False, 1)
-    # One misread token character, an exit code read with letters, `;` for `:`.
-    run = read_run(screen(echo(), "out", "KX7RAC;True;O"), TOKEN, "powershell")
-    assert run is not None and (run.ok, run.code) == (True, 0)
-    run = read_run(screen(echo(), "KxlR4C:True:-l07374l8l9"), TOKEN, "powershell")
-    assert run is not None and run.code == -1073741819
-
-
-def test_two_misread_characters_are_another_token():
-    assert read_reply(screen(echo(), "out", "KX7RAA:True:0"), TOKEN) is None
-
-
-def test_spaces_merged_or_split():
-    run = read_run(screen(echo(), "out", "K X7R 4C: True:"), TOKEN, "powershell")
-    assert run is not None and (run.ok, run.code) == (True, None)
-    run = read_run(screen(echo(), "out", "KX7R4C:True0"), TOKEN, "powershell")
-    assert run is not None and run.ok is True
-
-
-def test_marker_split_into_pieces_on_one_row():
-    lines = screen(echo(), "out", ("KX7R", "4C:True", ":0"), PROMPT)
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None and texts(run.output) == ["out"] and run.code == 0
-
-
-def test_marker_wrapped_onto_the_next_row():
-    run = read_run(screen(echo(), "out", "KX7R4C:", "False:2", PROMPT), TOKEN, "powershell")
-    assert run is not None and texts(run.output) == ["out"]
-    assert (run.ok, run.code) == (False, 2)
-
-
-def test_stray_character_before_the_marker():
-    run = read_run(screen(echo(), "out", "|KX7R4C:True:0"), TOKEN, "powershell")
-    assert run is not None and texts(run.output) == ["out"]
-
-
-def test_echo_with_ocr_damage():
-    # `|` read as `I`, quotes lost, spaces moved, case changed.
-    damaged = 'PS C:\\Users\\X> Get-Process I select -first 3; $jkq=$?; "kx" + "7r4c:${jkq}'
-    run = read_run(screen("before", damaged, "p1", "KX7R4C:True:0"), TOKEN, "powershell")
-    assert run is not None and run.echoed and texts(run.output) == ["p1"]
-    run = read_run(screen("before", "PS> x; kx+7R4C:", "p1", "KX7R4C:True:"), TOKEN, "powershell")
-    assert run is not None and run.echoed and texts(run.output) == ["p1"]
-
-
-def test_echo_wrapped_over_rows():
-    rows = ['PS C:\\> Get-ChildItem -Recurse | Measure; $jkq=$?; "KX"+"7', "R4C:${jkq}:$LAST"]
-    lines = screen(*rows, "EXITCODE", "Count : 3", "KX7R4C:True:")
-    # The wrapped tail of the echo is not output, apart from what follows the token.
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None and run.echoed
-    assert texts(run.output) == ["EXITCODE", "Count : 3"]
-
-
-def test_echo_scrolled_off():
-    lines = screen("line 7", "line 8", "KX7R4C:True:0", PROMPT)
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None and not run.echoed
-    assert texts(run.output) == ["line 7", "line 8"]
-
-
-def test_stale_marker_from_an_earlier_run_does_not_count():
-    old = screen(PROMPT + " dir; ...", "x", "MPW9HN:True:0", PROMPT)
-    lines = old + [
-        Line(ln.text, (ln.box[0], ln.box[1] + 80, ln.box[2], ln.box[3]), ln.words)
-        for ln in screen(echo(), "busy")
-    ]
-    assert read_reply(lines, TOKEN) is None
-    # Nor when the new command's echo has scrolled off.
-    assert read_reply(screen("MPW9HN:True:0", "busy"), TOKEN) is None
-
-
-def test_earlier_marker_of_the_same_token_above_the_echo_is_ignored():
-    lines = screen(echo(), "first", "KX7R4C:True:0", echo(), "second", "KX7R4C:False:1")
-    run = read_run(lines, TOKEN, "powershell")
-    assert run is not None and texts(run.output) == ["second"] and run.ok is False
-    assert read_reply(lines[:5], TOKEN) is None
-
-
-def test_output_rows_in_order_with_pieces_left_to_right():
-    lines = screen(echo(), ("Name", "Length"), ("a.txt", "12"), "KX7R4C:True:")
-    shuffled = [lines[3], lines[0], lines[4], lines[2], lines[1], lines[5]]
-    run = read_run(shuffled, TOKEN, "powershell")
-    assert run is not None and texts(run.output) == ["Name", "Length", "a.txt", "12"]
-
-
-def test_cmd_and_bash_status():
-    run = read_run(screen(echo("dir", "cmd"), "x", "KX7R4C:O"), TOKEN, "cmd")
-    assert run is not None and (run.ok, run.code) == (True, 0)
-    run = read_run(screen(echo("false", "bash"), "KX7R4C:l27"), TOKEN, "bash")
-    assert run is not None and (run.ok, run.code, run.output) == (False, 127, [])
-    assert status("", "bash") == (None, None)
-    assert status("garbled", "powershell") == (None, None)
-
-
-def test_confirms_folds_digits():
-    assert confirms("3:372", "3:372")
-    assert confirms("3;3T2".replace("T", "7"), "3:372")
-    assert confirms("l2.4OO", "12:400")
-    assert not confirms("3:371", "3:372")
-
-
-@pytest.mark.parametrize("shell", ["powershell", "cmd", "bash"])
-def test_put_file_plan(shell):
-    data = bytes(range(256)) * 40
-    plan = put_file("C:\\tmp\\it's.bin", data, shell)
-    assert plan.sha256 == hashlib.sha256(data).hexdigest() and plan.size == len(data)
-    chunks, last = plan.steps[:-1], plan.steps[-1]
-    assert all(len(s.command) <= CHUNK for s in chunks)
-    assert last.expect is None and last.token not in last.command
-    assert len({s.token for s in plan.steps}) == len(plan.steps)
-    pieces = [re.search(r"(?:='|echo\()([A-Za-z0-9+/=]*)", s.command) for s in chunks]
-    assert all(pieces)
-    joined = "".join(m.group(1) for m in pieces if m)
-    assert base64.b64decode(joined) == data
-    assert all(len(m.group(1)) % 4 == 0 for m in pieces[:-1] if m)
-    for i, s in enumerate(chunks):
-        assert s.token not in s.command
-        n = len(pieces[i].group(1)) if pieces[i] else -1  # type: ignore[union-attr]
-        assert s.expect == (str(i) if shell == "cmd" else f"{i}:{n}")
-
-
-def test_put_file_quotes_the_path():
+def test_typed_joins_the_input_rows_wraps():
+    rows = [state(1), "> cls; . { git log --oneline } 2>&1 | Out-St", "ream | jk"]
     assert (
-        "'C:\\tmp\\it''s.bin'"
-        in put_file("C:\\tmp\\it's.bin", b"x", "powershell").steps[-1].command
+        sh.typed(rows, sh.prompts(rows)[0]) == "cls; . { git log --oneline } 2>&1 | Out-Stream | jk"
     )
-    assert "'/tmp/it'\\''s'" in put_file("/tmp/it's", b"x", "bash").steps[-1].command
+    assert sh.typed([state(1)], sh.prompts([state(1)])[0]) is None
 
 
-def test_put_file_empty():
-    plan = put_file("e", b"", "powershell")
-    assert len(plan.steps) == 2 and plan.steps[0].expect == "0:0"
+def test_reply_strips_numbers_and_ends_at_the_next_prompt():
+    rows = ["   1 one", "   2 two words", "   3 ", state(2), "> "]
+    r = sh.reply(rows, 1)
+    assert r.lines == ["one", "two words", ""] and (r.first, r.last) == (1, 3)
+    assert r.prompt is not None and r.prompt.n == 2 and r.prompt.ok
+    assert sh.reply(["   1 one"], 1).prompt is None  # still running
+    assert sh.reply(["   1 one"], 1).lines == ["one"]  # what it printed so far
 
 
-def test_put_file_10kb_size():
-    plan = put_file("f", bytes(10_000), "powershell")
-    typed = sum(len(s.command) + 1 for s in plan.steps)
-    assert len(plan.steps) <= 45 and typed < 16_500
+def test_reply_ignores_the_echo_and_older_prompts_when_nothing_cleared():
+    rows = [state(1), "> . { dir } 2>&1 | Out-String -Stream | jk", "   1 a.txt", state(2), "> "]
+    r = sh.reply(rows, 1)
+    assert r.lines == ["a.txt"] and r.prompt is not None and r.prompt.n == 2
+    assert sh.reply(["   1 old", state(1), "> "], 1).prompt is None  # prompt 1 is not 2
 
 
-H = hashlib.sha256(b"jharokha").hexdigest()
+def test_a_row_without_the_next_number_continues_the_line_before():
+    rows = [
+        "   1 a line the terminal cut at the edge",
+        "ge of the pane",
+        "   2 12 files changed",
+        state(2),
+        ">",
+    ]
+    r = sh.reply(rows, 1)
+    assert r.lines == ["a line the terminal cut at the edgege of the pane", "12 files changed"]
+    # A wrapped continuation that happens to start with a number is no line of its own.
+    rows = ["   1 total", "42 bytes", "   2 next", state(2), ">"]
+    assert sh.reply(rows, 1).lines == ["total42 bytes", "next"]
 
 
-def test_check_hash_exact_case_and_spaces():
-    assert check_hash(screen(H.upper()), H) == "exact"
-    assert check_hash(screen(("SHA256 hash of f:",), H[:30] + " " + H[30:]), H) == "exact"
-    assert check_hash(screen(H[:40], H[40:]), H) == "exact"
+def test_two_rows_the_reader_joined_are_split_at_the_next_number():
+    rows = ["   1 exactly as wide as the screen   2 and the next", state(2), ">"]
+    assert sh.reply(rows, 1).lines == ["exactly as wide as the screen", "and the next"]
 
 
-def test_check_hash_folded_lookalikes():
-    damaged = H.upper().replace("0", "O").replace("1", "l").replace("8", "B").replace("5", "S")
-    assert damaged.lower() != H
-    assert check_hash(screen(damaged), H) == "folded"
+def test_a_start_that_scrolled_off_shows_in_first():
+    rows = ["  18 r18", "  19 r19", state(2), ">"]
+    r = sh.reply(rows, 1)
+    assert (r.first, r.last, r.lines) == (18, 19, ["r18", "r19"])
+    assert sh.page(12, 6) == "cls; $__jk.GetRange(11, 6) | jk 11 -p"
+    assert sh.page(12, 6, base=4) == "cls; $__jk.GetRange(7, 6) | jk 11 -p"
 
 
-def test_check_hash_mismatch():
-    other = hashlib.sha256(b"other").hexdigest()
-    assert check_hash(screen(other), H) == "mismatch"
-    assert check_hash(screen(H[:63]), H) == "mismatch"
-    assert check_hash([], H) == "mismatch"
+def test_numbering_from_a_base_for_a_file_page():
+    rows = ["   5 five", "   6 six", state(2), ">"]
+    r = sh.reply(rows, 1, base=4)
+    assert (r.first, r.last, r.lines) == (5, 6, ["five", "six"])
+    assert sh.reply([state(2), ">"], 1, base=4).first == 5  # nothing printed: no paging
 
 
-def test_put_file_round_trip_on_screen():
-    """The last step's reply, as OCR might read it, verifies the plan's hash."""
-    plan = put_file("f.bin", b"hello", "powershell")
-    last = plan.steps[-1]
-    shown = PROMPT + " " + last.command
-    lines = screen(
-        shown[:90], shown[90:180], shown[180:], plan.sha256.upper(), last.token + ":True:"
+def test_wrapped_lines_dot_source_and_number():
+    assert sh.wrapped("git status") == "cls; . { git status } 2>&1 | Out-String -Stream | jk"
+    assert sh.wrapped("dir", clear=False) == ". { dir } 2>&1 | Out-String -Stream | jk"
+    assert sh.wrapped("gc x", base=4) == "cls; . { gc x } 2>&1 | Out-String -Stream | jk 4"
+
+
+def test_write_file_reads_the_clipboard_and_prints_the_hash():
+    cmd = sh.write_file("C:\\a\\it's.txt")
+    assert cmd.startswith(
+        "Get-Clipboard -Raw | Set-Content -NoNewline -Encoding utf8 -LiteralPath 'C:\\a\\it''s.txt'"
     )
-    run = read_run(lines, last.token, "powershell")
-    assert run is not None and run.echoed and run.ok
-    assert check_hash(run.output, plan.sha256) == "exact"
+    assert cmd.endswith("(Get-FileHash -Algorithm SHA256 -LiteralPath 'C:\\a\\it''s.txt').Hash")
+    assert "\n" not in cmd
+    text = "line one\nline two\n"
+    assert sh.sha256(text) == hashlib.sha256(text.encode()).hexdigest()
 
 
-TRICKY = 'first line\n\tit\'s ‘quoted’ – ünïcode, $HOME `n %PATH% "double"\n\nlast\n'
+def test_check_hash_exact_folded_and_mismatch():
+    h = "ab" * 32
+    assert sh.check_hash([h.upper()], h) == "exact"
+    assert sh.check_hash(["AB" * 16 + " " + "ab" * 16], h) == "exact"  # a hash OCR split
+    assert sh.check_hash([("a8" * 32)], h) == "folded"  # OCR's 8 for B
+    assert sh.check_hash(["cd" * 32], h) == "mismatch" and sh.check_hash([], h) == "mismatch"
 
 
-def test_write_text_types_lines_in_confirmed_batches():
-    from jharokha.core.shell import BATCH, write_text
-
-    plan = write_text("out.txt", "a\nb\n" * 2000, "powershell")
-    assert all(len(st.command) < BATCH + 200 for st in plan.steps[:-1])
-    assert plan.steps[-2].expect is not None and plan.steps[-2].expect.endswith(":4001")
-    # A batch after the first cuts the list back to where it starts: typed again, it adds
-    # its lines once.
-    assert "RemoveRange" in plan.steps[1].command
-    with pytest.raises(ValueError, match="control character"):
-        write_text("x", "bell\x07", "powershell")
-    with pytest.raises(ValueError, match="too long"):
-        write_text("x", "y" * 5000, "powershell")
-    with pytest.raises(ValueError, match="powershell or bash"):
-        write_text("x", "y", "cmd")
-
-
-MANY = "\n".join(f"row {i}: it's\tfine" for i in range(600))  # several batches
-
-
-@pytest.mark.parametrize("shell", ["powershell", "bash"])
-@pytest.mark.parametrize(
-    "text", [TRICKY, TRICKY.replace("\n", "\r\n"), "no newline at end", "", MANY]
-)
-def test_write_text_writes_the_exact_bytes(tmp_path, shell, text):
-    """The plan run by a real shell on this machine, as the session's would run it."""
-    import hashlib
-    import shutil
-    import subprocess
-    import sys
-
-    from jharokha.core.shell import write_text
-
-    exe = shutil.which("powershell" if shell == "powershell" else "bash")
-    if exe is None or sys.platform != "win32":
-        pytest.skip(f"no {shell} here")
-    target = tmp_path / "out.txt"
-    path = str(target) if shell == "powershell" else target.as_posix()
-    plan = write_text(path, text, shell)  # type: ignore[arg-type]
-    script = tmp_path / ("run.ps1" if shell == "powershell" else "run.sh")
-    # Every batch typed twice, as a retry after a misread confirmation types it.
-    script.write_text(
-        "\n".join(
-            [st.command for st in plan.steps[:-1] for _ in (1, 2)] + [plan.steps[-1].command]
-        ),
-        encoding="utf-8-sig" if shell == "powershell" else "utf-8",
-    )
-    args = (
-        [exe, "-NoProfile", "-File", str(script)]
-        if shell == "powershell"
-        else [exe, script.as_posix()]
-    )
-    out = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", timeout=60).stdout
-    assert target.read_bytes() == text.encode("utf-8")
-    assert plan.sha256 == hashlib.sha256(text.encode()).hexdigest()
-    assert plan.sha256.lower() in out.lower()
-
-
-def test_a_row_ending_in_the_tokens_start_does_not_hide_the_marker():
-    # "x" above "XXNAH7:True:0" reads, joined, as the echo `XX` + `NAH7` split over rows.
-    from .conftest import lines_for
-
-    for above, token in (("x", "XXNAH7"), ("ends in KX", "KX7R4C"), ("x", "73XXXX")):
-        lines = lines_for([(above, 10, 10), (f"{token}:True:0", 10, 48), (PROMPT, 10, 86)])
-        reply = read_reply(lines, token)
-        assert reply is not None and reply.payload == "True:0", token
-        assert [ln.text for ln in reply.output] == [above]
+def test_looks_like_is_exact_for_the_glyph_reader_and_loose_for_ocr():
+    line = "cls; . { gc Dockerfile } 2>&1 | Out-String -Stream | jk"
+    assert sh.looks_like(line, line)
+    assert sh.looks_like(
+        "cls;.{gcDockerfile}2>&1|0ut-String-Stream|jk", line
+    )  # spaces dropped, 0 for O
+    assert not sh.looks_like(line[:-3], line)  # still arriving
+    assert not sh.looks_like("", line)

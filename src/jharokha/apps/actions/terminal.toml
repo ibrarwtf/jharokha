@@ -3,15 +3,20 @@
 # address bar searches the web for it). A command runs under the default allow: which
 # commands only read cannot be told from their text (an allowlist passed none of a live
 # day's 93), and a flag every call carries guards nothing. --allow-input is the opt-in.
+#
+# The shell is PowerShell in a tab prepared once (core.shell): its prompt shows a counter,
+# the date and time, the last command's status and exit code and the directory, so a
+# command's end and result are read exactly; its output is numbered and paged. A run
+# prepares the tab itself when it finds no such prompt.
 format = 1
 
 [action.terminal.run]
-summary = """Run one command in the shell in front and return what it printed and its exit
-code, read up to an end marker the command prints (not the prompt, which OCR misreads).
-Output longer than the screen is read back up the scrollback. On a timeout, output holds
-what it printed so far and fields.finished is false. Learns the font first when needed."""
-args.command = { type = "text", max_len = 2000, doc = "one line" }
-args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+summary = """Run one command in the PowerShell tab in front and return what it printed (output,
+its lines numbered on screen but not here), its exit code and status, read up to the
+shell's next state prompt. Output longer than the screen is paged back from the shell.
+On a timeout, output holds what it printed so far and fields.finished is false. Prepares
+the tab (terminal.setup) first when needed."""
+args.command = { type = "text", max_len = 2000, doc = "one line of PowerShell" }
 args.timeout_s = { type = "number", default = 30, max = 300, doc = "seconds for the command to finish, up to 300" }
 
 [[action.terminal.run.step]]
@@ -20,38 +25,55 @@ do = "focus"
 [[action.terminal.run.step]]
 do = "run"
 command = "{command}"
-shell = "{shell}"
 region = "body"
-clear = true  # cls on the same line, so the reply starts at the top whatever OCR makes of its echo
+clear = true  # cls on the same line, so the output starts at the top of the screen
 timeout_s = "{timeout_s}"
 
-# Prints every printable ASCII glyph in a known order and learns what each looks like in
-# this terminal's font, so later reads match cells instead of running OCR (core.glyphs).
-[action.terminal.glyphs]
-summary = """Learn the terminal's font: prints the printable ASCII alphabet (two lines, nothing
-else) and remembers each glyph, so terminal reads are exact and fast from then on. Once per
-session, before terminal work; again after a zoom or font change."""
-args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
+[action.terminal.read_file]
+summary = """Lines of a text file in the PowerShell tab in front, numbered from the file's
+first line: count lines from line from on (40 from line 1 by default). Ask for the next
+page by its line number."""
+args.path = { type = "text", max_len = 260, pattern = "[^'\r\n]+" }
+args.from = { type = "number", default = 1, max = 10000000, doc = "the first line to show, 1-based" }
+args.count = { type = "number", default = 40, max = 400 }
 
-[[action.terminal.glyphs.step]]
+[[action.terminal.read_file.step]]
 do = "focus"
 
-[[action.terminal.glyphs.step]]
+[[action.terminal.read_file.step]]
 do = "run"
-learn = "glyphs"
-shell = "{shell}"
+command = "Get-Content -LiteralPath '{path}' | Select-Object -Skip ({from}-1) -First {count}"
+first = "{from}"
 region = "body"
 clear = true
+timeout_s = 30
+
+# Prepares the tab: the state prompt, the numbering filter, predictions off and one ink
+# (in memory only, gone with the tab), then prints the printable ASCII alphabet once and
+# learns what each glyph looks like, so terminal reads match cells instead of running OCR
+# (core.glyphs). terminal.run does this itself when the prompt is not there.
+[action.terminal.setup]
+summary = """Prepare the PowerShell tab in front: a prompt that shows the command counter,
+date, time, status, exit code and directory, no colours or predictions, and the
+terminal's font learned from the alphabet it prints. Needed again after a zoom, font or
+window size change; terminal.run does it itself when the prompt is not there."""
+
+[[action.terminal.setup.step]]
+do = "focus"
+
+[[action.terminal.setup.step]]
+do = "run"
+setup = true
+region = "body"
 timeout_s = 20
 
 [action.terminal.write_file]
-summary = """Write a text file in the shell in front as readable lines: typed in batches,
-each confirmed by the shell's count of lines so far, then written as UTF-8 (no BOM) with
-the text's own line endings and its SHA-256 checked against the one sent. Tabs are fine;
-other control characters and lines over about 3,000 characters are not (put_file)."""
-args.path = { type = "text", max_len = 260 }
-args.text = { type = "text", max_len = 200000 }
-args.shell = { type = "choice", choices = ["powershell", "bash"], default = "powershell" }
+summary = """Write a text file from the PowerShell tab in front: the text goes into this
+machine's clipboard, one short command writes the clipboard to the path as UTF-8 (no BOM,
+the text's own line endings) and prints its SHA-256, checked against the text's. Nothing
+of the text is typed or shown on screen."""
+args.path = { type = "text", max_len = 260, pattern = "[^'\r\n]+" }
+args.text = { type = "text", max_len = 1000000 }
 
 [[action.terminal.write_file.step]]
 do = "focus"
@@ -60,24 +82,5 @@ do = "focus"
 do = "write_file"
 path = "{path}"
 text = "{text}"
-shell = "{shell}"
 region = "body"
-timeout_s = 15
-
-[action.terminal.put_file]
-summary = """Write a file in the shell in front: its bytes as base64 typed in short chunks, each
-confirmed, then decoded there and its SHA-256 checked against the one sent."""
-args.path = { type = "text", max_len = 260 }
-args.content_base64 = { type = "base64", max_len = 200000 }
-args.shell = { type = "choice", choices = ["powershell", "cmd", "bash"], default = "powershell" }
-
-[[action.terminal.put_file.step]]
-do = "focus"
-
-[[action.terminal.put_file.step]]
-do = "put_file"
-path = "{path}"
-content_base64 = "{content_base64}"
-shell = "{shell}"
-region = "body"
-timeout_s = 15
+timeout_s = 30

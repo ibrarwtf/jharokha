@@ -74,8 +74,8 @@ def test_key_names_and_a_plus_key_in_a_chord(inp, monkeypatch):
 def clip(inp, monkeypatch):
     """The local clipboard as a list of what was set, starting with the user's text."""
     board = ["user's text"]
-    monkeypatch.setattr(inp, "_clipboard", lambda: board[-1])
-    monkeypatch.setattr(inp, "_set_clipboard", board.append)
+    monkeypatch.setattr(inp, "clipboard", lambda: board[-1])
+    monkeypatch.setattr(inp, "set_clipboard", board.append)
     return board
 
 

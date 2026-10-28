@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import io
 import json
 import os
 import sys
@@ -29,6 +30,10 @@ def _source():  # noqa: ANN202
 
 
 def main() -> None:
+    # Screen text is any text; the Windows console's code page cannot print all of it.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(prog="jharokha", description=__doc__)
     p.add_argument("--version", action="version", version=f"jharokha {version()}")
     p.add_argument("--window-title", help="substring of the window title to pick")

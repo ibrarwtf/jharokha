@@ -1,387 +1,237 @@
-"""Run commands in a remote shell and read the result back by OCR.
+"""A PowerShell tab prepared once to announce its own state, so a command's end, status
+and output are read off the screen exactly instead of inferred.
 
-A typed command gets a suffix that prints `<token>:<status>` once it has finished; the
-prompt is no use for that, as OCR misreads it. Files go in as base64 in short chunks (JSON
-escaping would mangle raw text) and come back checked by their SHA-256.
+The tab's prompt is replaced (in memory only, gone with the tab) by two rows: a state row
+`JK<n> <date> <time> <ok> <exit code> <directory>` with a counter that makes every prompt
+unique, and an input row `> `. A command has finished when the state row with the next
+number is on screen; its `$?` and `$LASTEXITCODE` are on that row; its output is the rows
+between. Colours and predictions are turned off, so the terminal draws one ink that the
+glyph reader (core.glyphs) matches exactly, and the output of a command goes through a
+filter that numbers its lines (`   1 text`) and keeps them in a variable, so a line that
+wrapped, a screen that overflowed and the page to fetch next are all told by the numbers.
 
-No get_file: reading a file back means OCR of base64, which is case-sensitive while
-terminal OCR confuses case and lookalikes on every few lines, so it needs an
-OCR-safe encoding, per-line checksums and paging through screens, none of which has been
-tried on a live session yet.
+Nothing of a file's content is ever typed or shown: a file is written from this machine's
+clipboard, which the session reads, and checked by its SHA-256.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import re
-import secrets
 from dataclasses import dataclass
 from typing import Literal
 
-from jharokha.core.models import Line
-from jharokha.core.models import rows as _rows
+from jharokha.core.glyphs import ALPHABET_COMMAND
 
-Shell = Literal["powershell", "cmd", "bash"]
+# The prompt's marker; an environment variable lets frames saved under another marker
+# still be read.
+MARK = os.environ.get("JHAROKHA_MARK", "JK")
+"""What a state row starts with."""
+DIR_WIDTH = 40
+"""Characters of the directory a state row shows: its end, after `..` when cut."""
+VAR = "__jk"
+"""The variable holding the last command's output lines, for paging."""
 
-# Without O/0/Q/D, I/1/l, S/5, B/8, Z/2, G/6, U/V, F (read as E) and T (as 7): what
-# remains differs only in case under OCR, and case is ignored.
-_ALPHABET = "ACEHKMNPRWXY3479"
-_SEPS = ":;.,"
-# Lookalikes read in place of digits, in a status code, a chunk length or a hash.
+# Lookalikes read in place of digits, in a counter or an exit code read by OCR before the
+# glyphs are learned.
 _DIGIT = str.maketrans("OoQDIl|!iSsBZzG", "000011111558226")
 _HEX = str.maketrans("oqdil|!sbgz", "09011115862")
 
-CHUNK = 400
-"""Longest command a put_file step types, so a dropped keystroke costs one retyped step."""
+_PROMPT_FN = (
+    "function prompt { $ok=$?; $c=[int]$LASTEXITCODE; $global:LASTEXITCODE=0; "
+    f"$global:{VAR}n++; $d=$PWD.Path; if($d.Length -gt {DIR_WIDTH})"
+    f"{{$d='..'+$d.Substring($d.Length-{DIR_WIDTH - 2})}}; "
+    f"\"{MARK}$global:{VAR}n $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $ok $c $d`n> \" }}"
+)
+# `jk` numbers the lines piped into it from base+1 and, unless paging, keeps them in VAR.
+_FILTER_FN = (
+    "function jk { param($b=0, [switch]$p) begin { $n=$b; "
+    f"if(-not $p){{ $global:{VAR}=[Collections.Generic.List[string]]::new() }} }} "
+    f"process {{ $n++; if(-not $p){{ $global:{VAR}.Add($_) }}; '{{0,4}} {{1}}' -f $n,$_ }} }}"
+)
+_COLOURS = ";".join(
+    f"{k}='White'"
+    for k in (
+        "Command",
+        "Parameter",
+        "Operator",
+        "Variable",
+        "String",
+        "Number",
+        "Member",
+        "Type",
+        "Comment",
+        "Keyword",
+        "Default",
+        "Error",
+        "Selection",
+        "InlinePrediction",
+        "ContinuationPrompt",
+        "Emphasis",
+    )
+)
+_PLAIN = (
+    "Set-PSReadLineOption -PredictionSource None; "
+    f"Set-PSReadLineOption -Colors @{{{_COLOURS}}}; "
+    "$PSStyle.OutputRendering='PlainText'; $env:NO_COLOR='1'; "
+    "$env:GIT_CONFIG_PARAMETERS=\"'color.ui=false' 'core.pager='\""
+)
+SETUP = f"{_PROMPT_FN}; {_FILTER_FN}; {_PLAIN}; cls; {ALPHABET_COMMAND}"
+"""The one line that prepares a tab: the state prompt, the numbering filter, one ink, then
+the screen cleared and the glyph alphabet printed (core.glyphs learns from it)."""
+UNDO = (
+    'function prompt { "PS $($executionContext.SessionState.Path.CurrentLocation)'
+    "$('>' * ($nestedPromptLevel + 1)) \" }; Remove-Item function:jk; "
+    "Set-PSReadLineOption -PredictionSource HistoryAndPlugin; "
+    "$PSStyle.OutputRendering='Host'; Remove-Item env:NO_COLOR, env:GIT_CONFIG_PARAMETERS"
+)
+"""What puts the tab back as it was (colours stay white until the tab is closed)."""
+
+_STATE = re.compile(
+    rf"^\s*{MARK}(\d+)\s+(\d{{4}}-\d\d-\d\d)\s+(\d\d:\d\d:\d\d)\s+(True|False)\s+(-?\d+)(?:\s+(\S.*?))?\s*$"
+)
+# Before the glyphs are learned, Windows OCR reads a state row with digits as lookalikes
+# and spaces dropped: enough of its shape to know the tab is prepared.
+_STATE_LOOSE = re.compile(r"^\s*[I1l|]?A[0-9OIl|!]+\s*[0-9OIl]{4}-[0-9OIl]{2}-[0-9OIl]{2}")
+_INPUT = re.compile(r"^>\s?(.*)$")
+_NUMBERED = re.compile(r"^\s{0,3}(\d+) (.*)$")
 
 
-def new_token(n: int = 6) -> str:
-    return "".join(secrets.choice(_ALPHABET) for _ in range(n))
+@dataclass(frozen=True)
+class Prompt:
+    n: int
+    date: str
+    time: str
+    ok: bool
+    code: int
+    cwd: str
+    row: int
+    """Index of the state row among the rows it was read from."""
 
 
-# What clears the screen first, on the same line as the command.
-CLEAR: dict[str, str] = {"powershell": "cls;", "cmd": "cls & ", "bash": "clear; "}
+def prompts(rows: list[str]) -> list[Prompt]:
+    """The state rows among rows, in order."""
+    out = []
+    for i, r in enumerate(rows):
+        if m := _STATE.match(r):
+            out.append(Prompt(int(m[1]), m[2], m[3], m[4] == "True", int(m[5]), m[6] or "", i))
+    return out
 
 
-def marked(command: str, token: str, shell: Shell) -> str:
-    """command with a suffix that prints `<token>:<status>` when it finishes: PowerShell
-    `True:0` ($? and $LASTEXITCODE), cmd and bash the exit code. The token is split in two
-    in what is typed, so the echoed command line never holds it whole."""
-    a, b = token[:2], token[2:]
-    if shell == "powershell":
-        # $LASTEXITCODE is reset first: it keeps the last native program's code, so a
-        # cmdlet after `exit 3` would report 3. $? goes outside the quotes, where `"$?:"`
-        # would read as a drive-scoped name. A terminating error (a script's throw, or
-        # -ErrorAction Stop) skips the rest of the line, marker and all, so the command runs
-        # in try, which keeps its scope, and the error is written again as a plain one.
-        return (
-            f"$LASTEXITCODE=0;try{{{command.rstrip()}}}catch{{Write-Error $_ -ErrorAction "
-            f'Continue}};"{a}"+"{b}:"+$?+":"+$LASTEXITCODE'
-        )
-    if shell == "cmd":
-        # %errorlevel% on a typed line expands before the line runs; hiding it behind a
-        # caret and expanding again with `call` reads it after the command.
-        return f"{command.rstrip()} & call echo {a}^{b}:%^errorlevel%"
-    return f'{command.rstrip()}; echo "{a}""{b}:$?"'
+def prepared(rows: list[str]) -> bool:
+    """Whether the tab shows a state row, read exactly or by OCR."""
+    return any(_STATE.match(r) or _STATE_LOOSE.match(r) for r in rows)
+
+
+def typed(rows: list[str], p: Prompt) -> str | None:
+    """What the input row after prompt p holds (its wraps joined), or None when the row
+    is not on screen."""
+    if p.row + 1 >= len(rows):
+        return None
+    m = _INPUT.match(rows[p.row + 1])
+    if not m:
+        return None
+    return m[1] + "".join(rows[p.row + 2 :])
+
+
+def idle(rows: list[str]) -> Prompt | None:
+    """The prompt at the bottom of the screen with nothing typed after it, or None when
+    the last rows are not an empty prompt (a command running, text in the input, a
+    screen scrolled up)."""
+    ps = prompts(rows)
+    if not ps:
+        return None
+    p = ps[-1]
+    return p if typed(rows, p) == "" else None
 
 
 @dataclass(frozen=True)
 class Reply:
-    output: list[Line]
-    """The lines between the command's echo and the marker, with their boxes."""
-    payload: str
-    """What the shell printed after `<token>:`, spaces removed, as OCR read it."""
-    echoed: bool
-    """False when the command's line was not found (scrolled off, or cleared by its own
-    cls): output is everything above the marker and its start may be missing."""
-    bottom: int = 0
-    """The marker row's bottom edge: near the screen's bottom, the output may have
-    scrolled its start off the top."""
+    lines: list[str]
+    """The command's output lines, their numbers stripped, in order."""
+    first: int
+    """The number of the first line on screen: more than base+1 when the start scrolled
+    off the top, so the lines before it are fetched by paging."""
+    last: int
+    """The number of the last line: the count of lines the command printed."""
+    prompt: Prompt | None
+    """The prompt that ended the command; None while it is still running."""
 
 
-def _scan(
-    lines: list[Line], token: str
-) -> tuple[list[list[Line]], list[tuple[int, str]], list[int]]:
-    """The rows, the markers of token (row, payload) and the rows of its echo."""
-    rows = _rows(lines)
-    texts = [_fold("".join("".join(ln.text.split()) for ln in r)) for r in rows]
-    markers: list[tuple[int, str]] = []
-    echoes: list[int] = []
-    for i, t in enumerate(texts):
-        nxt = texts[i + 1] if i + 1 < len(texts) else ""
-        p = _payload(t, token)
-        if p == "" and nxt and _payload(nxt, token) is None:
-            p = _payload(t + nxt, token)
-        if p is not None:
-            # Never the echo too, however near its letters read: `73XXXX:` holds `73`, a
-            # gap, and `XXX:`, one letter off `XXXX`.
-            markers.append((i, p))
-            continue
-        if _echo(t, token):
-            echoes.append(i)
-        elif (
-            nxt
-            and not _echo(nxt, token)
-            # A row ending in the token's first letters above the marker joins with it
-            # into what looks like an echo split over two rows, hiding the marker.
-            and _payload(nxt, token) is None
-            and _echo(t + nxt, token)
-        ):
-            echoes.append(i + 1)
-    return rows, markers, echoes
+def reply(rows: list[str], n: int, base: int = 0) -> Reply:
+    """What command n printed, numbered from base+1 by the `jk` filter: the numbered rows
+    before the state row of prompt n+1 (all rows when it is not on screen yet). A row
+    that does not start with the next number continues the line before it (a wrapped
+    line); the next number inside a row (two rows the reader joined) splits it."""
+    end = next((p.row for p in prompts(rows) if p.n == n + 1), None)
+    ended = next((p for p in prompts(rows) if p.n == n + 1), None)
+    body = rows[:end] if end is not None else rows
+    lines: list[str] = []
+    first = 0
+    want = 0
+    for row in body:
+        m = _NUMBERED.match(row)
+        if m and (not lines or int(m[1]) == want):
+            if not lines:
+                first = int(m[1])
+            lines.append("")
+            want, row = int(m[1]), m[2]
+        elif not lines:
+            continue  # the echo, an older prompt: nothing numbered yet
+        # The row continues the line (one that wrapped), unless the next line's number
+        # sits further in: two rows the reader joined, split there.
+        while k := re.search(rf"\s{{1,4}}{want + 1} ", row):
+            lines[-1] += row[: k.start()]
+            lines.append("")
+            want, row = want + 1, row[k.end() :]
+        lines[-1] += row
+    last = first + len(lines) - 1 if lines else base
+    return Reply(lines, first if lines else base + 1, last, ended)
 
 
-def read_reply(lines: list[Line], token: str) -> Reply | None:
-    """The reply to the command marked with token, or None while its marker is not on
-    screen. Tolerates case, one misread token character, lookalikes OCR reads for the
-    token's letters (`VV` for W), spaces OCR adds or drops, a stray character in front, a
-    marker OCR split into pieces or that wrapped onto the next row; markers of other
-    tokens (earlier runs) do not count."""
-    rows, markers, echoes = _scan(lines, token)
-    if echoes:
-        e = echoes[-1]
-        after = [m for m in markers if m[0] > e]
-        if not after:
-            return None
-        start, (m, payload) = e + 1, after[0]
-    elif markers:
-        start, (m, payload) = 0, markers[-1]
-    else:
-        return None
-    out = [ln for r in rows[start:m] for ln in r]
-    bottom = max(ln.box[1] + ln.box[3] for ln in rows[m])
-    return Reply(out, payload, bool(echoes), bottom)
+def wrapped(command: str, base: int = 0, clear: bool = True) -> str:
+    """command as one typed line: dot-sourced (so cd and variables keep their effect),
+    its error stream merged, formatted as the console would and numbered by `jk`."""
+    tail = f" | Out-String -Stream | jk {base}" if base else " | Out-String -Stream | jk"
+    return ("cls; " if clear else "") + ". { " + command.strip() + " } 2>&1" + tail
 
 
-def echoed(lines: list[Line], token: str) -> bool:
-    """Whether the line marked with token is on screen as typed: in the shell's input
-    before Enter, or as its echo after."""
-    return bool(_scan(lines, token)[2])
+def page(first: int, count: int, base: int = 0) -> str:
+    """The line that shows lines first..first+count-1 of the last command's output again,
+    with their numbers, from the variable `jk` kept them in."""
+    return f"cls; ${VAR}.GetRange({first - 1 - base}, {count}) | jk {first - 1} -p"
 
 
-def after_echo(lines: list[Line], token: str) -> tuple[list[Line], bool]:
-    """What a command marked with token printed so far: the rows after its echo, or all of
-    them when the echo is not on screen; and whether it was."""
-    rows, _, echoes = _scan(lines, token)
-    start = echoes[-1] + 1 if echoes else 0
-    return [ln for r in rows[start:] for ln in r], bool(echoes)
+def write_file(path: str) -> str:
+    """The command that writes this machine's clipboard to path as UTF-8 without a BOM,
+    the text as it is, and prints the file's SHA-256."""
+    q = path.replace("'", "''")
+    return (
+        f"Get-Clipboard -Raw | Set-Content -NoNewline -Encoding utf8 -LiteralPath '{q}'; "
+        f"(Get-FileHash -Algorithm SHA256 -LiteralPath '{q}').Hash"
+    )
 
 
-def status(payload: str, shell: Shell) -> tuple[bool | None, int | None]:
-    if shell == "powershell":
-        m = re.match(rf"^([TtFf])[^{_SEPS}]*(?:[{_SEPS}](.*))?$", payload)
-        if not m:
-            return None, None
-        return m.group(1) in "Tt", _int(m.group(2) or "")
-    code = _int(payload)
-    return (None if code is None else code == 0), code
+def sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def confirms(payload: str, expect: str) -> bool:
-    """A step's payload says what it should (`3:372`), after folding digit lookalikes."""
-    return re.sub(f"[{_SEPS}]", ":", payload.translate(_DIGIT)) == expect
-
-
-@dataclass(frozen=True)
-class Step:
-    command: str
-    token: str
-    expect: str | None
-    """The payload the step prints when it worked (chunk index and stored length; index
-    only for cmd); None for the last step, checked by read_run and check_hash instead."""
-
-
-@dataclass(frozen=True)
-class PutPlan:
-    steps: tuple[Step, ...]
-    """Chunks, then the step that decodes, writes and prints the file's SHA-256. Type them
-    in order and retype a failed chunk before the next one: chunk 0 starts afresh."""
-    sha256: str
-    size: int
-
-
-def put_file(path: str, data: bytes, shell: Shell) -> PutPlan:
-    tag = new_token()
-    tok = "W" * len(tag)
-    over = max(len(_chunk(shell, i, "", tok, tag)) for i in (0, 9999))
-    # A multiple of 4, so each chunk is whole base64 even to a decoder that wants lines.
-    size = (CHUNK - over) // 4 * 4
-    b64 = base64.b64encode(data).decode()
-    pieces = [b64[i : i + size] for i in range(0, len(b64), size)] or [""]
-    steps = []
-    for i, piece in enumerate(pieces):
-        t = new_token()
-        expect = str(i) if shell == "cmd" else f"{i}:{len(piece)}"
-        steps.append(Step(_chunk(shell, i, piece, t, tag), t, expect))
-    t = new_token()
-    steps.append(Step(_write(shell, path, len(pieces), t, tag), t, None))
-    return PutPlan(tuple(steps), hashlib.sha256(data).hexdigest(), len(data))
-
-
-BATCH = 3000
-"""Longest command a write_text step pastes: under the 4 KB a terminal pastes as one line
-without asking, with room for the quoting."""
-# PowerShell takes each of these as a single quote, so inside a quoted string each is
-# doubled, which stands for itself.
-_QUOTES = "'‘’‚‛"
-
-
-def write_text(path: str, text: str, shell: Shell) -> PutPlan:
-    """A text file written as its lines, readable as typed: batches of lines appended to a
-    list in the shell, each step confirming how many lines the list holds, then the list
-    joined with the text's own line ending, written as UTF-8 without a BOM, and its SHA-256
-    printed. ValueError for what a line typed into a shell cannot carry: a control
-    character other than a tab, a lone CR or LF beside CRLF line endings, or a shell
-    other than PowerShell or bash."""
-    if shell not in ("powershell", "bash"):
-        raise ValueError("write_file takes powershell or bash")
-    nl = "\r\n" if "\r\n" in text else "\n"
-    lines = text.split(nl)
-    for n, line in enumerate(lines, 1):
-        bad = next((c for c in line if (ord(c) < 32 and c != "\t") or c == "\x7f"), None)
-        if bad is not None:
-            raise ValueError(f"line {n} holds the control character {bad!r}")
-    steps: list[Step] = []
-    parts: list[str] = []
-    start = 0  # lines the list holds before the batch
-
-    def flush() -> None:
-        nonlocal start
-        t = new_token()
-        i = len(steps)
-        a, b = t[:2], t[2:]
-        # A batch first cuts the list back to where it starts, so a batch typed again (its
-        # confirmation misread) does not add its lines twice.
-        if shell == "powershell":
-            if i == 0:
-                init = "$jkw=[Collections.Generic.List[string]]::new()"
-            else:
-                init = f"if($jkw.Count -gt {start}){{$jkw.RemoveRange({start},$jkw.Count-{start})}}"
-            mark = f'"{a}"+"{b}:{i}:"+$jkw.Count'
-        else:
-            init = "jkw=()" if i == 0 else f'jkw=("${{jkw[@]:0:{start}}}")'
-            mark = f'echo "{a}""{b}:{i}:${{#jkw[@]}}"'
-        start += len(parts)
-        steps.append(Step("; ".join([init, *parts, mark]), t, f"{i}:{start}"))
-        parts.clear()
-
-    for n, line in enumerate(lines, 1):
-        q = _quoted(line, shell)
-        stmt = f"$jkw.Add({q})" if shell == "powershell" else f"jkw+=({q})"
-        if len(stmt) > BATCH:
-            raise ValueError(
-                f"line {n} is too long to type as one ({len(line)} characters, quotes and tabs "
-                "count more): put_file takes any bytes"
-            )
-        if parts and sum(len(x) + 2 for x in parts) + len(stmt) > BATCH:
-            flush()
-        parts.append(stmt)
-    flush()
-    t = new_token()
-    if shell == "powershell":
-        q = path.replace("'", "''")
-        sep = '"`r`n"' if nl == "\r\n" else '"`n"'
-        cmd = (
-            f"$jkp=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('{q}'); "
-            f"[IO.File]::WriteAllText($jkp,($jkw -join {sep}),[Text.UTF8Encoding]::new($false)); "
-            "(Get-FileHash -A SHA256 -LiteralPath $jkp).Hash"
-        )
-    else:
-        q = "'" + path.replace("'", "'\\''") + "'"
-        sep = "\\r\\n" if nl == "\r\n" else "\\n"
-        cmd = (
-            f"{{ printf %s \"${{jkw[0]}}\"; [ ${{#jkw[@]}} -gt 1 ] && printf '{sep}%s' "
-            f'"${{jkw[@]:1}}"; }} > {q}; sha256sum {q} | cut -c1-64'
-        )
-    steps.append(Step(marked(cmd, t, shell), t, None))
-    data = text.encode("utf-8")
-    return PutPlan(tuple(steps), hashlib.sha256(data).hexdigest(), len(data))
-
-
-def _quoted(s: str, shell: Shell) -> str:
-    """s as a quoted shell string, a tab joined in as an expression: typed, a tab would
-    complete a file name."""
-    if shell == "powershell":
-        quoted = [
-            "'" + "".join(c * 2 if c in _QUOTES else c for c in p) + "'" for p in s.split("\t")
-        ]
-        return '+"`t"+'.join(quoted)
-    return "$'\\t'".join("'" + p.replace("'", "'\\''") + "'" for p in s.split("\t"))
-
-
-def check_hash(lines: list[Line], expected: str) -> Literal["exact", "folded", "mismatch"]:
-    """Whether the lines show the expected SHA-256: exactly (ignoring case and spaces, so a
-    hash OCR split or wrapped still counts), only after folding lookalikes (0/O/D, 1/I/l,
-    5/S, 8/B, 6/G, 2/Z), or not at all."""
-    seen = "".join("".join(ln.text.split()) for ln in lines).lower()
+def check_hash(lines: list[str], expected: str) -> Literal["exact", "folded", "mismatch"]:
+    """Whether the lines show the expected SHA-256: exactly (ignoring case and spaces),
+    only after folding lookalikes (0/O, 1/I/l, 5/S, 8/B, 6/G, 2/Z: a hash read by OCR),
+    or not at all."""
+    seen = "".join("".join(ln.split()) for ln in lines).lower()
     want = expected.lower()
     if want in seen:
         return "exact"
     return "folded" if want.translate(_HEX) in seen.translate(_HEX) else "mismatch"
 
 
-def _chunk(shell: Shell, i: int, piece: str, token: str, tag: str) -> str:
-    a, b = token[:2], token[2:]
-    if shell == "powershell":
-        init = "$jkb=@{}; " if i == 0 else ""
-        return f'{init}$jkb[{i}]=\'{piece}\'; "{a}"+"{b}:{i}:$($jkb[{i}].Length)"'
-    if shell == "bash":
-        init = "jkb=(); " if i == 0 else ""
-        return f'{init}jkb[{i}]=\'{piece}\'; echo "{a}""{b}:{i}:${{#jkb[{i}]}}"'
-    init = f'del "%TEMP%\\jk{tag}_*.b64" 2>nul & ' if i == 0 else ""
-    # The redirect goes first so a digit ending the piece is not read as a handle.
-    return f'{init}>"%TEMP%\\jk{tag}_{i:04}.b64" echo({piece}& echo {a}^{b}:{i}'
-
-
-def _write(shell: Shell, path: str, n: int, token: str, tag: str) -> str:
-    if shell == "powershell":
-        q = path.replace("'", "''")
-        # Relative to the shell's location; .NET alone would resolve it against the
-        # process's working directory.
-        cmd = (
-            f"$jkp=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('{q}'); "
-            f"[IO.File]::WriteAllBytes($jkp,[Convert]::FromBase64String((-join $jkb[0..{n - 1}])"
-            ")); (Get-FileHash -A SHA256 -LiteralPath $jkp).Hash"
-        )
-        return marked(cmd, token, shell)
-    if shell == "bash":
-        q = "'" + path.replace("'", "'\\''") + "'"
-        cmd = f'printf %s "${{jkb[@]}}" | base64 -d > {q} && sha256sum {q} | cut -c1-64'
-        return marked(cmd, token, shell)
-    tmp = f'"%TEMP%\\jk{tag}'
-    cmd = (
-        f'copy /b {tmp}_*.b64" {tmp}.b64" >nul && certutil -f -decode {tmp}.b64" "{path}" >nul'
-        f' && certutil -hashfile "{path}" SHA256'
-    )
-    return marked(cmd, token, shell) + f' & del {tmp}*.b64"'
-
-
-def _near(a: str, b: str) -> bool:
-    return len(a) == len(b) and sum(x != y for x, y in zip(a.upper(), b, strict=True)) <= 1
-
-
-# What OCR reads for the token alphabet's letters at terminal sizes, folded back: two
-# glyphs for one (VV for W, IVI or rn for M) would otherwise shift every character after.
-_GLYPHS = (("VV", "W"), ("IVI", "M"), ("|\\/|", "M"), ("I-I", "H"), ("|-|", "H"))
-
-
-def _fold(text: str) -> str:
-    out = text
-    for a, b in _GLYPHS:
-        out = out.replace(a, b)
-    return out
-
-
-def _payload(text: str, token: str) -> str | None:
-    """What follows the token when text is a marker line: at its start, after a stray
-    character OCR put in front (the caret, a border), or further in when a separator
-    follows it (the row ran together with what was left of the prompt)."""
-    n = len(token)
-    for at in range(0, max(1, len(text) - n + 1)):
-        if _near(text[at : at + n], token):
-            rest = text[at + n :]
-            # Further in, only a status after a separator: an echo whose quotes OCR dropped
-            # reads `...KX7R4C:${jkq}...` and is no marker.
-            if at > 1 and not re.match(rf"[{_SEPS}][TtFf\d-]", rest):
-                continue
-            return rest[1:] if rest[:1] and rest[0] in _SEPS else rest
-    return None
-
-
-def _echo(text: str, token: str) -> bool:
-    """text holds the typed command's split token: its two parts with the quotes or caret
-    between them, which OCR may garble but never removes entirely."""
-    a, b = token[:2], token[2:]
-    up = text.upper()
-    for m in re.finditer(re.escape(a), up):
-        for gap in range(1, 6):
-            at = m.end() + gap
-            if _near(up[at : at + len(b)], b):
-                return True
-    return False
-
-
-def _int(s: str) -> int | None:
-    s = s.translate(_DIGIT)
-    return int(s) if re.fullmatch(r"-?\d+", s) else None
+def looks_like(a: str, b: str) -> bool:
+    """Whether a, read off the screen, is b typed: the same, or the same after the
+    spaces are dropped and lookalikes folded (a line read by OCR)."""
+    if a == b:
+        return True
+    fa = "".join(a.split()).translate(_DIGIT).lower()
+    fb = "".join(b.split()).translate(_DIGIT).lower()
+    return fa == fb

@@ -153,7 +153,7 @@ def test_refine_puts_a_shifted_grid_back_on_its_cells():
 
 
 def test_the_alphabet_command_prints_the_alphabet_lines():
-    assert "[char[]](33..79)" in glyphs.COMMAND["powershell"]
+    assert "[char[]](33..79)" in glyphs.ALPHABET_COMMAND
     assert len(glyphs.ALPHABET[0]) == len(glyphs.ALPHABET[1]) == 47
     assert "".join(glyphs.ALPHABET) == "".join(chr(c) for c in range(33, 127))
 

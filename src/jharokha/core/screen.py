@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -47,6 +48,11 @@ class Source(Protocol):
     def paste_line(self, w: WindowInfo, text: str) -> bool:
         """One line pasted, no Enter, once it is on screen; True when a paste warning was
         accepted. Raises ScreenError("paste_failed") when it never arrived."""
+        ...
+
+    def clipboard(self, w: WindowInfo, text: str) -> Callable[[], None]:
+        """text put in this machine's clipboard, where the session reads it on its own
+        (Get-Clipboard); the returned call puts the clipboard back as it was."""
         ...
 
     def guard_state(self, w: WindowInfo) -> dict[str, Any]:

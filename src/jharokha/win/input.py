@@ -332,8 +332,8 @@ def paste_text(
     session. A final newline is sent as Enter after the paste, unless watch saw the user's
     own input since the Ctrl+V. The local clipboard's text is put back afterwards."""
     body, enter = (text[:-1], True) if text.endswith("\n") else (text, False)
-    old = _clipboard()
-    _set_clipboard(body.replace("\r\n", "\n").replace("\n", "\r\n"))
+    old = clipboard()
+    set_clipboard(body.replace("\r\n", "\n").replace("\n", "\r\n"))
     try:
         time.sleep(0.2)  # the client announces the new clipboard to the session
         x, y = focus_at or (None, None)
@@ -350,7 +350,7 @@ def paste_text(
         # The session fetches the text only when it pastes, after the keys arrive.
         time.sleep(0.5)
     finally:
-        _set_clipboard(old)
+        set_clipboard(old)
 
 
 class PasteNotArrived(RuntimeError):
@@ -373,8 +373,8 @@ def paste_line(
     accepted; raises PasteNotArrived when nothing came within timeout_s."""
     if "\n" in text or "\r" in text:
         raise ValueError("paste_line takes one line; its newline is the caller's Enter")
-    old = _clipboard()
-    _set_clipboard(text)
+    old = clipboard()
+    set_clipboard(text)
     accepted = False
     try:
         time.sleep(0.2)  # the client announces the new clipboard to the session
@@ -392,10 +392,10 @@ def paste_line(
             time.sleep(0.1)
         raise PasteNotArrived(f"the pasted text did not arrive within {timeout_s:g} s")
     finally:
-        _set_clipboard(old)
+        set_clipboard(old)
 
 
-def _clipboard() -> str | None:
+def clipboard() -> str | None:
     with _open_clipboard():
         h = user32.GetClipboardData(CF_UNICODETEXT)
         if not h:
@@ -407,7 +407,7 @@ def _clipboard() -> str | None:
             kernel32.GlobalUnlock(h)
 
 
-def _set_clipboard(text: str | None) -> None:
+def set_clipboard(text: str | None) -> None:
     with _open_clipboard():
         user32.EmptyClipboard()
         if text is None:

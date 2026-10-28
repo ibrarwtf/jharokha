@@ -172,6 +172,20 @@ class SessionExecutor:
         src = self.session.screen.source
         self._send("press", keys, {"keys": keys}, lambda w: src.press(w, keys))
 
+    def clipboard(self, text: str) -> Callable[[], None]:
+        """text held in this machine's clipboard for the session to read (a write_file);
+        the returned call puts the clipboard back. Traced as an input: the text reaches
+        the session, by a command rather than by keys."""
+        src = self.session.screen.source
+        restore: list[Callable[[], None]] = []
+        self._send(
+            "clipboard",
+            f"{len(text)} characters",
+            {"text": text},
+            lambda w: restore.append(src.clipboard(w, text)),
+        )
+        return restore[0]
+
     def scroll(self, x: int, y: int, ticks: int) -> None:
         src = self.session.screen.source
         fields = {"point": (x, y), "keys": f"wheel {ticks}"}

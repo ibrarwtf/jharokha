@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.31.0
 
+The terminal talks a protocol instead of being guessed at. The old end-marker approach failed when a wrapped marker line arrived slowly under PSReadLine's prediction and was taken for lost keys.
+
+- `terminal.run` prepares the tab once (`terminal.setup`, in memory only, gone with the tab): the prompt becomes two rows, `JK<n> <date> <time> <ok> <exit code> <directory>` and `> `, so a command has finished when the state row with the next counter is on screen, its `$?` and `$LASTEXITCODE` are on that row (a terminating error, a native exit code and Ctrl+C all land there; the exit code is reset after each prompt), the directory is the last 40 characters of the path, predictions are off, PSReadLine's colours are white, `$PSStyle.OutputRendering` is plain and `NO_COLOR` and git's colour and pager are off, so the terminal draws one ink the glyph reader matches exactly. The alphabet is printed by the same line and the font learned from it.
+- A command is sent bare, dot-sourced (`cd` and variables keep their effect), its error stream merged and its output piped through a filter that numbers the lines on screen (stripped in the result) and keeps them in a variable: a wrapped line, a screen that overflowed and the page to fetch next are told by the numbers, and the start of long output is paged back from the variable instead of being read up the scrollback. Enter is pressed only once the input row shows exactly the sent line (as long as it keeps arriving, up to a time by its length), so a dropped first key or a line half in is never run; sent again once, then cleared. A shell whose input already holds text, or shows no empty prompt, refuses before anything is sent, and says which.
+- `terminal.write_file` puts the text in this machine's clipboard and types one short command that writes the clipboard to the file and prints its SHA-256, checked against the text's: nothing of the file is typed or shown. `terminal.read_file {path, from, count}` is a numbered page of a file. `terminal.put_file` (base64 in chunks), `terminal.glyphs` (now `terminal.setup`), the `shell` argument, cmd and bash are gone.
+- The state row is a terminal cue, so a prepared tab identifies as the terminal with its old prompt gone.
+- The `jharokha` shell commands print UTF-8: a screen holding a character outside the console's code page crashed them.
 - `--capture DIR` also writes `calls.jsonl`: one line per tool call with its arguments, start time and duration, the frames it saved or read again (by file stem), and what it returned (text; an image as its size) or the error that ended it, with its code. With `--trace` beside it, inputs, screens and outcomes can be followed call by call offline.
 
 ## v0.30.1
