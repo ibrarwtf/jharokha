@@ -627,8 +627,8 @@ def build_server(
         )
         if session.unknown:
             # Terminal cells no known glyph matched: the second engine's reading of them,
-            # or blank. terminal.glyphs teaches the font once.
-            head += f" unknown_cells={session.unknown} (run terminal.glyphs once to learn the font)"
+            # or blank. terminal.setup teaches the font once.
+            head += f" unknown_cells={session.unknown} (run terminal.setup once to learn the font)"
         if fmt == "items":
             alt, note = second_reading(frame, lines, verify, range(len(lines)))
             its: list[Any]

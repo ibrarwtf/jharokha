@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.31.1
+
+- With `--trace` on, a line an action pasted (over 200 characters: the setup line, most real commands) crashed the tool before Enter was pressed (`unknown action 'paste'`): the trace did not know that kind, so every such `terminal.run` returned "Error executing tool jharokha_do" and left the line in the shell's input. Traced as `paste` now.
+- `jharokha_read` named `terminal.glyphs`, which 0.31.0 replaced with `terminal.setup`.
+
 ## v0.31.0
 
 The terminal talks a protocol instead of being guessed at. The old end-marker approach failed when a wrapped marker line arrived slowly under PSReadLine's prediction and was taken for lost keys.

@@ -10,8 +10,8 @@ where the second engine took seconds.
 
 Templates are learned from the screen itself, per font and size (a Store per grid pitch and
 character width), from a line that prints the printable ASCII range in a known order
-(`terminal.glyphs`). Never from the second engine: live it read `O` as `0` in a row Windows
-OCR read the same way, and a template learned wrong is wrong for good. A cell no template
+(`terminal.setup`). Never from the second engine: it can read `O` as `0` in a row Windows
+OCR reads the same way, and a template learned wrong is wrong for good. A cell no template
 is close to (a box-drawing character, an accented letter) is read by the engine for that
 run of cells and reported as unknown, never guessed.
 
@@ -36,7 +36,7 @@ else:
     np = LazyNumpy(globals())
 
 ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in range(80, 127)))
-"""The two lines `terminal.glyphs` prints: every printable ASCII glyph but the space, in
+"""The two lines `terminal.setup` prints: every printable ASCII glyph but the space, in
 order, 47 to a line."""
 ALPHABET_COMMAND = "-join [char[]](33..79); -join [char[]](80..126)"
 """What prints ALPHABET in PowerShell."""
@@ -111,7 +111,7 @@ _THUMB_GAP = 3  # blank cells before a thin last cell that make it a scrollbar's
 class Store:
     """The glyphs known for one font and size: a label per template (one character), and
     the templates as one matrix for the lookup. learned says how: 'alphabet' once
-    terminal.glyphs printed every glyph, else 'engine' or '' (nothing yet)."""
+    terminal.setup printed every glyph, else 'engine' or '' (nothing yet)."""
 
     labels: list[str] = field(default_factory=list)
     _t: np.ndarray | None = None

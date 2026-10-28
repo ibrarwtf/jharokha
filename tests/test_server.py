@@ -712,3 +712,21 @@ def test_fresh_lines_are_new_moved_or_changed():
     old = lines_for([("a", 10, 10), ("b", 10, 30)])
     new = lines_for([("a", 10, 11), ("b", 10, 50), ("c", 10, 70)])
     assert [ln.text for ln in fresh(old, new)] == ["b", "c"]
+
+
+async def test_a_pasted_line_is_traced_not_refused(tmp_path):  # noqa: ANN001
+    """With --trace on, the setup line (pasted, being long) is traced as a 'paste'; a trace
+    without that kind crashed terminal.run before Enter."""
+    from jharokha.core.trace import Trace
+
+    shell = Marked([("PS C:\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\a>", 10, 50)])
+    trace = Trace(tmp_path / "t.jsonl")
+    async with Client(build_server(shell, allow_input=True, trace=trace)) as c:
+        r = await c.call_tool(
+            "jharokha_do", {"action": "terminal.run", "args": {"command": "Get-Date"}}
+        )
+        assert not r.is_error and '"prepared": true' in text(r)
+    kinds = [
+        json.loads(ln)["action"] for ln in (tmp_path / "t.jsonl").read_text("utf-8").splitlines()
+    ]
+    assert "paste" in kinds and "press" in kinds
