@@ -27,12 +27,13 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from jharokha import version
 from jharokha.core import actions as act
 from jharokha.core import apps, guard, listread, readers
+from jharokha.core import shell as sh
 from jharokha.core.apps import Catalog
 from jharokha.core.capture import Capture, outcome
 from jharokha.core.executor import SessionExecutor
 from jharokha.core.guard import Policy
 from jharokha.core.identify import THRESHOLD, Identity
-from jharokha.core.locate import Hit, Miss, RegionInfo, locate, spot_px
+from jharokha.core.locate import Hit, Miss, RegionInfo, locate, spot_px, unwrapped
 from jharokha.core.locate import locator as parse_locator
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo, inside, within
 from jharokha.core.panes import reading_panes
@@ -196,6 +197,32 @@ def build_server(
         lines = _unlocked(screen.lines(frame, None))
         at = session.where(frame, lines)
         return frame, session.shape(at, lines), at
+
+    def shell_rows(at: Where, lines: list[Line]) -> list[str] | None:
+        """A terminal's body rows as text (core.shell reads them), or None when no
+        terminal is in front."""
+        if at.ident.app != "terminal" or at.ident.view is None:
+            return None
+        placed = session.place(at, at.ident.app, at.ident.view, "body")
+        if not placed:
+            return None
+        box = placed[0]
+        return unwrapped(inside(lines, box), box[0] + box[2])
+
+    def shell_state(
+        title: str | None, at: Where, lines: list[Line] | None = None
+    ) -> dict[str, Any] | None:
+        """What a prepared terminal's prompt says (core.shell.state), its directory wrapped
+        as screen text; None for anything else in front."""
+        if at.ident.app != "terminal":
+            return None
+        if lines is None:
+            _, lines, _ = whole(title, at.frame)
+        rows = shell_rows(at, lines)
+        st = sh.state(rows) if rows is not None else None
+        if st is not None:
+            st["cwd"] = wrap_untrusted(str(st["cwd"]))
+        return st
 
     def where_now(title: str | None, frame: Frame | None = None) -> Where:
         """Where you are: the app and view from Windows OCR of the whole screen, without
@@ -437,7 +464,9 @@ def build_server(
         """Call this first. Is there a remote-desktop window and can it be read (state:
         normal, minimized, locked, no_frames, window_not_found)? Where you are: app and
         view (generic when none is known) with a confidence 0-1 and the runner-up, ready
-        false while the view loads, facts such as a browser's url (untrusted). warnings:
+        false while the view loads, facts such as a browser's url (untrusted); for a
+        prepared terminal, shell: the last prompt's counter, time, the last command's
+        ok and exit code, cwd, and idle (an empty prompt: nothing running). warnings:
         what would stop input (this computer's taskbar or a window over the session,
         another agent's lease, the user at the keyboard, a lock screen, calibration that
         no longer fits). input_allowed says whether act and do can send input."""
@@ -478,6 +507,8 @@ def build_server(
                 info["facts"] = wrap_untrusted(
                     "\n".join(f"{k}={clean(t)}" for k, t in ident.facts.items())
                 )
+            if shell := shell_state(window_title, at):
+                info["shell"] = shell
             if stale := calibration_stale(at):
                 warnings.append({"kind": "calibration_stale", "detail": stale})
         except ScreenError as e:
@@ -807,14 +838,15 @@ def build_server(
             looks += 1
             elapsed = int((time.monotonic() - start) * 1000)
             if cond.get("ready"):
-                if at.ident.ready is not False:
+                st = shell_state(title, at, lines)
+                if (st is None and at.ident.ready is not False) or (st and st["idle"]):
                     return {
                         "ready": True,
                         "ended": "ready",
                         "elapsed_ms": elapsed,
                         "looks": looks,
                         "app": at.ident.app,
-                    }
+                    } | ({"shell": st} if st else {})
             else:
                 q = str(cond.get("text") or cond.get("regex") or cond.get("gone"))
                 pool = lines if before is None or "gone" in cond else fresh(before, lines)
@@ -851,8 +883,9 @@ def build_server(
         seconds: float | None = None,
     ) -> str:
         """Wait instead of polling: until text appears (matched as find matches), a regex
-        matches (a prompt like '^PS .*>$', 'saved|Error'), a text is gone, or ready=true
-        (the view on screen has finished loading); with none of these, until the screen
+        matches ('saved|Error'), a text is gone, or ready=true (the view on screen has
+        finished loading; in a prepared terminal, an empty prompt: the last command is
+        done, with shell in the result as status gives it); with none, until the screen
         stops changing. region as in jharokha_read (default the whole screen). Up to
         timeout_s, at most 30; call again for longer. Says how it ended: appeared, gone,
         ready; for the screen still, or max when it never stopped changing. A timeout
@@ -871,7 +904,12 @@ def build_server(
             time.sleep(seconds)
             return json.dumps({"slept_s": seconds})
         if not given:
-            return json.dumps(screen.settle(window_title).as_dict())
+            # Said, since a condition passed under a name this tool does not take (until)
+            # arrives as no condition at all, and a settled screen looked like an answer.
+            still = screen.settle(window_title).as_dict()
+            return json.dumps(
+                still | {"waited_for": "the screen to hold still (no text, regex, gone or ready)"}
+            )
         cond, _ = condition({**given, "timeout_s": timeout_s})
         return json.dumps(poll(window_title, cond, region, timeout_s))
 
@@ -946,7 +984,15 @@ def build_server(
                 raise ScreenError("bad_argument", f"target as a point is [x, y], got {target}")
             check_region((target[0], target[1], 1, 1), frame)
             return (target[0], target[1]), f"[{target[0]},{target[1]}]"
-        loc_t = {"text": target} if isinstance(target, str) else dict(target or {})
+        if isinstance(target, str):
+            # A spot's name as jharokha_apps lists it is the spot, not text to find.
+            spots = set(session.catalog.spots) | {
+                f"{a.id}.{k}" for a in session.catalog.apps.values() for k in a.spots
+            }
+            named = target in spots or f"session.{target}" in spots
+            loc_t = {"spot": target} if named else {"text": target}
+        else:
+            loc_t = dict(target or {})
         _, got = hits_for(title, loc_t, None, False)
         if isinstance(got, Miss):
             closest = f" Closest on screen: {list(got.candidates)}" if got.candidates else ""
@@ -1008,8 +1054,8 @@ def build_server(
         double_click, right_click (a target), type (text; a newline is Enter, or the app's
         newline), paste (text through the clipboard: exact and instant for long text),
         press (keys: 'enter', 'esc', 'ctrl+c', 'f5', 'shift+tab'), scroll (ticks: < 0 down,
-        > 0 up, at the target or the focus region). target: [x, y], a text to find, or a
-        locator as jharokha_find takes ({"right_of": "To"}, {"spot": "taskbar.teams"});
+        > 0 up, at the target or the focus region). target: [x, y], a text to find, a spot
+        as jharokha_apps names it, or a locator as jharokha_find takes ({"right_of": "To"});
         for type, paste and press it is clicked first. A text that matches several things
         equally well is refused, not guessed: add nth or a region. Guarded,
         nothing sent when refused: pass expect, the app or app.view it is meant for

@@ -267,12 +267,12 @@ class Marked(Shell):
     setting_up = False
 
     def _state(self, ok: str = "True", code: int = 0) -> str:
-        return f"IA{self.n} 2030-10-28 10:00:00 {ok} {code} C:\a"
+        return f"JK{self.n} 2030-10-23 10:00:00 {ok} {code} C:\\a"
 
     def type_text(self, w, text, focus_at=None, paste=False):  # noqa: ANN001, ANN201
         if text.startswith("function prompt"):
             self.setting_up = True
-            self.items = [("PS C:\a> function prompt { ...", 10, 10)]
+            self.items = [("PS C:\\a> function prompt { ...", 10, 10)]
             return
         self.typed = text
         self.items = [(self._state(), 10, 10), (f"> {text}", 10, 30)]
@@ -369,6 +369,15 @@ async def test_a_taskbar_spot_is_clicked_whatever_app_is_in_front(source):
         args = {"op": "click", "target": {"spot": "taskbar.teams"}, "expect": "teams"}
         r = await c.call_tool("jharokha_act", {**args, "show": "none"})
         assert not r.is_error and "at=spot" in text(r), text(r)
+        # The name as jharokha_apps lists it, given as a plain string, is a spot, not a text
+        # to look for.
+        for name in ("session.taskbar.teams", "taskbar.teams"):
+            r = await c.call_tool(
+                "jharokha_act", {"op": "click", "target": name, "expect": "teams", "show": "none"}
+            )
+            assert not r.is_error and "at=spot" in text(r), text(r)
+        listed = json.loads(text(await c.call_tool("jharokha_apps", {})))
+        assert "session.taskbar.teams" in listed["session"]["spots"]
 
 
 async def test_the_taskbar_icon_of_the_app_in_front_is_not_clicked(source):
@@ -719,7 +728,7 @@ async def test_a_pasted_line_is_traced_not_refused(tmp_path):  # noqa: ANN001
     without that kind crashed terminal.run before Enter."""
     from jharokha.core.trace import Trace
 
-    shell = Marked([("PS C:\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\a>", 10, 50)])
+    shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
     trace = Trace(tmp_path / "t.jsonl")
     async with Client(build_server(shell, allow_input=True, trace=trace)) as c:
         r = await c.call_tool(
@@ -730,3 +739,38 @@ async def test_a_pasted_line_is_traced_not_refused(tmp_path):  # noqa: ANN001
         json.loads(ln)["action"] for ln in (tmp_path / "t.jsonl").read_text("utf-8").splitlines()
     ]
     assert "paste" in kinds and "press" in kinds
+
+
+def prepared(typed: str = "") -> Marked:
+    shell = Marked([("JK7 2030-10-23 10:00:00 False 3 C:\\a", 10, 10), (f"> {typed}", 10, 30)])
+    shell.n = 7
+    return shell
+
+
+async def test_status_reports_a_prepared_terminals_prompt_and_whether_it_is_idle():
+    async with Client(build_server(prepared())) as c:
+        info = json.loads(text(await c.call_tool("jharokha_status", {})))
+        assert info["app"] == "terminal"
+        shell = info["shell"]
+        assert (shell["prompt"], shell["ok"], shell["code"], shell["idle"]) == (7, False, 3, True)
+        assert shell["time"] == "2030-10-23 10:00:00" and "C:\\a" in shell["cwd"]
+    async with Client(build_server(prepared("gc Dockerfile"))) as c:
+        info = json.loads(text(await c.call_tool("jharokha_status", {})))
+        assert info["shell"]["idle"] is False
+
+
+async def test_wait_ready_in_a_prepared_terminal_is_its_empty_prompt():
+    async with Client(build_server(prepared())) as c:
+        r = json.loads(text(await c.call_tool("jharokha_wait", {"ready": True})))
+        assert r["ended"] == "ready" and r["shell"]["idle"] is True and r["shell"]["prompt"] == 7
+    async with Client(build_server(prepared("Start-Sleep 99"))) as c:
+        r = await c.call_tool("jharokha_wait", {"ready": True, "timeout_s": 1})
+        assert r.is_error and "timeout" in text(r)
+
+
+async def test_a_wait_with_no_condition_says_it_waited_only_for_stillness(source):
+    """A wait called with a condition under a name it does not take (until={ready: true})
+    drops it; its answer, ended=still, must not read as if the prompt was back."""
+    async with Client(build_server(source)) as c:
+        r = json.loads(text(await c.call_tool("jharokha_wait", {})))
+        assert r["ended"] == "still" and "no text, regex, gone or ready" in r["waited_for"]

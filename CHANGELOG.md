@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.32.0
+
+- An empty prompt no longer reads as typed text: Windows Terminal's bar cursor, a stroke at the left edge of the cell after `> `, matched no glyph and went to the engine as `1`, so `terminal.run` and `terminal.write_file` refused "the shell's input already holds '1'", again and again once the caret stopped blinking after a few idle seconds. The glyph reader reads a cell whose only ink is a tall stroke in its left quarter as a blank.
+- Two tool calls at once no longer break the call log: `--capture` kept the current call in one slot, so a status called beside a read was logged under the read's name and the read crashed on its way out ("Error executing tool jharokha_read", no code). Each call's capture state is its own now.
+- `jharokha_act` takes a spot by the name `jharokha_apps` lists (`session.taskbar.terminal`) or its short form as a plain target string; it was looked for as text on screen.
+- `jharokha_status` reports a prepared terminal's state as `shell`: the last prompt's counter, time, the last command's ok and exit code, the directory, and `idle` (an empty prompt, nothing running). `jharokha_wait ready=true` in a prepared terminal waits for that empty prompt and returns `shell` with it. A wait given no condition says it waited only for the screen to hold still: a condition passed under a name the tool does not take (`until`) arrived as none, and its `ended=still` read as an answer.
+- `--capture` also records, in a terminal frame's sidecar, the rows the glyph reader read (`rows`), so a terminal read can be replayed exactly; Windows OCR's lines stay beside them.
+
 ## v0.31.1
 
 - With `--trace` on, a line an action pasted (over 200 characters: the setup line, most real commands) crashed the tool before Enter was pressed (`unknown action 'paste'`): the trace did not know that kind, so every such `terminal.run` returned "Error executing tool jharokha_do" and left the line in the shell's input. Traced as `paste` now.

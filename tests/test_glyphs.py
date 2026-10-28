@@ -127,6 +127,29 @@ def test_a_scrollbar_thumb_in_the_last_column_is_not_a_glyph():
     assert glyphs.learn_alphabet(glyphs.cells(draw(ALPHA_ROWS), GRID, BOX), glyphs.Store()) == 94
 
 
+def test_a_bar_cursor_after_the_prompt_is_a_blank_not_a_glyph():
+    """Windows Terminal's bar cursor in the cell after `> ` must not go to the engine, which
+    reads it as `1`: an empty prompt would read `> 1` and every run refuse as if someone had
+    typed."""
+    store = learned()
+    frame = draw(["> ", "ab"])
+    px = np.frombuffer(frame.bgra, np.uint8).reshape(H, W, 4).copy()
+    x = OX + 2 * CW  # the third cell of the first row: a 2 px bar at its left edge, full height
+    px[OY + 1 : OY + PITCH - 1, x : x + 2, :3] = (204, 204, 204)
+    cursor = Frame(W, H, px.tobytes(), 2, frame.ts)
+    called: list[list] = []
+
+    def engine(boxes):
+        called.append(boxes)
+        return ["1"] * len(boxes)
+
+    got = glyphs.read(cursor, GRID, BOX, store, engine)
+    assert got.texts[0] == ">" and got.texts[1] == "ab" and got.unknown == 0 and not called
+    bar = np.zeros((15, 8), bool)
+    bar[:, 3:5] = True  # a centred stroke, as `|` draws, is still a glyph
+    assert glyphs.read(draw(["a|b"], extra={"|": bar}), GRID, BOX, store).unknown == 1
+
+
 def test_without_an_engine_unknown_cells_stay_blank_and_count():
     store = learned()
     frame = draw(["abc"], extra={"b": np.ones((15, 8), bool)})

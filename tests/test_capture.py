@@ -90,3 +90,65 @@ async def test_an_error_is_logged_with_its_code(source: FakeSource, tmp_path: Pa
     (rec,) = calls(out)
     assert rec["ok"] is False and rec["error"]["code"] == "region_out_of_bounds"
     assert rec["error"]["type"] == "ScreenError" and "region must be" in rec["error"]["message"]
+
+
+def test_a_grid_regions_rows_are_added_to_the_frames_sidecar(tmp_path: Path):
+    from jharokha.core.capture import Capture
+    from jharokha.core.identify import Identity
+    from jharokha.core.models import Frame, Line
+
+    from .conftest import render
+
+    cap = Capture(tmp_path)
+    frame = render([("JK1 2030-10-23 10:00:00 True 0 C:\a", 10, 10)], bg=(12, 12, 12), ink="white")
+    ident = Identity("terminal", "shell", 0.9)
+    png = cap.save(frame, ident, [], {"terminal.body": (0, 0, 640, 400)})
+    assert png is not None
+    rows = [
+        Line("JK1 2030-10-23 10:00:00 True 0 C:\a", (10, 10, 300, 20)),
+        Line("> ", (10, 30, 14, 20)),
+    ]
+    cap.rows(frame, "terminal.body", rows)
+    data = json.loads(png.with_suffix(".json").read_text("utf-8"))
+    assert [r["text"] for r in data["rows"]["terminal.body"]] == [rows[0].text, "> "]
+    assert data["rows"]["terminal.body"][1]["box"] == [10, 30, 14, 20]
+    o = render([("something else", 10, 10)])
+    other = Frame(o.width, o.height, o.bgra, 2, o.ts)
+    cap.rows(other, "terminal.body", [])  # not the frame saved last: nothing written
+    assert json.loads(png.with_suffix(".json").read_text("utf-8"))["rows"] == data["rows"]
+
+
+def test_calls_in_parallel_each_log_their_own_name_and_result(tmp_path: Path):
+    """A status and a read called at once must not share one slot: shared, the status was
+    logged as the read and the read crashed on the way out ("Error executing tool")."""
+    import threading
+
+    from jharokha.core.capture import Capture
+
+    cap = Capture(tmp_path)
+    inside = threading.Barrier(2)
+    leave_b = threading.Event()
+
+    def a() -> None:
+        with cap.during("jharokha_status", {}) as done:
+            inside.wait()
+            done.update({"ok": True, "result": "status"})
+        leave_b.set()
+
+    def b() -> None:
+        with cap.during("jharokha_read", {"region": None}) as done:
+            inside.wait()
+            leave_b.wait()  # ends after a
+            assert cap.call == {"tool": "jharokha_read", "args": {"region": None}}
+            done.update({"ok": True, "result": "read"})
+
+    ts = [threading.Thread(target=f) for f in (a, b)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    recs = [json.loads(ln) for ln in (tmp_path / "calls.jsonl").read_text("utf-8").splitlines()]
+    assert {(r["tool"], r["result"]) for r in recs} == {
+        ("jharokha_status", "status"),
+        ("jharokha_read", "read"),
+    }

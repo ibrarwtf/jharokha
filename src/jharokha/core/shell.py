@@ -145,6 +145,24 @@ def idle(rows: list[str]) -> Prompt | None:
     return p if typed(rows, p) == "" else None
 
 
+def state(rows: list[str]) -> dict[str, object] | None:
+    """What the last prompt on screen says, for a status: its counter, time, the last
+    command's status and exit code, the directory, and whether the shell is idle (nothing
+    after the prompt). None when no state row is on screen (a tab not prepared)."""
+    ps = prompts(rows)
+    if not ps:
+        return None
+    p = ps[-1]
+    return {
+        "prompt": p.n,
+        "time": f"{p.date} {p.time}",
+        "ok": p.ok,
+        "code": p.code,
+        "cwd": p.cwd,
+        "idle": typed(rows, p) == "",
+    }
+
+
 @dataclass(frozen=True)
 class Reply:
     lines: list[str]

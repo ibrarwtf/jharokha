@@ -237,7 +237,7 @@ def _read_rows(
 ) -> tuple[int, float]:
     n_rows, cols, dim = c.f.shape
     flat = c.f.reshape(n_rows * cols, dim)
-    inked = c.inked.reshape(-1)
+    inked = (c.inked & ~_cursor(c)).reshape(-1)
     idx, dist = store.match(flat[inked])
     distance = float(np.median(dist)) if len(dist) >= OFF_GRID_CELLS and len(store) else 0.0
     label = np.full(n_rows * cols, " ", dtype=object)
@@ -283,6 +283,24 @@ def _read_rows(
     for i, r in enumerate(rows_todo):
         texts[r] = "".join(str(x) for x in label[i]).rstrip() if c.inked[i].any() else None
     return unknown, distance
+
+
+def _cursor(c: Cells) -> np.ndarray:
+    """The cells that hold only a bar cursor: ink in the cell's left quarter alone, most of
+    the row tall. Windows Terminal draws its default cursor so, in the cell after the text;
+    it matches no glyph, and the engine reads it as `1` (an empty prompt reads `> 1`,
+    and a caret stops blinking after a few idle seconds, so it stays on). No glyph of a
+    monospace font is a lone stroke at its cell's left edge."""
+    n, cols, _ = c.f.shape
+    h, w = round(c.grid.pitch), round(c.grid.char_w)
+    if n == 0 or h * w != c.f.shape[2]:
+        return np.zeros((n, cols), bool)
+    ink = c.f.reshape(n, cols, h, w) > 0.5
+    by_col = ink.any(axis=2)
+    left = max(2, w // 4)
+    only_left = by_col[..., :left].any(axis=2) & ~by_col[..., left:].any(axis=2)
+    tall = ink.any(axis=3).sum(axis=2) >= 0.7 * h
+    return c.inked & only_left & tall
 
 
 def refine(frame: Frame, grid: Grid, box: Box, store: Store | None = None) -> Grid:

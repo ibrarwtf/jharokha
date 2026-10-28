@@ -3,8 +3,9 @@ a reader without the session.
 
 Off unless a directory is given: then each distinct frame identified for a tool call or an
 action step is written there once, as <ts>-<frame_id>.png and a .json beside it with the
-call, the app and view identified, the whole screen's OCR lines and the regions placed, and
-every tool call adds a line to calls.jsonl: its arguments, timing, the frames it saw and what
+call, the app and view identified, the whole screen's OCR lines, the regions placed and the
+rows each grid region was read as (a terminal's, cell by cell), and every tool call adds a
+line to calls.jsonl: its arguments, timing, the frames it saw and what
 it returned or the error that ended it. Those frames and results hold real names and
 messages: the directory is the user's, never the repo."""
 
@@ -14,6 +15,7 @@ import json
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -81,12 +83,21 @@ def outcome(result: Any) -> dict[str, Any]:
 class Capture:
     def __init__(self, directory: str | Path | None) -> None:
         self.dir = Path(directory) if directory is not None else None
-        self.call: dict[str, Any] | None = None
         # The frame saved last, its file stem and whether its lines were partial: the same
         # pixels come back under new frame ids while the screen holds still.
         self._last: tuple[Frame, str, bool] | None = None
-        # The file stems of the frames the current call saved or saw again.
-        self._seen: list[str] | None = None
+        # The call running in this context and the file stems of the frames it saved or saw
+        # again: per call, since an agent calls tools in parallel (a status and a
+        # read at once, where one shared slot would log the status as the read and crash it).
+        self._call: ContextVar[tuple[dict[str, Any], list[str]] | None] = ContextVar(
+            f"capture_call_{id(self)}", default=None
+        )
+
+    @property
+    def call(self) -> dict[str, Any] | None:
+        """The tool call running in this context, as frames saved now name it."""
+        cur = self._call.get()
+        return cur[0] if cur else None
 
     @property
     def enabled(self) -> bool:
@@ -97,8 +108,9 @@ class Capture:
         """Frames saved inside it name this call. On the way out the call goes to calls.jsonl
         with what the caller put in the dict it yields (outcome()), or the error that ended
         it, with its code."""
-        self.call = {"tool": tool, "args": dict(args)}
-        self._seen = []
+        call: dict[str, Any] = {"tool": tool, "args": dict(args)}
+        seen: list[str] = []
+        token = self._call.set((call, seen))
         started = time.time()
         done: dict[str, Any] = {}
         try:
@@ -112,12 +124,11 @@ class Capture:
             entry = {
                 "ts": started,
                 "ms": round((time.time() - started) * 1000),
-                **self.call,
-                "frames": self._seen,
+                **call,
+                "frames": seen,
                 **done,
             }
-            self.call = None
-            self._seen = None
+            self._call.reset(token)
             self._append(entry)
 
     def _append(self, entry: dict[str, Any]) -> None:
@@ -134,8 +145,9 @@ class Capture:
             self._saw(self._last[1])
 
     def _saw(self, stem: str) -> None:
-        if self._seen is not None and stem not in self._seen:
-            self._seen.append(stem)
+        cur = self._call.get()
+        if cur is not None and stem not in cur[1]:
+            cur[1].append(stem)
 
     def save(
         self,
@@ -166,6 +178,25 @@ class Capture:
         self._write_json(stem, record(frame, ident, lines, regions, self.call, partial))
         self._last = (frame, stem, partial)
         return png
+
+    def rows(self, frame: Frame, region: str, lines: list[Line]) -> None:
+        """The rows a grid region was read as, cell by cell (what terminal.run reads), added
+        to the sidecar of the frame saved last when it shows these pixels: Windows OCR's
+        lines identify a frame, these are what a replay of the shell needs."""
+        if self.dir is None or self._last is None:
+            return
+        last, stem, _ = self._last
+        if last.frame_id != frame.frame_id and changed_bbox(last, frame) is not None:
+            return
+        path = self.dir / f"{stem}.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        data.setdefault("rows", {})[region] = [
+            {"text": ln.text, "box": list(ln.box)} for ln in lines
+        ]
+        self._write_json(stem, data)
 
     def _write_json(self, stem: str, data: dict[str, Any]) -> None:
         assert self.dir is not None

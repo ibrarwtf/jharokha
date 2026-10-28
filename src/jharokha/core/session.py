@@ -156,6 +156,8 @@ class Session:
             if placed and (region is None or iou(placed[0], region) > 0):
                 g = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
                 got = self._by_cells(at, name, placed[0], g)
+                if got is not None and self.capture is not None and self.capture.enabled:
+                    self.capture.rows(f, f"{ident.app}.{name}", got)
                 if got is None:
                     lines = grid(lines, placed[0], g.pitch, g.char_width, g.origin)
                 else:

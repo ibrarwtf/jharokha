@@ -33,7 +33,9 @@ step identified as `<ts>-<frame_id>.png`, with a `.json` beside it holding the c
 and view identified, the whole screen's OCR lines and the regions placed. Off unless given.
 The frames hold real names and messages: point DIR outside the repo (or at the git-ignored
 `captures/`) and never commit them. A replay test can then run the readers on those lines
-and regions offline.
+and regions offline; a terminal frame's sidecar also holds `rows`, the body read cell by cell
+(what `terminal.run` reads), and `calls.jsonl` each call's arguments, timing, frames and
+result or error.
 
 ## Release
 
