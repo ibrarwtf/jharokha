@@ -359,6 +359,66 @@ def test_an_empty_line_inside_a_message_keeps_it_whole():
     ]
 
 
+def test_an_indented_list_inside_a_message_keeps_it_whole():
+    # A list sits a little further below the row above than a line, a few characters in;
+    # the row after it starts back at the text's column. The next bubble starts at 30.
+    got = messages(
+        [
+            ("Ana Alder 11/10 11:20", 540, 100),
+            ("Steps for the release:", 551, 116),
+            ("1. tag the build", 575, 144),
+            ("2. push the image", 575, 160),
+            ("Then tell the team", 551, 188),
+            ("Another message", 551, 218),
+            ("11/10 11:40", 1045, 250),
+            ("Here is the plan", 683, 266),
+            ("Short one", 900, 296),  # a narrower bubble starts further right
+        ]
+    )
+    steps = "Steps for the release:\n1. tag the build\n2. push the image\nThen tell the team"
+    assert [(it.sender, it.text) for it in got] == [
+        ("Ana Alder", steps),
+        ("Ana Alder", "Another message"),
+        ("", "Here is the plan"),
+        ("", "Short one"),
+    ]
+
+
+def test_a_row_cut_at_the_top_is_stepped_from_its_bottom():
+    # Only the lower half of the row shows: its real top is a line above its bottom, two
+    # pitches above the next paragraph.
+    cut = Line("the end of it", (683, 101, 91, 6))
+    rows = [
+        ("A second paragraph", 683, 127),
+        ("still the same message", 683, 143),
+        ("Ana Alder 11/10 11:50", 540, 175),
+        ("Seen", 551, 191),
+    ]
+    got = items([cut, *lines_for(rows)], THREAD_BOX, "messages")
+    assert [(it.sender, it.text, it.cut) for it in got] == [
+        ("", "the end of it\nA second paragraph\nstill the same message", True),
+        ("Ana Alder", "Seen", False),
+    ]
+
+
+def test_a_stamp_of_yours_without_its_colon():
+    got = messages(
+        [
+            ("11/10 11:52", 1045, 100),
+            ("Fine", 683, 116),
+            ("1155", 1094, 148),  # ends where the stamp above ends
+            ("Done", 683, 164),
+            ("Ana Alder 11/10 11:56", 540, 196),
+            ("2024", 551, 212),  # digits on the other side are text
+        ]
+    )
+    assert [(it.time, it.text) for it in got] == [
+        ("11/10 11:52", "Fine"),
+        ("11:55", "Done"),
+        ("11/10 11:56", "2024"),
+    ]
+
+
 def test_a_read_marker_is_no_message():
     got = messages(
         [

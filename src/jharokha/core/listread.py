@@ -9,13 +9,18 @@ Grouping rules, all of them:
 - messages (a thread): a row starting past 15% of the region's width is your own side.
   `Name dd/mm hh:mm` at the left after a blank of most of a line (or first) starts someone
   else's message (yours when the name is You); a bare `dd/mm hh:mm` on your side starts one
-  of yours. A name-and-time row indented 16 px past the message's start (or any on your
-  side) opens a quote, which takes the rows at its indent until one starts left of it. Rows
+  of yours (`1148` too, its colon lost, when it ends where your other stamps end). A
+  name-and-time row indented 16 px past the message's start (or any on your side) opens a
+  quote, which takes the rows at its indent until one starts left of it. Rows
   before any header are a message cut at the region's top. A row switching sides starts a
   new message, and so does a blank taller than a line between two rows of text: the next
   message from the same sender under the same header, without a time of its own. Unless the
   row starts two line pitches below the one above (up to two and a quarter): that blank is
   an empty line inside the message, a paragraph; the next bubble starts a little closer.
+  Nor when the row is in or under an indented block of the message (a list, a code block),
+  up to two and a quarter pitches below: indented past the row above by up to four line
+  heights, or back at the message's text column under the block. A row the region's top
+  cuts shows its lower part only; its top is taken a line height above its bottom.
 - An event row on the others' side, a stamp followed by text after a blank (`dd/mm hh:mm
   Meeting ended 16m`, `hh:mm Call ended`, an icon read as junk in front), is an item of its
   own from SYSTEM, at that stamp.
@@ -92,10 +97,16 @@ _SECTION = re.compile(
 _OWN_SIDE = 0.25
 _RIGHT_EDGE = 0.15  # of the region's width
 _QUOTE_INDENT = 16  # px past the message's start
+# Line heights: how far a list or code block inside a message may be indented past the row
+# above it (a bullet or number and a space, nested once): 29 to 53 px at 16 to 18 px.
+_INDENT = 4
 _ALIGN = 8  # px: rows that start this close start together
 # Line pitches from one row's top to the next across an empty line inside a message: a
 # paragraph is 2.0 to 2.1 pitches, the next bubble 1.8 to 1.95 or past 2.6.
 _PARAGRAPH = (2.0, 2.25)
+_TOUCH = 2  # px: a row starting this close below the region's top may be cut by it
+# A clock whose colon OCR lost (`1148`): too small a mark at a stamp's size.
+_BARE_CLOCK = re.compile(r"(?:[01]?\d|2[0-3])[0-5]\d")
 _TAIL_SLACK = 4  # items before a screen's worth that a merge still searches
 
 
@@ -252,6 +263,7 @@ class _Draft:
     quoting: bool = False
     truncated: bool = False
     you: bool = False  # a header named You on the other side
+    text_x: int = 0  # where its first row of text starts
 
     def item(self) -> Item:
         quote = None
@@ -288,6 +300,25 @@ def _pitch(rows: list[_Row], h: int) -> int:
     return steps[len(steps) // 2] if steps else 0
 
 
+def _block(x: int, x_above: int, start: int, h: int) -> bool:
+    """Whether a row at x, under a row at x_above in a message whose text starts at start,
+    is in or after an indented block of it (a list, a code block) rather than the next
+    bubble: indented past the row above by a few characters, or back at the message's start
+    under the block. A narrower bubble below may start any distance to the right."""
+    indented = _QUOTE_INDENT <= x - x_above <= _INDENT * h
+    back = abs(x - start) <= _ALIGN and x_above >= start + _QUOTE_INDENT
+    return indented or back
+
+
+def _right(r: _Row) -> int:
+    return r.box[0] + r.box[2]
+
+
+def _stamp_edges(rows: list[_Row], side: float) -> list[int]:
+    """Where your stamps end: right-aligned above your bubbles, past the text in them."""
+    return [_right(r) for r in rows if r.box[0] > side and _IS_STAMP.fullmatch(r.text)]
+
+
 def _messages(rows: list[_Row], box: Box) -> list[Item]:
     side = box[0] + _OWN_SIDE * box[2]
     middle = box[0] + box[2] / 2
@@ -298,11 +329,24 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
     above: int | None = None
     top: int | None = None
     day = ""
+    left = 0  # where the row above starts
+    stamps = _stamp_edges(rows, side)
     for r in rows:
         x, t = r.box[0], _EDITED.sub("", r.text)
         gap = r.box[1] - above if above is not None else None
         step = r.box[1] - top if top is not None else None
-        above, top = r.box[1] + r.box[3], r.box[1]
+        above, top, left, x_above = r.box[1] + r.box[3], r.box[1], x, left
+        if r.box[1] - box[1] <= _TOUCH and r.box[3] < h:
+            # Cut by the region's top, the row shows its lower part: it starts a line above
+            # its bottom.
+            top = above - h
+        if (
+            x > side
+            and _BARE_CLOCK.fullmatch(t)
+            and any(abs(e - _right(r)) <= _ALIGN for e in stamps)
+        ):
+            # A stamp of yours whose colon OCR lost, ending where your stamps end.
+            t = f"{t[:-2]}:{t[-2:]}"
         centred = abs(x + r.box[2] / 2 - middle) <= _CENTRED * box[2] and x > side
         if centred and _IS_DAY.fullmatch(t):
             day, cur = t, None
@@ -361,7 +405,12 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
             and not cur.quoting
             and gap is not None
             and gap > h
-            and not (step and pitch and _PARAGRAPH[0] <= step / pitch <= _PARAGRAPH[1])
+            and not (
+                step
+                and pitch
+                and step <= _PARAGRAPH[1] * pitch
+                and (step >= _PARAGRAPH[0] * pitch or _block(x, x_above, cur.text_x, h))
+            )
         ):
             # The sender's next message under the same header.
             nxt = _Draft(own=cur.own, x=cur.x, sender=cur.sender, you=cur.you)
@@ -371,6 +420,10 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
             # The sender's avatar sits left of the header's column, beside the first row:
             # its initials, or what OCR makes of a photo, are no part of the text.
             t = _AVATAR_TOKEN.sub("", t)
+            words = [w for _, ln in r.parts for w in ln.words]
+            left = words[1].box[0] if len(words) > 1 else cur.x
+        if not cur.text:
+            cur.text_x = left
         cur.quoting = False
         cur.text.append(t)
         cur.rows.append(r)
