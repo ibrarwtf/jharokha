@@ -19,10 +19,12 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from jharokha.core import listread
 from jharokha.core.models import Box, Line, union
+from jharokha.core.people import People
 from jharokha.core.text import clean, fold, wrap_untrusted
 
 READERS = ("text", "grid", "list", "table", "form")
@@ -62,6 +64,14 @@ def items(
             if ln.text.strip()
         ]
     return blocks(_inside(lines, box))
+
+
+def mapped(its: Sequence[Any], people: People, now: datetime) -> list[Any]:
+    """A list's messages as the people map has them (listread.mapped: who, day, time as a
+    clock), when there is a map; its as they are without one, or from another reader."""
+    if not (people.people or people.chats) or not all(isinstance(i, listread.Item) for i in its):
+        return list(its)
+    return listread.mapped(its, people, now)
 
 
 def as_dicts(its: Sequence[Any]) -> list[dict[str, Any]]:

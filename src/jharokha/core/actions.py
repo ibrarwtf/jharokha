@@ -36,7 +36,8 @@ and `timeout_s`:
               one command and its SHA-256 checked; nothing of it typed or shown
 
 Items are what jharokha_read format=items gives for the region (a Teams thread's
-messages: sender, time, text); `fields = { who = "sender" }` renames their fields. A
+messages: sender, time, text; who and day too with a people map, mapped once the scroll
+has merged its reads); `fields = { author = "sender" }` renames their fields. A
 marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again in the
 rows read up close, then by the second engine, once the screen holds still.
 
@@ -860,7 +861,7 @@ class Runner:
             # by more than the way already come.
             step = max(-grow, min(grow, step * 2)) if grow else step
         if p.get("collect"):
-            self._store(p["collect"], got, p)
+            self._store(p["collect"], self._mapped(got), p)
             self.res.fields["stopped"] = why
             if gaps:
                 self.res.fields["gaps"] = gaps
@@ -874,7 +875,7 @@ class Runner:
         """What a collecting scroll read before it failed: a long read cut short still
         returns the part it has, with the failure saying where it stopped."""
         if p.get("collect"):
-            self._store(p["collect"], got, p)
+            self._store(p["collect"], self._mapped(got), p)
 
     def _box(self, snap: Snapshot, region: str) -> Box:
         regions = self._regions(snap)
@@ -889,6 +890,10 @@ class Runner:
             gone = set(inside(lines, self._box(snap, p["exclude"])))
             lines = [ln for ln in lines if ln not in gone]
         return lines
+
+    def _mapped(self, its: list[Any]) -> list[Any]:
+        """A whole read's messages, or a whole collection's, as the people map has them."""
+        return readers.mapped(its, self.people, datetime.now())
 
     def _items(self, snap: Snapshot, p: dict[str, Any]) -> list[Any]:
         """The region's items as its reader makes them (core.readers): what
@@ -937,12 +942,13 @@ class Runner:
     def _read(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         snap = self._look()
         if p.get("as", "lines") == "items":
-            its = self._items(snap, p)
+            # Mapped before `last` cuts the read: the first kept may borrow a time from above.
+            its = self._mapped(self._items(snap, p))
             # A second look a moment later, as jharokha_read takes: an item read differently
             # then was caught while the list drew or scrolled.
             self.ex.wait(AGREE_S)
             again = self._look()
-            seen = {readers.key(i) for i in self._items(again, p)}
+            seen = {readers.key(i) for i in self._mapped(self._items(again, p))}
             shaky = (
                 set()
                 if again.frame_id == snap.frame_id

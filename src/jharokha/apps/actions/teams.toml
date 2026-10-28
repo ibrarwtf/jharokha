@@ -27,8 +27,8 @@ expect = { name = "{name}", region = "header" }
 summary = """The messages in a chat from one day or time to another, oldest first: scrolls
 back until one at or before `from` is on screen (or the chat's start), then down collecting
 until one past `to` shows (or the newest message). Each has sender, time and text (screen
-text). Days are inclusive (`to = "27/09"` keeps all of 27/09). Without chat, the open chat
-is read."""
+text); with a people map in apps.toml also who and day, and time as HH:MM. Days are
+inclusive (`to = "15/03"` keeps all of 15/03). Without chat, the open chat is read."""
 args.chat = { type = "text", max_len = 200, default = "", doc = "the chat's name, or a chat or person id of the people map in apps.toml; omit to read the chat open now" }
 args.from = { type = "text", pattern = '[\w/:., ]{2,30}', doc = "as the thread prints times: 14/03, 21/03 11:40, Yesterday, Mon" }
 args.to = { type = "text", pattern = '[\w/:., ]{2,30}', default = "", doc = "the last day or time kept; omit for up to now" }
@@ -81,8 +81,8 @@ into = "count"
 
 [action.teams.latest]
 summary = """The newest messages in a chat, oldest first, as far as the screen shows them:
-no scrolling. Each has sender, time and text (screen text). Without chat, the open chat is
-read."""
+no scrolling. Each has sender, time and text (screen text); with a people map in apps.toml
+also who and day, and time as HH:MM. Without chat, the open chat is read."""
 args.chat = { type = "text", max_len = 200, default = "", doc = "the chat's name, or a chat or person id of the people map in apps.toml; omit to read the chat open now" }
 args.n = { type = "number", default = 10, max = 50, doc = "how many, at most what one screen holds" }
 

@@ -365,6 +365,11 @@ def build_server(
         app, view, reg = named
         return session.nested(at, app, view, reg.name)
 
+    def mapped(its: list[Any]) -> list[Any]:
+        """A whole read's messages as the people map has them, if apps.toml has one: before
+        since and the second look, which compares items mapped the same way."""
+        return readers.mapped(its, session.catalog.people, datetime.now())
+
     def region_items(lines: list[Line], a: Area, at: Where) -> tuple[str, list[Any]]:
         """The reader's label and its items for an area; the whole screen gives each named
         region of the view as {region, reader, items}."""
@@ -375,7 +380,7 @@ def build_server(
         its = readers.items(
             reg.reader if reg else "text", lines, a.box, reg.kind if reg else None, inner
         )
-        return reg.label if reg else "text", its
+        return reg.label if reg else "text", mapped(its)
 
     def whole_items(lines: list[Line], at: Where) -> list[Any]:
         ident, f = at.ident, at.frame
@@ -390,7 +395,7 @@ def build_server(
                         {
                             "region": f"{ident.app}.{reg.name}",
                             "reader": reg.label,
-                            "items": readers.as_dicts(its),
+                            "items": readers.as_dicts(mapped(its)),
                         }
                     )
         if not out:
@@ -626,10 +631,11 @@ def build_server(
         like 'teams.thread' (jharokha_apps lists them), a panel 'P1', or [x, y, width,
         height] in client pixels (origin top-left); a small region is read up close.
         format: auto (items for lists, tables and forms, else lines), lines (`L<n> [x,y]
-        text`), items (JSON by the region's reader: messages {sender, time, text},
-        mails and entries {title, subtitle, time, text}, a table {header, rows}, a form
-        {label, value}), detailed (lines as JSON with word boxes and lookalike flags), panes
-        (how the screen is divided now: panels, the view's regions with boxes, spots).
+        text`), items (JSON by the region's reader: messages {sender, time, text; with a
+        people map in apps.toml also who and day, and time as HH:MM}, mails and entries
+        {title, subtitle, time, text}, a table {header, rows}, a form {label, value}), detailed
+        (lines as JSON with word boxes and lookalike flags), panes (how the screen is divided
+        now: panels, the view's regions with boxes, spots).
         since: 'last' gives only what changed since your last read of the same region (lines
         + added, - removed; or new items); a time such as '21/03 11:40', 'Yesterday' or
         '09:15' keeps a list's items from then on. verify: flagged (lines with digits or

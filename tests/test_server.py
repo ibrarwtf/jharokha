@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -667,6 +668,56 @@ async def test_list_regions_read_as_items_since_a_time_and_since_last(source):
         source.items += [("Cy Cole 11/10 11:50", 10, 160), ("Shipped", 20, 176)]
         r = await read(region="chat.thread", since="last")
         assert "items=1" in r and "Cy Cole" in r and "Ana Alder" not in r
+
+
+PEOPLE_MAP = """
+[people.ana]
+names = ["Ana Alder"]
+"""
+
+
+async def test_a_people_map_gives_messages_who_day_and_a_clock(source):
+    source.items = [
+        ("Chat log", 10, 10),
+        ("Yesterday", 290, 44),
+        ("Ana Alder 9:05", 10, 80),
+        ("Is the build green?", 10, 96),
+        ("Ben Brook 9:10", 10, 140),
+        ("Fixed it", 10, 156),
+        ("And pushed", 10, 200),
+    ]
+
+    async def thread(toml: str, **args: Any) -> list[dict[str, Any]]:
+        async with Client(build_server(source, catalog=apps.catalog(apps.parse(toml)))) as c:
+            r = text(await c.call_tool("jharokha_read", {"region": "chat.thread", **args}))
+        # The head, the reader's count, the untrusted wrapper's opening, then the items.
+        return json.loads(r.split("\n")[3])
+
+    got = await thread(CHAT_APP + PEOPLE_MAP)
+    day = (datetime.now() - timedelta(days=1)).date().isoformat()
+    # Ben is in no map: no who, which concise leaves out as empty. The last message is
+    # under his header and borrows its clock.
+    assert got == [
+        {
+            "who": "ana",
+            "sender": "Ana Alder",
+            "day": day,
+            "time": "09:05",
+            "text": "Is the build green?",
+        },
+        {"sender": "Ben Brook", "day": day, "time": "09:10", "text": "Fixed it"},
+        {"sender": "Ben Brook", "day": day, "time": "~09:10", "text": "And pushed"},
+    ]
+    # since still goes by the screen's stamps, before the mapping.
+    got = await thread(CHAT_APP + PEOPLE_MAP, since="Yesterday 9:08")
+    assert [m["time"] for m in got] == ["09:10", "~09:10"]
+    # Without a map, the screen's stamps as they are.
+    got = await thread(CHAT_APP)
+    assert [(m.get("who"), m.get("day"), m.get("time")) for m in got] == [
+        (None, None, "Yesterday 9:05"),
+        (None, None, "Yesterday 9:10"),
+        (None, None, None),
+    ]
 
 
 async def test_wait_seconds_is_a_plain_pause(source):

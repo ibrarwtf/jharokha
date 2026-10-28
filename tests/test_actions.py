@@ -983,3 +983,49 @@ def test_a_collecting_scroll_reports_reads_that_shared_nothing():
     r = Runner(Jumping({}, "chat")).run(a, {})
     assert r.ok and r.fields["gaps"] == 2 and "may be missing" in r.fields["warning"]
     assert len(r.items["m"]) == 3
+
+
+def test_a_collect_maps_the_merged_messages_by_the_people_map():
+    a = one(
+        '[[action.chat.a.step]]\ndo = "scroll"\nregion = "thread"\nticks = -7\nmax = 1\n'
+        'collect = "m"'
+    )
+    reads = [
+        [
+            ("Ana Alder  22/10 9:05", 10, 30),
+            ("first", 10, 46),
+            ("second, same header", 10, 90),
+        ],
+        # A scroll on: the message under Ana's header at the top, cut from it, then Bo's.
+        [
+            ("second, same header", 10, 30),
+            ("Bo Lindqvist  22/10 9:10", 10, 74),
+            ("Fixed it", 10, 90),
+        ],
+    ]
+
+    class Down(Scripted):
+        def read(self) -> Snapshot:
+            n = len([i for i in self.inputs if i.startswith("scroll")])
+            info = {"chat.thread": RegionInfo("list", "messages")}
+            return Snapshot(
+                n, (640, 400), lines_for(reads[n]), "chat", "main", None,
+                {"chat.thread": SCREEN}, info=info,
+            )  # fmt: skip
+
+    r = Runner(Down({}, "chat"), people=PEOPLE).run(a, {})
+    assert r.ok, r.failed
+    got = r.items["m"]
+    assert [(m.get("who"), m["sender"], m["time"], m["text"]) for m in got] == [
+        ("ana", "Ana Alder", "09:05", "first"),
+        ("ana", "Ana Alder", "~09:05", "second, same header"),
+        ("bo", "Bo Lindqvist", "09:10", "Fixed it"),
+    ]
+    assert all(m["day"].endswith("-10-22") for m in got)
+    # Without a map, the screen's stamps.
+    r = Runner(Down({}, "chat")).run(a, {})
+    assert [(m.get("who"), m.get("time")) for m in r.items["m"]] == [
+        (None, "22/10 9:05"),
+        (None, None),
+        (None, "22/10 9:10"),
+    ]

@@ -110,11 +110,25 @@ _BARE_CLOCK = re.compile(r"(?:[01]?\d|2[0-3])[0-5]\d")
 _TAIL_SLACK = 4  # items before a screen's worth that a merge still searches
 
 
+def _said(
+    sender: str, time: str, text: str, who: str | None, day: str, clock: str
+) -> dict[str, object]:
+    """A message or quote as a dict: as the screen shows it, or, mapped, who and day added
+    and the time as its clock."""
+    if who is None:
+        return {"sender": sender, "time": time, "text": text}
+    return {"who": who, "sender": sender, "day": day, "time": clock, "text": text}
+
+
 @dataclass(frozen=True)
 class Quote:
     sender: str
     time: str
     text: str
+    # Set by mapped(), as on Item.
+    who: str | None = None
+    day: str = ""
+    clock: str = ""
 
 
 @dataclass(frozen=True)
@@ -135,20 +149,20 @@ class Item:
     section: str = ""
     truncated: bool = False
     cut: bool = False  # began above the region's top
+    # A message as mapped() sets it with a people map, None and empty without one: time
+    # stays the screen's stamp, which since, upto and the merge go by.
+    who: str | None = None
+    day: str = ""
+    clock: str = ""
 
     def as_dict(self) -> dict[str, object]:
         if self.kind == "message":
-            out: dict[str, object] = {
-                "sender": self.sender or ("me" if self.own else ""),
-                "time": self.time,
-                "text": self.text,
-            }
-            if self.quote:
-                out["quote"] = {
-                    "sender": self.quote.sender,
-                    "time": self.quote.time,
-                    "text": self.quote.text,
-                }
+            sender = self.sender or ("me" if self.own else "")
+            out: dict[str, object] = _said(
+                sender, self.time, self.text, self.who, self.day, self.clock
+            )
+            if q := self.quote:
+                out["quote"] = _said(q.sender, q.time, q.text, q.who, q.day, q.clock)
         else:
             out = {"title": self.title, "subtitle": self.subtitle, "time": self.time}
             if self.text:
@@ -746,6 +760,32 @@ def _month(name: str) -> str:
 INHERITED = "~"  # in front of a time a message got from the one above it
 
 
+def mapped(items: Iterable[Item], people: People, now: datetime) -> list[Item]:
+    """items with each message's who, day and clock set (see records); other items as they
+    are. A message under an earlier header borrows that one's day and clock from the item
+    above it, so map a whole read, after any merge (which keeps one read's fields)."""
+    out: list[Item] = []
+    last_day = last_clock = ""
+    for it in items:
+        if it.kind != "message":
+            out.append(it)
+            continue
+        day, clock = _when(it.time, now)
+        if clock:
+            last_day, last_clock = day, clock
+        else:
+            # Under the header above: its day, and its time marked as borrowed.
+            day = day or last_day
+            clock = f"{INHERITED}{last_clock}" if last_clock else ""
+        who = SYSTEM if it.sender == SYSTEM else people.who(it.sender, it.own)
+        quote = it.quote
+        if quote:
+            qday, qclock = _when(quote.time, now)
+            quote = replace(quote, who=people.who(quote.sender), day=qday, clock=qclock)
+        out.append(replace(it, who=who, day=day, clock=clock, quote=quote))
+    return out
+
+
 def records(items: Iterable[Item], people: People, now: datetime) -> list[dict[str, Any]]:
     """Messages as an agent keeps them: `who` the sender's id in people ("" for one it does
     not know, SYSTEM for an event row), `day` the absolute date (ISO) when the screen gave one
@@ -753,34 +793,19 @@ def records(items: Iterable[Item], people: People, now: datetime) -> list[dict[s
     the day), `time` the clock as `HH:MM`, or the one above's with `~` in front for a message
     under an earlier header, `text`, `own`, `cut`, and the quote's fields under `quote`."""
     out: list[dict[str, Any]] = []
-    last_day = last_clock = ""
-    for it in items:
+    for it in mapped(items, people, now):
         if it.kind != "message":
             continue
-        day, clock = _when(it.time, now)
-        if clock:
-            last_day, last_clock = day, clock
-            time = clock
-        else:
-            # Under the header above: its day, and its time marked as borrowed.
-            day = day or last_day
-            time = f"{INHERITED}{last_clock}" if last_clock else ""
         rec: dict[str, Any] = {
-            "who": SYSTEM if it.sender == SYSTEM else people.who(it.sender, it.own),
-            "day": day,
-            "time": time,
+            "who": it.who,
+            "day": it.day,
+            "time": it.clock,
             "text": it.text,
             "own": it.own,
             "cut": it.cut,
         }
-        if it.quote:
-            qday, qclock = _when(it.quote.time, now)
-            rec["quote"] = {
-                "who": people.who(it.quote.sender),
-                "day": qday,
-                "time": qclock,
-                "text": it.quote.text,
-            }
+        if q := it.quote:
+            rec["quote"] = {"who": q.who, "day": q.day, "time": q.clock, "text": q.text}
         out.append(rec)
     return out
 
