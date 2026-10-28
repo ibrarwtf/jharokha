@@ -1014,7 +1014,7 @@ class Runner:
         self.res.fields["cwd"] = r.prompt.cwd
         unknown = getattr(self.ex, "unknown_cells", None)
         if unknown and (k := unknown()) > UNKNOWN_WARN:
-            self.res.fields["warning"] = (
+            self._warn(
                 f"{k} cells matched no learned glyph and were read by OCR, which garbles "
                 "terminal text: run terminal.setup (again after a zoom, font or window "
                 "size change) and read the output again"
@@ -1091,7 +1091,10 @@ class Runner:
         unless raw), ended by the next state prompt, its start fetched by paging when it
         scrolled off the top. typed sends it key by key whatever its length: a paste would
         replace the clipboard a write_file holds."""
-        prompt = self._idle(s, p)
+        try:
+            prompt = self._idle(s, p)
+        except _Fail as e:
+            raise _Fail(f"nothing was sent: {e.reason}") from None
         if raw:
             line = "cls; " + command if clear else command
         else:
@@ -1100,20 +1103,34 @@ class Runner:
         r = self._reply(p, prompt.n, base, s.timeout_s)
         lines, n = r.lines, prompt.n + 1
         pages = 0
-        while r.first > base + 1 and pages < PAGE_MAX:
-            # The start scrolled off: the lines before the first on screen, a screen at a
-            # time, each page a command of its own under the next prompt number.
-            fit = max(1, self._fit(p))
-            first = max(base + 1, r.first - fit)
-            pg = self._page(s, p, first, r.first - first, base, n)
-            if pg.first >= r.first:
-                break  # nothing more came: what is read is what there is
-            lines = pg.lines + lines
-            r, n = replace(r, first=pg.first), n + 1
-            pages += 1
+        try:
+            while r.first > base + 1 and pages < PAGE_MAX:
+                # The start scrolled off: the lines before the first on screen, a screen at
+                # a time, each page a command of its own under the next prompt number.
+                fit = max(1, self._fit(p))
+                first = max(base + 1, r.first - fit)
+                pg = self._page(s, p, first, r.first - first, base, n)
+                if pg.first >= r.first:
+                    break  # nothing more came: what is read is what there is
+                lines = pg.lines + lines
+                r, n = replace(r, first=pg.first), n + 1
+                pages += 1
+        except _Fail as e:
+            # The command has run: its status and what was read are the answer, never a
+            # failure that reads as if nothing was sent (a caller would run it twice).
+            self.res.fields["missing_lines"] = [base + 1, r.first - 1]
+            self._warn(
+                f"output lines {base + 1} to {r.first - 1} scrolled off the top and were not "
+                f"fetched again ({e.reason}); the command itself ran"
+            )
         if pages:
             self.res.fields["pages"] = pages + 1
         return replace(r, lines=lines)
+
+    def _warn(self, text: str) -> None:
+        """A warning added to the result's, never replacing one already there."""
+        had = self.res.fields.get("warning")
+        self.res.fields["warning"] = f"{had}; {text}" if had else text
 
     def _page(
         self, s: Step, p: dict[str, Any], first: int, count: int, base: int, n: int
@@ -1150,7 +1167,7 @@ class Runner:
                 if ps and (got := sh.typed(rows, ps[-1])) and ps[-1].row + 2 >= len(rows):
                     raise _Fail(
                         f"the shell's input already holds {got[:80]!r}: someone typed into "
-                        "it. Nothing was sent; clear it (jharokha_act press escape) and retry"
+                        "it; clear it (jharokha_act press escape) and retry"
                     )
                 if not bottomed:
                     bottomed = True
@@ -1163,7 +1180,7 @@ class Runner:
                 raise _Fail(
                     "no empty prompt at the bottom of the shell: a command may still be "
                     "running (wait, or press ctrl+c with jharokha_act: the next state row "
-                    "says when it stopped), or this is not the prepared tab. Nothing was sent"
+                    "says when it stopped), or this is not the prepared tab"
                 )
             self.ex.wait(POLL_S)
 

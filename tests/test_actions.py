@@ -536,6 +536,35 @@ def test_a_reply_longer_than_the_screen_is_paged_back_from_the_shell():
     assert r.fields["pages"] == 4 and not any("scroll" in i for i in ex.inputs)
 
 
+def test_paging_that_fails_after_the_command_ran_keeps_its_result():
+    """A run whose start scrolled off and cannot be paged back (no empty prompt to type the
+    page into) must not fail with "Nothing was sent", since the command ran: a caller would
+    run it twice."""
+
+    class Breaks(Shell):
+        left: int | None = None
+
+        def read(self) -> Snapshot:
+            if self.left is not None:
+                if self.left == 0:
+                    self.typed = "x"  # the input no longer reads empty
+                else:
+                    self.left -= 1
+            return super().read()
+
+        def press(self, keys: str) -> None:
+            super().press(keys)
+            if keys == "enter" and self.ran and self.left is None:
+                self.left = 2  # the reply's look and the page's measure, then no prompt
+
+    ex = Breaks([f"row {i}" for i in range(25)])
+    r = run(ex)
+    assert r.ok and r.exit_code == 0 and r.output and r.output[-1] == "row 24"
+    assert r.fields["missing_lines"][0] == 1 and "the command itself ran" in r.fields["warning"]
+    assert "nothing was sent" not in r.fields["warning"].lower()
+    assert ex.ran == ["Get-Thing"]  # run once
+
+
 def test_a_long_command_behind_another_app_times_out_without_wrong_app():
     """A switch to the browser during a long command must not fail it wrong_app, since it
     was typed and is running."""

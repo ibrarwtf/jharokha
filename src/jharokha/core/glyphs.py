@@ -40,6 +40,8 @@ ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in rang
 order, 47 to a line."""
 ALPHABET_COMMAND = "-join [char[]](33..79); -join [char[]](80..126)"
 """What prints ALPHABET in PowerShell."""
+UNREADABLE = "\ufffd"
+"""What a cell reads as when nothing can name it: never a guess."""
 KNOWN = 1.5  # L2 distance to the nearest template at or under which a cell is that glyph
 # Median distance of a read's inked cells above which the grid is off its cells (a pixel
 # moves every glyph past KNOWN), when the read held at least OFF_GRID_CELLS of them.
@@ -236,8 +238,10 @@ def _read_rows(
     engine: Reader | None,
 ) -> tuple[int, float]:
     n_rows, cols, dim = c.f.shape
+    cur = _cursor(c)
+    _no_spill(c, cur, rows_todo)
     flat = c.f.reshape(n_rows * cols, dim)
-    inked = (c.inked & ~_cursor(c)).reshape(-1)
+    inked = (c.inked & ~cur).reshape(-1)
     idx, dist = store.match(flat[inked])
     distance = float(np.median(dist)) if len(dist) >= OFF_GRID_CELLS and len(store) else 0.0
     label = np.full(n_rows * cols, " ", dtype=object)
@@ -273,11 +277,23 @@ def _read_rows(
         for (i, c0, c1), text in zip(runs, engine(boxes), strict=True):
             chars = [ch for ch in text if not ch.isspace()]
             cols_in = [col for col in range(c0, c1 + 1) if unknown_mask[i, col]]
+            # The box holds a cell either side, whose known glyphs the engine reads too.
+            left = str(label[i, c0 - 1]) if c0 > 0 else " "
+            right = str(label[i, c1 + 1]) if c1 + 1 < cols else " "
+            if len(chars) > len(cols_in) and left != " " and chars[:1] == [left]:
+                chars = chars[1:]
+            if len(chars) > len(cols_in) and right != " " and chars[-1:] == [right]:
+                chars = chars[:-1]
             if len(chars) == len(cols_in):
                 for col, ch in zip(cols_in, chars, strict=True):
                     label[i, col] = ch
+            elif len(cols_in) == 1:
+                # One cell the engine could not be lined up with: unreadable, never a
+                # neighbour's letter (`JK2` read as `JKA` loses the counter).
+                label[i, cols_in[0]] = UNREADABLE
             else:
-                # Not one glyph per cell: the engine's text, laid from the run's start.
+                # Not one glyph per cell (wide or joined characters): the engine's text,
+                # laid from the run's start.
                 for k, ch in enumerate(chars[: c1 - c0 + 1]):
                     label[i, c0 + k] = ch
     for i, r in enumerate(rows_todo):
@@ -301,6 +317,26 @@ def _cursor(c: Cells) -> np.ndarray:
     only_left = by_col[..., :left].any(axis=2) & ~by_col[..., left:].any(axis=2)
     tall = ink.any(axis=3).sum(axis=2) >= 0.7 * h
     return c.inked & only_left & tall
+
+
+def _no_spill(c: Cells, cur: np.ndarray, rows_todo: list[int]) -> None:
+    """The cursor's ink taken out of the cells above and below it: Windows Terminal draws
+    the bar a pixel taller than the grid's row, into the edge of the cell above (the
+    `2` of `JK2` over the prompt's cursor gains a pixel, misses its template and reads as
+    `A`). Only the edge rows, only the cursor's columns."""
+    if not cur.any():
+        return
+    n, cols, _ = c.f.shape
+    h, w = round(c.grid.pitch), round(c.grid.char_w)
+    if h * w != c.f.shape[2]:
+        return
+    f = c.f.reshape(n, cols, h, w)
+    left = max(2, w // 4)
+    for i, col in np.argwhere(cur):
+        if i > 0 and rows_todo[i - 1] == rows_todo[i] - 1:
+            f[i - 1, col, -2:, :left] = 0
+        if i + 1 < n and rows_todo[i + 1] == rows_todo[i] + 1:
+            f[i + 1, col, :2, :left] = 0
 
 
 def refine(frame: Frame, grid: Grid, box: Box, store: Store | None = None) -> Grid:

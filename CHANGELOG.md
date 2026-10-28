@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.32.1
+
+- A run that has sent its command never fails as if it had not: when the start of its output scrolled off and could not be paged back, the run keeps its status, exit code and the lines it read, with `missing_lines` and a warning that says the command ran. It used to fail with "Nothing was sent", and a caller retrying would have run the command twice.
+- Why the page could not be sent: the state row `JK2` read `JK2` and `JKA` by turns. Windows Terminal draws the bar cursor a pixel into the cell above, and the `2` sits right over the cursor after `> `; with the cursor lit the cell missed its template, and the engine, reading it with a neighbour either side, gave `A2`, whose first letter was taken. The glyph reader takes the cursor's ink out of the cells above and below it, lines the engine's text up against the known neighbours, and marks a single cell it still cannot line up as unreadable (`�`) instead of borrowing a neighbour's letter.
+- Warnings in a terminal result add up instead of replacing each other.
+
 ## v0.32.0
 
 - An empty prompt no longer reads as typed text: Windows Terminal's bar cursor, a stroke at the left edge of the cell after `> `, matched no glyph and went to the engine as `1`, so `terminal.run` and `terminal.write_file` refused "the shell's input already holds '1'", again and again once the caret stopped blinking after a few idle seconds. The glyph reader reads a cell whose only ink is a tall stroke in its left quarter as a blank.

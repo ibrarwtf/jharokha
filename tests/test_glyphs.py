@@ -150,6 +150,37 @@ def test_a_bar_cursor_after_the_prompt_is_a_blank_not_a_glyph():
     assert glyphs.read(draw(["a|b"], extra={"|": bar}), GRID, BOX, store).unknown == 1
 
 
+def test_the_cursor_spilling_into_the_cell_above_does_not_change_its_glyph():
+    """The bar cursor after `> ` can reach a pixel into the cell above, the `2` of the state
+    row `JK2`; that cell must still match its template, not read the row as `JKA`."""
+    store = learned()
+    frame = draw(["JK2 x", "> "])
+    px = np.frombuffer(frame.bgra, np.uint8).reshape(H, W, 4).copy()
+    x = OX + 2 * CW
+    px[OY + PITCH - 2 : OY + 2 * PITCH - 1, x : x + 2, :3] = (204, 204, 204)
+    spilled = Frame(W, H, px.tobytes(), 2, frame.ts)
+    got = glyphs.read(spilled, GRID, BOX, store)
+    assert got.texts[:2] == ("JK2 x", ">") and got.unknown == 0
+
+
+def test_the_engines_read_of_one_cell_is_lined_up_or_left_unreadable():
+    store = learned()
+    box_glyph = np.zeros((15, 8), bool)
+    box_glyph[7, :] = True
+    box_glyph[:, 3] = True
+    frame = draw(["a+b"], extra={"+": box_glyph})
+
+    def reads(text):
+        return lambda boxes: [text] * len(boxes)
+
+    # The box holds a cell either side: their known glyphs come back with the unknown one.
+    assert glyphs.read(frame, GRID, BOX, store, reads("a┼b")).texts[0] == "a┼b"
+    assert glyphs.read(frame, GRID, BOX, store, reads("a┼")).texts[0] == "a┼b"
+    # Text that cannot be lined up with the one cell is not a neighbour's letter.
+    got = glyphs.read(frame, GRID, BOX, store, reads("xy")).texts[0]
+    assert got == "a" + glyphs.UNREADABLE + "b"
+
+
 def test_without_an_engine_unknown_cells_stay_blank_and_count():
     store = learned()
     frame = draw(["abc"], extra={"b": np.ones((15, 8), bool)})
