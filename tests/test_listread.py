@@ -325,8 +325,9 @@ def test_consecutive_messages_under_one_header_split_by_gap():
             ("Ana Alder 11/10 11:20", 540, 100),
             ("First message", 551, 116),
             ("still the first", 551, 132),
-            ("Second message", 551, 164),  # a blank of 20 px: a new bubble
-            ("Third", 551, 196),
+            # Teams starts the next bubble a little short of two line pitches below.
+            ("Second message", 551, 162),
+            ("Third", 551, 192),
         ]
     )
     assert [(it.sender, it.time, it.text) for it in got] == [
@@ -335,6 +336,73 @@ def test_consecutive_messages_under_one_header_split_by_gap():
         ("Ana Alder", "", "Third"),
     ]
     assert [it.text for it in since(got, "11/10 11:00", NOW)][1:] == ["Second message", "Third"]
+
+
+def test_an_empty_line_inside_a_message_keeps_it_whole():
+    # Rows 16 px apart: an empty line puts the next paragraph 32 px below, the next bubble
+    # starts at 30.
+    got = messages(
+        [
+            ("11/10 11:40", 1045, 100),
+            ("Morning all.", 683, 116),
+            ("The release notes are up,", 683, 148),
+            ("have a look before noon", 683, 164),
+            ("Ana Alder 11/10 11:45", 540, 196),
+            ("Thanks", 551, 212),
+            ("Reading them now", 551, 242),
+        ]
+    )
+    assert [(it.sender, it.time, it.text) for it in got] == [
+        ("", "11/10 11:40", "Morning all.\nThe release notes are up,\nhave a look before noon"),
+        ("Ana Alder", "11/10 11:45", "Thanks"),
+        ("Ana Alder", "", "Reading them now"),
+    ]
+
+
+def test_a_read_marker_is_no_message():
+    got = messages(
+        [
+            ("Ana Alder 11/10 11:45", 540, 100),
+            ("Thanks", 551, 116),
+            ("Last read", 776, 148),  # centred in the region
+            ("Ben Brook 11/10 11:50", 540, 180),
+            ("Seen it", 551, 196),
+        ]
+    )
+    assert [(it.sender, it.text) for it in got] == [
+        ("Ana Alder", "Thanks"),
+        ("Ben Brook", "Seen it"),
+    ]
+
+
+def test_a_call_event_row_is_its_own_item_from_system():
+    from jharokha.core.listread import SYSTEM, records
+    from jharokha.core.people import People
+
+    got = messages(
+        [
+            ("Ana Alder 11/10 11:20", 540, 100),
+            ("Shall we call?", 551, 116),
+            ("o 11/10 11:21 Ana Alder started a meeting.", 501, 144),
+            ("Ben Brook 11/10 11:30", 540, 172),
+            ("Joining late", 551, 188),
+            ("Thu 11:52 Meeting ended 31m 2s", 541, 216),
+            ("Ana Alder 11/10 12:00", 540, 244),
+            ("Notes to follow", 551, 260),
+        ]
+    )
+    assert [(it.sender, it.time, it.text) for it in got] == [
+        ("Ana Alder", "11/10 11:20", "Shall we call?"),
+        (SYSTEM, "11/10 11:21", "Ana Alder started a meeting."),
+        ("Ben Brook", "11/10 11:30", "Joining late"),
+        (SYSTEM, "Thu 11:52", "Meeting ended 31m 2s"),
+        ("Ana Alder", "11/10 12:00", "Notes to follow"),
+    ]
+    recs = records(got, People({"ana": ("Ana Alder",)}), NOW)
+    assert [(r["who"], r["day"], r["time"]) for r in recs[:2]] == [
+        ("ana", "2030-10-11", "11:20"),
+        (SYSTEM, "2030-10-11", "11:21"),
+    ]
 
 
 def test_a_header_named_you_is_your_own_and_clocks_lose_lookalikes():
@@ -404,11 +472,11 @@ def test_merge_searches_only_the_end_of_what_was_collected():
 
 def test_merge_joins_the_next_message_under_a_header_scrolled_off():
     above = messages(
-        [("Ana Alder 21/03 11:20", 532, 100), ("Hello", 551, 116), ("Second one", 551, 148)]
+        [("Ana Alder 11/10 11:20", 532, 100), ("Hello", 551, 116), ("Second one", 551, 146)]
     )
     # Scrolled: Ana's header is gone, her first message cut, the second one without a sender.
     below = messages(
-        [("Hello", 551, 100), ("Second one", 551, 132), ("Ben Brook 21/03 11:30", 532, 164)]
+        [("Hello", 551, 100), ("Second one", 551, 130), ("Ben Brook 11/10 11:30", 532, 162)]
         + [("Hi all", 551, 180)]
     )
     assert [(m.sender, m.text) for m in merge(above, below)] == [

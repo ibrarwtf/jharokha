@@ -13,9 +13,15 @@ Grouping rules, all of them:
   side) opens a quote, which takes the rows at its indent until one starts left of it. Rows
   before any header are a message cut at the region's top. A row switching sides starts a
   new message, and so does a blank taller than a line between two rows of text: the next
-  message from the same sender under the same header, without a time of its own.
+  message from the same sender under the same header, without a time of its own. Unless the
+  row starts two line pitches below the one above (up to two and a quarter): that blank is
+  an empty line inside the message, a paragraph; the next bubble starts a little closer.
+- An event row on the others' side, a stamp followed by text after a blank (`dd/mm hh:mm
+  Meeting ended 16m`, `hh:mm Call ended`, an icon read as junk in front), is an item of its
+  own from SYSTEM, at that stamp.
 - A date alone on a row, centred (`Yesterday`, `Monday`, `21 March`), divides a thread
   by day: the messages after it whose time has no date get it in front (`Yesterday 14:05`).
+  A read marker alone and centred (`Last read`, `New messages`) is no message.
 - entries, mails (a list): a section header (`Today`, `v Chats`, ...) starts a section; the
   rows between are split at the larger of two kinds of step from one row's top to the next
   (inside an item, between items); with one kind only, each row is an item. Rows are title,
@@ -64,6 +70,10 @@ _YOU = ("you", "me")
 _CENTRED = 0.1  # of the region's width: how far off its middle a day divider may sit
 _TAIL = re.compile(rf"\s(?P<when>{_WHEN})$", re.I)
 _HEADER = re.compile(rf"^(?P<name>\D+?)\s+(?P<when>{_STAMP})$", re.I)
+# Lazy junk: `Thu 19:48 Call ended` keeps its day rather than losing it as an icon.
+_EVENT = re.compile(rf"^(?:\S{{1,3}}\s+)??(?P<when>{_STAMP})\s+(?P<text>[^\W\d_].*)$", re.I)
+SYSTEM = "system"  # the sender of a thread's event rows: calls and meetings
+_MARKER = re.compile(r"(?:last read|new messages?|unread messages?)", re.I)
 _AVATAR = re.compile(r"^[A-Z]{2}\s+(?=[A-Z][a-z])")
 # A quote's avatar reads as one letter in front of the name.
 _BADGE = re.compile(r"^[A-Za-z0-9]\s+(?=[A-Z])")
@@ -83,6 +93,9 @@ _OWN_SIDE = 0.25
 _RIGHT_EDGE = 0.15  # of the region's width
 _QUOTE_INDENT = 16  # px past the message's start
 _ALIGN = 8  # px: rows that start this close start together
+# Line pitches from one row's top to the next across an empty line inside a message: a
+# paragraph is 2.0 to 2.1 pitches, the next bubble 1.8 to 1.95 or past 2.6.
+_PARAGRAPH = (2.0, 2.25)
 _TAIL_SLACK = 4  # items before a screen's worth that a merge still searches
 
 
@@ -264,23 +277,48 @@ def _dated(when: str, day: str) -> str:
     return f"{day} {when}" if day and re.fullmatch(_CLOCK, when) else when
 
 
+def _pitch(rows: list[_Row], h: int) -> int:
+    """The step from one row's top to the next inside a paragraph: the median of the steps
+    across blanks under most of a line; 0 without any."""
+    steps = sorted(
+        b.box[1] - a.box[1]
+        for a, b in zip(rows, rows[1:], strict=False)
+        if 0 <= b.box[1] - (a.box[1] + a.box[3]) < 0.8 * h
+    )
+    return steps[len(steps) // 2] if steps else 0
+
+
 def _messages(rows: list[_Row], box: Box) -> list[Item]:
     side = box[0] + _OWN_SIDE * box[2]
     middle = box[0] + box[2] / 2
     h = _median_height(rows)
+    pitch = _pitch(rows, h)
     drafts: list[_Draft] = []
     cur: _Draft | None = None
     above: int | None = None
+    top: int | None = None
     day = ""
     for r in rows:
         x, t = r.box[0], _EDITED.sub("", r.text)
         gap = r.box[1] - above if above is not None else None
-        above = r.box[1] + r.box[3]
+        step = r.box[1] - top if top is not None else None
+        above, top = r.box[1] + r.box[3], r.box[1]
         centred = abs(x + r.box[2] / 2 - middle) <= _CENTRED * box[2] and x > side
         if centred and _IS_DAY.fullmatch(t):
             day, cur = t, None
             continue
+        if centred and _MARKER.fullmatch(t):
+            continue
         own = x > side
+        event = _EVENT.match(t)
+        if event and not own and (gap is None or gap >= 0.8 * h):
+            when = _dated(event["when"], day)
+            ev = _Draft(own=False, x=x, sender=SYSTEM, time=when, text=[event["text"]])
+            ev.rows.append(r)
+            drafts.append(ev)
+            # One row: what follows has a header of its own, or is no part of the event.
+            cur = None
+            continue
         if own and _IS_STAMP.fullmatch(t):
             cur = _Draft(own=True, x=x, time=_dated(t, day))
             drafts.append(cur)
@@ -318,7 +356,13 @@ def _messages(rows: list[_Row], box: Box) -> list[Item]:
         if cur is None or own != cur.own:
             cur = _Draft(own=own, x=x, cut=not drafts)
             drafts.append(cur)
-        elif cur.text and not cur.quoting and gap is not None and gap > h:
+        elif (
+            cur.text
+            and not cur.quoting
+            and gap is not None
+            and gap > h
+            and not (step and pitch and _PARAGRAPH[0] <= step / pitch <= _PARAGRAPH[1])
+        ):
             # The sender's next message under the same header.
             nxt = _Draft(own=cur.own, x=cur.x, sender=cur.sender, you=cur.you)
             cur = nxt
@@ -651,10 +695,10 @@ INHERITED = "~"  # in front of a time a message got from the one above it
 
 def records(items: Iterable[Item], people: People, now: datetime) -> list[dict[str, Any]]:
     """Messages as an agent keeps them: `who` the sender's id in people ("" for one it does
-    not know), `day` the absolute date (ISO) when the screen gave one (a divider above, a
-    date in the stamp; "" when it did not: a bare clock says nothing about the day), `time`
-    the clock as `HH:MM`, or the one above's with `~` in front for a message under an earlier
-    header, `text`, `own`, `cut`, and the quote's fields under `quote`."""
+    not know, SYSTEM for an event row), `day` the absolute date (ISO) when the screen gave one
+    (a divider above, a date in the stamp; "" when it did not: a bare clock says nothing about
+    the day), `time` the clock as `HH:MM`, or the one above's with `~` in front for a message
+    under an earlier header, `text`, `own`, `cut`, and the quote's fields under `quote`."""
     out: list[dict[str, Any]] = []
     last_day = last_clock = ""
     for it in items:
@@ -669,7 +713,7 @@ def records(items: Iterable[Item], people: People, now: datetime) -> list[dict[s
             day = day or last_day
             time = f"{INHERITED}{last_clock}" if last_clock else ""
         rec: dict[str, Any] = {
-            "who": people.who(it.sender, it.own),
+            "who": SYSTEM if it.sender == SYSTEM else people.who(it.sender, it.own),
             "day": day,
             "time": time,
             "text": it.text,
