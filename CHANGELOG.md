@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `--capture DIR` also writes `calls.jsonl`: one line per tool call with its arguments, start time and duration, the frames it saved or read again (by file stem), and what it returned (text; an image as its size) or the error that ended it, with its code. With `--trace` beside it, inputs, screens and outcomes can be followed call by call offline.
+
 ## v0.30.1
 
 - Taskbar spots follow a window resize: with `size` in `[calibration.session]`, a spot keeps its pixels from the left and bottom edges. Fractions measured at one width missed the icons at another.

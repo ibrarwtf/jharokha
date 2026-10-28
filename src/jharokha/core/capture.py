@@ -3,12 +3,15 @@ a reader without the session.
 
 Off unless a directory is given: then each distinct frame identified for a tool call or an
 action step is written there once, as <ts>-<frame_id>.png and a .json beside it with the
-call, the app and view identified, the whole screen's OCR lines and the regions placed.
-Those frames hold real names and messages: the directory is the user's, never the repo."""
+call, the app and view identified, the whole screen's OCR lines and the regions placed, and
+every tool call adds a line to calls.jsonl: its arguments, timing, the frames it saw and what
+it returned or the error that ended it. Those frames and results hold real names and
+messages: the directory is the user's, never the repo."""
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -54,6 +57,27 @@ def record(
     }
 
 
+def outcome(result: Any) -> dict[str, Any]:
+    """What a tool returned, as JSON-ready data: its text, with an image kept as its size."""
+    is_error = bool(getattr(result, "is_error", False))
+    parts = getattr(result, "content", result)
+    if not isinstance(parts, list | tuple):
+        parts = [parts]
+    texts = []
+    for part in parts:
+        text = getattr(part, "text", None)
+        data = getattr(part, "data", None)
+        if isinstance(part, str):
+            texts.append(part)
+        elif text is not None:
+            texts.append(text)
+        elif data is not None:
+            texts.append(f"<image {len(data)} bytes>")
+        else:
+            texts.append(str(part))
+    return {"ok": not is_error, "result": "\n".join(texts)}
+
+
 class Capture:
     def __init__(self, directory: str | Path | None) -> None:
         self.dir = Path(directory) if directory is not None else None
@@ -61,19 +85,57 @@ class Capture:
         # The frame saved last, its file stem and whether its lines were partial: the same
         # pixels come back under new frame ids while the screen holds still.
         self._last: tuple[Frame, str, bool] | None = None
+        # The file stems of the frames the current call saved or saw again.
+        self._seen: list[str] | None = None
 
     @property
     def enabled(self) -> bool:
         return self.dir is not None
 
     @contextmanager
-    def during(self, tool: str, args: Mapping[str, Any]) -> Iterator[None]:
-        """Frames saved inside it name this call."""
+    def during(self, tool: str, args: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
+        """Frames saved inside it name this call. On the way out the call goes to calls.jsonl
+        with what the caller put in the dict it yields (outcome()), or the error that ended
+        it, with its code."""
         self.call = {"tool": tool, "args": dict(args)}
+        self._seen = []
+        started = time.time()
+        done: dict[str, Any] = {}
         try:
-            yield
+            yield done
+        except BaseException as e:
+            done = {"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}
+            if getattr(e, "code", None) is not None:
+                done["error"]["code"] = e.code  # type: ignore[attr-defined]
+            raise
         finally:
+            entry = {
+                "ts": started,
+                "ms": round((time.time() - started) * 1000),
+                **self.call,
+                "frames": self._seen,
+                **done,
+            }
             self.call = None
+            self._seen = None
+            self._append(entry)
+
+    def _append(self, entry: dict[str, Any]) -> None:
+        if self.dir is None:
+            return
+        self.dir.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(entry, ensure_ascii=False, default=str)
+        with (self.dir / "calls.jsonl").open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    def reused(self) -> None:
+        """The current call read the pixels saved last again, without identifying them."""
+        if self._last is not None:
+            self._saw(self._last[1])
+
+    def _saw(self, stem: str) -> None:
+        if self._seen is not None and stem not in self._seen:
+            self._seen.append(stem)
 
     def save(
         self,
@@ -94,8 +156,10 @@ class Capture:
             if last[2] and not partial:
                 self._write_json(last[1], record(frame, ident, lines, regions, self.call))
                 self._last = (last[0], last[1], False)
+            self._saw(last[1])
             return None
         stem = f"{int(frame.ts * 1000)}-{frame.frame_id}"
+        self._saw(stem)
         self.dir.mkdir(parents=True, exist_ok=True)
         png = self.dir / f"{stem}.png"
         frame.image().convert("RGB").save(png)

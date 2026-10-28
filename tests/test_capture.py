@@ -62,3 +62,31 @@ async def test_nothing_is_written_without_the_flag(
         await c.call_tool("jharokha_read", {"region": "screen"})
         await c.call_tool("jharokha_find", {"query": "x"})
     assert list(tmp_path.iterdir()) == []
+
+
+def calls(d: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in (d / "calls.jsonl").read_text("utf-8").splitlines()]
+
+
+async def test_each_call_logs_its_result_and_frames(source: FakeSource, tmp_path: Path):
+    out = tmp_path / "frames"
+    async with Client(build_server(source, capture=out)) as c:
+        await c.call_tool("jharokha_read", {"region": "screen"})
+        await c.call_tool("jharokha_read", {"region": "screen"})  # the same pixels
+    first, second = calls(out)
+    assert first["tool"] == second["tool"] == "jharokha_read"
+    assert first["args"]["region"] == "screen" and first["ok"] is True
+    assert first["ms"] >= 0 and first["ts"] > 0
+    assert source.items[0][0] in first["result"]
+    stem = sorted(out.glob("*.png"))[0].stem
+    assert first["frames"] == [stem] and second["frames"] == [stem]
+
+
+async def test_an_error_is_logged_with_its_code(source: FakeSource, tmp_path: Path):
+    out = tmp_path / "frames"
+    async with Client(build_server(source, capture=out)) as c:
+        r = await c.call_tool("jharokha_read", {"region": [1, 2]})
+    assert r.is_error
+    (rec,) = calls(out)
+    assert rec["ok"] is False and rec["error"]["code"] == "region_out_of_bounds"
+    assert rec["error"]["type"] == "ScreenError" and "region must be" in rec["error"]["message"]

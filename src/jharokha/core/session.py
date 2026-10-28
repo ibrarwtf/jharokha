@@ -74,7 +74,7 @@ class Session:
         twice."""
         last = self.last
         if last is not None and (last.frame is frame or (lines is last.lines and not last.partial)):
-            return last
+            return self._reused(last)
         return self._identify(frame, lines, False)
 
     def around(
@@ -88,7 +88,7 @@ class Session:
         if last is not None:
             bb = changed_bbox(last.frame, frame)
             if bb is None:
-                return last
+                return self._reused(last)
             x, y, w, h = box
             if x <= bb[0] and y <= bb[1] and bb[0] + bb[2] <= x + w and bb[1] + bb[3] <= y + h:
                 gone = set(map(id, inside(last.lines, box)))
@@ -105,6 +105,12 @@ class Session:
         if self.capture is not None and self.capture.enabled:
             self.capture.save(frame, ident, lines, self._placed(self.last), partial)
         return self.last
+
+    def _reused(self, last: Where) -> Where:
+        """last, noted in the capture as a frame the current call saw."""
+        if self.capture is not None and self.capture.enabled:
+            self.capture.reused()
+        return last
 
     def _placed(self, at: Where) -> dict[str, Box]:
         """The session's regions and the view's, placed on at, as an action's read has them."""

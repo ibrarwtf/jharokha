@@ -28,7 +28,7 @@ from jharokha import version
 from jharokha.core import actions as act
 from jharokha.core import apps, guard, listread, readers
 from jharokha.core.apps import Catalog
-from jharokha.core.capture import Capture
+from jharokha.core.capture import Capture, outcome
 from jharokha.core.executor import SessionExecutor
 from jharokha.core.guard import Policy
 from jharokha.core.identify import THRESHOLD, Identity
@@ -123,8 +123,10 @@ def _captured(fn: Callable[..., Any], frames: Capture) -> Callable[..., Any]:
 
     @functools.wraps(fn)
     def inner(*a: Any, **kw: Any) -> Any:
-        with frames.during(fn.__name__, kw):
-            return fn(*a, **kw)
+        with frames.during(fn.__name__, kw) as done:
+            result = fn(*a, **kw)
+            done.update(outcome(result))
+            return result
 
     return inner
 
