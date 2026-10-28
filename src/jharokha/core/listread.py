@@ -33,8 +33,10 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from typing import Any
 
 from jharokha.core.models import Box, Line, union
+from jharokha.core.people import People
 from jharokha.core.text import clean, normalize
 
 KINDS = ("messages", "entries", "mails")
@@ -642,6 +644,65 @@ def parse_when(s: str, now: datetime) -> tuple[datetime, bool] | None:
 
 def _month(name: str) -> str:
     return str(1 + [m[:3] for m in _MONTHS.split("|")[:12]].index(name[:3]))
+
+
+INHERITED = "~"  # in front of a time a message got from the one above it
+
+
+def records(items: Iterable[Item], people: People, now: datetime) -> list[dict[str, Any]]:
+    """Messages as an agent keeps them: `who` the sender's id in people ("" for one it does
+    not know), `day` the absolute date (ISO) when the screen gave one (a divider above, a
+    date in the stamp; "" when it did not: a bare clock says nothing about the day), `time`
+    the clock as `HH:MM`, or the one above's with `~` in front for a message under an earlier
+    header, `text`, `own`, `cut`, and the quote's fields under `quote`."""
+    out: list[dict[str, Any]] = []
+    last_day = last_clock = ""
+    for it in items:
+        if it.kind != "message":
+            continue
+        day, clock = _when(it.time, now)
+        if clock:
+            last_day, last_clock = day, clock
+            time = clock
+        else:
+            # Under the header above: its day, and its time marked as borrowed.
+            day = day or last_day
+            time = f"{INHERITED}{last_clock}" if last_clock else ""
+        rec: dict[str, Any] = {
+            "who": people.who(it.sender, it.own),
+            "day": day,
+            "time": time,
+            "text": it.text,
+            "own": it.own,
+            "cut": it.cut,
+        }
+        if it.quote:
+            qday, qclock = _when(it.quote.time, now)
+            rec["quote"] = {
+                "who": people.who(it.quote.sender),
+                "day": qday,
+                "time": qclock,
+                "text": it.quote.text,
+            }
+        out.append(rec)
+    return out
+
+
+def _when(time: str, now: datetime) -> tuple[str, str]:
+    """A stamp as the day it names (ISO, "" when it names none) and its clock (`HH:MM`,
+    "" without one)."""
+    s = time.strip()
+    if not s:
+        return "", ""
+    m = re.search(rf"(?:^|\s)({_CLOCK})$", s)
+    clock = ""
+    if m:
+        hh, mm = m.group(1).split(":")
+        clock = f"{int(hh):02d}:{mm}"
+    if re.fullmatch(_CLOCK, s):
+        return "", clock
+    parsed = parse_when(s, now)
+    return (parsed[0].date().isoformat() if parsed else ""), clock
 
 
 def _start(when: datetime | str, now: datetime) -> tuple[datetime, bool]:
