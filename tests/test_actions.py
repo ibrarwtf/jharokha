@@ -11,7 +11,7 @@ from datetime import datetime
 
 import pytest
 
-from jharokha.core import actions, listread
+from jharokha.core import actions, listread, people
 from jharokha.core.actions import ActionError, Runner, Snapshot
 from jharokha.core.guard import Policy
 from jharokha.core.locate import Hit, Miss, RegionInfo, inside, locate, locator, unwrapped
@@ -44,7 +44,7 @@ def test_builtin_actions_parse():
     assert acts["teams.draft"].newline is None
     assert acts["teams.draft"].steps[-1].params["newline"] == "shift+enter"
     d = actions.describe(acts["teams.draft"])
-    assert d["args"]["chat"] == {"type": "text", "required": True}
+    assert d["args"]["chat"]["required"] and "people map" in d["args"]["chat"]["doc"]
 
 
 @pytest.mark.parametrize(
@@ -358,6 +358,106 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
         check_front("generic", "teams", "chat", 1.0)
+
+
+# The people map: an action's chat argument may be an id of it (core.people), synthetic here.
+PEOPLE = people.parse(
+    {
+        "people": {"ana": {"names": ["Ana Alder"]}, "bo": {"names": ["Bo Lindqvist"]}},
+        "chats": {"team": {"names": ["Ana Alder, +2"]}, "ana": {"person": "ana"}},
+    }
+)
+CHAT_LIST = [
+    ("Ana Alder", 10, 50),
+    ("10:42", 160, 50),
+    ("Running late", 10, 66),
+    ("Ana Alder, +2", 10, 110),
+    ("09:15", 160, 110),
+    ("Ana: see you there", 10, 126),
+    ("Bo Lindqvist", 10, 170),
+    ("Mon", 160, 170),
+    ("Thanks", 10, 186),
+]
+LIST_BOX = (0, 40, 200, 300)
+
+
+def test_a_header_shows_a_chat_of_the_people_map_by_its_id():
+    from jharokha.core.actions import name_on
+
+    header = lines_for([("Ana Ald…, +2", 0, 0), ("Chat  Files", 120, 0)])
+    assert name_on(header, "team", PEOPLE)
+    # The group chat is not the 1:1 chat with the person it starts with.
+    assert not name_on(header, "ana", PEOPLE)
+    assert name_on(lines_for([("AA Ana Alder", 0, 0)]), "ana", PEOPLE)
+    # Without the map an id is only text; a display name matches as it always did.
+    assert not name_on(header, "team")
+    assert name_on(header, "Ana Alder, +2")
+    assert name_on(header, "Ana Alder, +2", PEOPLE)
+
+
+def test_the_list_entry_clicked_is_the_one_whose_title_names_the_chat():
+    lines = lines_for(CHAT_LIST)
+    regions = {"list": LIST_BOX}
+    info = {"list": RegionInfo("list", "entries")}
+
+    def at(name: str, pm: people.People | None = PEOPLE) -> Hit | Miss:
+        loc = locator({"name": name, "region": "list"})
+        return locate(loc, lines, regions, {}, SCREEN, info, pm)
+
+    team = at("team")
+    assert isinstance(team, Hit) and team.text.startswith("Ana Alder, +2")
+    assert team.box[1] == 110
+    # A preview quoting the person is not their chat's entry.
+    ana = at("ana")
+    assert isinstance(ana, Hit) and ana.box[1] == 50
+    bo = at("bo")
+    assert isinstance(bo, Hit) and bo.box[1] == 170
+    miss = at("cy")  # no such id: text, and not on screen
+    assert isinstance(miss, Miss) and "'cy' is not on screen in list" in miss.reason
+    # Without a map, a display name is found as text is.
+    shown = at("Bo Lindqvist", None)
+    assert isinstance(shown, Hit) and shown.box[1] == 170
+    assert isinstance(at("team", None), Miss)
+    with pytest.raises(ValueError, match="locator name takes"):
+        locator({"name": "team", "text": "Ana"})
+
+
+@dataclass
+class Opens(Scripted):
+    """A Teams screen whose header shows the chat a click in the list opened."""
+
+    opened: str = ""
+
+    def read(self) -> Snapshot:
+        snap = super().read()
+        info = {"teams.list": RegionInfo("list", "entries")}
+        return replace(snap, lines=snap.lines + lines_for([(self.opened, 220, 10)]), info=info)
+
+    def click(self, x: int, y: int, button: str = "left", double: bool = False) -> None:
+        super().click(x, y, button, double)
+        self.opened = {50: "Ana Alder", 110: "Ana Ald…, +2", 170: "Bo Lindqvist"}.get(
+            next(r for r in (50, 110, 170) if r <= y < r + 12), ""
+        )
+
+
+def test_the_teams_actions_open_a_chat_by_its_id_in_the_people_map():
+    regions = {"teams": {"teams.list": LIST_BOX, "teams.header": (210, 0, 430, 32)}}
+    ex = Opens({"teams": CHAT_LIST}, "teams", regions=regions, opened="Bo Lindqvist")
+    r = Runner(ex, people=PEOPLE).run(actions.builtin()["teams.open_chat"], {"name": "team"})
+    assert r.ok, r.failed
+    assert len(ex.inputs) == 1 and 110 <= int(ex.inputs[0].rsplit(",", 1)[1]) < 122
+    assert ex.opened == "Ana Ald…, +2"
+    # Open already: the header shows it, so nothing is clicked again.
+    r = Runner(ex, people=PEOPLE).run(actions.builtin()["teams.open_chat"], {"name": "team"})
+    assert r.ok and len(ex.inputs) == 1 and "skipped" in r.steps[-1].note
+    # Without the map the id is only text, which no entry shows.
+    ex.opened = "Bo Lindqvist"
+    r = Runner(ex).run(actions.builtin()["teams.open_chat"], {"name": "team"})
+    assert not r.ok and "'team' is not on screen in list" in r.failed["reason"]  # type: ignore[index]
+    assert len(ex.inputs) == 1
+    # A display name still opens its chat without one.
+    r = Runner(ex).run(actions.builtin()["teams.open_chat"], {"name": "Ana Alder, +2"})
+    assert r.ok and ex.opened == "Ana Ald…, +2" and len(ex.inputs) == 2
 
 
 def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():

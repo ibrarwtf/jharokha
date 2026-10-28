@@ -44,7 +44,7 @@ The same verbs run in a shell, each the tool called in-process: `jharokha status
 
 ## Apps and actions
 
-An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, the taskbar icons as spots so actions can switch apps) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`).
+An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, the taskbar icons as spots so actions can switch apps) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`). So does a people map, `[people.<id>]` and `[chats.<id>]` with the names the screen shows each by: the Teams actions then take an id (`chat = "team"`) and find that chat in the list and header under any of its names, cut short or not.
 
 An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/apps/actions/*.toml`; your own go in `apps.toml`):
 

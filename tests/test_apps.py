@@ -105,6 +105,52 @@ def test_example_file_parses_and_adds_an_app():
     assert (grid.pitch, grid.char_width, grid.origin) == (23, 11, (8, 4))
     assert cat.spots["session.search"] == (0.49, 0.975)
     assert cat.session_box("session.taskbar", [], W, H) == ((0, 1140, W, 60), "calibrated")
+    assert cat.people.chat_of("team") == "team"
+    assert cat.people.chat_of("ana") == "ana"
+
+
+PEOPLE = """format = 1
+[people.ana]
+names = ["Ana Alder", "Ana Alder (Guest)"]
+[people.bo]
+names = ["Bo Lindqvist"]
+[chats.team]
+names = ["Ana Alder, +2"]
+[chats.ana]
+person = "ana"
+"""
+
+
+def test_a_local_file_holds_the_people_map():
+    cat = apps.catalog(apps.parse(PEOPLE, "apps.toml"))
+    assert cat.people.people["ana"] == ("Ana Alder", "Ana Alder (Guest)")
+    assert cat.people.chats["team"] == ("Ana Alder, +2",)
+    assert cat.people.chat_of("ana") == "ana"
+    # A person with no chat of their own is their 1:1 chat by their id.
+    assert cat.people.chat_of("bo") == "bo"
+    assert cat.people.chat_of("Ana Alder") == ""
+
+
+def test_no_people_map_is_an_empty_one_and_a_later_map_replaces_an_earlier_whole():
+    assert apps.catalog().people == apps.People()
+    assert apps.catalog(apps.parse("format = 1\n")).people == apps.People()
+    later = 'format = 1\n[people.cy]\nnames = ["Cy Cole"]\n'
+    cat = apps.catalog(apps.parse(PEOPLE), apps.parse(later), apps.parse("format = 1\n"))
+    assert list(cat.people.people) == ["cy"]
+    assert not cat.people.chats
+
+
+def test_the_people_map_is_validated_naming_the_table():
+    bad = {
+        'format = 1\n[people.ana]\nnames = "Ana"\n': "apps.toml: people.ana.names",
+        'format = 1\n[people.ana]\nname = ["Ana"]\n': "apps.toml: people.ana: unknown key name",
+        "format = 1\n[chats.team]\nmembers = []\n": "apps.toml: chats.team: needs names or",
+        'format = 1\n[chats.x]\nperson = "ghost"\n': "apps.toml: chats.x: person 'ghost'",
+        "format = 1\npeople = 3\n": "apps.toml: people must be tables",
+    }
+    for text, msg in bad.items():
+        with pytest.raises(apps.AppError, match=msg):
+            apps.parse(text, "apps.toml")
 
 
 def test_identify_teams_from_text_and_panes():

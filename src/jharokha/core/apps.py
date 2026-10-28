@@ -44,7 +44,17 @@ An app's `spots` name its text-less targets, points measured on the user's scree
     spots = { reply = [0.127, 0.06] }     # a target as {spot = "tickets.reply"}, only while
                                           # tickets is in front
 
-Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions."""
+Top-level `[action.<app>.<name>]` tables are local actions, read by core.actions. `[people.<id>]`
+and `[chats.<id>]` are the people map (core.people): the ids an action's chat argument may
+name instead of a display name. Only a local file holds one, and the last that does wins
+whole: its tables replace, not add to, an earlier file's.
+
+    [people.ana]
+    names = ["Ana Alder", "Ana Alder (Guest)"]
+    [chats.team]
+    names = ["Ana Alder, +2"]                 # a group chat as the list and header name it
+    [chats.ana]
+    person = "ana"                            # the 1:1 chat, named after the person"""
 
 from __future__ import annotations
 
@@ -60,6 +70,8 @@ from typing import Any
 from jharokha.core.geometry import Fraction, choose, to_box
 from jharokha.core.guard import Policy
 from jharokha.core.models import Box, iou
+from jharokha.core.people import People
+from jharokha.core.people import parse as parse_people
 from jharokha.core.readers import KINDS, READERS
 
 FORMAT = 1
@@ -201,6 +213,7 @@ class Doc:
     session_cal: dict[str, Fraction] = field(default_factory=dict)
     spots: dict[str, Point2] = field(default_factory=dict)
     spots_size: tuple[int, int] | None = None  # the client size the session's spots fit
+    people: People | None = None  # None: the file has no people map
 
 
 # Parsing
@@ -478,8 +491,10 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
         raise AppError(f"{source}: {e}") from e
     if data.get("format") != FORMAT:
         raise AppError(f"{source}: needs `format = {FORMAT}` at the top")
-    _only(data, ("format", "app", "session", "calibration", "action"), source)
+    _only(data, ("format", "app", "session", "calibration", "action", "people", "chats"), source)
     doc = Doc()
+    if "people" in data or "chats" in data:
+        doc.people = _people(data, source)
     for aid, t in _tables(data.get("app", {}), f"{source}: app").items():
         doc.apps[aid] = _app(aid, t, f"{source}: app.{aid}", origin)
     session = data.get("session", {})
@@ -500,6 +515,19 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
         for vid, t in _tables(views, where).items():
             doc.calibration[(_id(aid, where), _id(vid, where))] = _calibration(t, f"{where}.{vid}")
     return doc
+
+
+def _people(data: Mapping[str, Any], source: str) -> People:
+    for pid, t in _tables(data.get("people", {}), f"{source}: people").items():
+        _only(t, ("names",), f"{source}: people.{pid}")
+    for cid, t in _tables(data.get("chats", {}), f"{source}: chats").items():
+        _only(t, ("names", "person", "members"), f"{source}: chats.{cid}")
+        if not t.get("names") and "person" not in t:
+            raise AppError(f"{source}: chats.{cid}: needs names or person")
+    try:
+        return parse_people(data, f"{source}: ")
+    except ValueError as e:
+        raise AppError(str(e)) from None
 
 
 @cache
@@ -523,6 +551,7 @@ class Catalog:
     session_cal: dict[str, Fraction]
     spots: dict[str, Point2]
     spots_size: tuple[int, int] | None = None
+    people: People = field(default_factory=People)
 
     def knows(self, target: str) -> bool:
         """target is an app id or 'app.view', as input tools' expect takes it."""
@@ -696,7 +725,8 @@ def _same_text(c: Cue, anchor: str) -> bool:
 
 def catalog(*docs: Doc) -> Catalog:
     """Built-in definitions, then each doc in order: a later app replaces an earlier one
-    of the same id, later calibration replaces earlier calibration of the same view."""
+    of the same id, later calibration replaces earlier calibration of the same view, and
+    the last doc's people map that has one replaces the rest."""
     apps: dict[str, App] = {}
     cal: dict[tuple[str, str], Calibration] = {}
     session: dict[str, Region] = {}
@@ -710,11 +740,12 @@ def catalog(*docs: Doc) -> Catalog:
         session_cal.update(d.session_cal)
         spots.update(d.spots)
         spots_size = d.spots_size or spots_size
+    people = next((d.people for d in reversed(docs) if d.people is not None), People())
     for (aid, vid), c in cal.items():
         if aid not in apps:
             raise AppError(f"calibration.{aid}.{vid}: no app '{aid}' is defined")
         apps[aid] = _calibrated(apps[aid], vid, c)
-    return Catalog(apps, cal, session, session_cal, spots, spots_size)
+    return Catalog(apps, cal, session, session_cal, spots, spots_size, people)
 
 
 def load(path: Path | None = None) -> Catalog:

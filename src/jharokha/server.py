@@ -735,7 +735,8 @@ def build_server(
             k: spot_px(p, frame.width, frame.height)
             for k, p in session.catalog.spots_for(at.ident.app, frame.width, frame.height).items()
         }
-        hit = locate(loc, lines, boxes, spots, (0, 0, frame.width, frame.height), info)
+        screen_box = (0, 0, frame.width, frame.height)
+        hit = locate(loc, lines, boxes, spots, screen_box, info, session.catalog.people)
         return frame, hit if isinstance(hit, Miss) else [hit]
 
     def jharokha_find(
@@ -1208,7 +1209,8 @@ def build_server(
             screen.source.wait_idle_s = max(idle, DO_WAIT_IDLE_S)  # type: ignore[attr-defined]
         try:
             with hold(screen.window(window_title)) if hold and not dry_run else nullcontext():
-                r = act.Runner(ex, allow, policies).run(a, args or {}, dry_run)
+                runner = act.Runner(ex, allow, policies, session.catalog.people)
+                r = runner.run(a, args or {}, dry_run)
         finally:
             if idle is not None:
                 screen.source.wait_idle_s = idle  # type: ignore[attr-defined]

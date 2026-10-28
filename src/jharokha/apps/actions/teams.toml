@@ -5,7 +5,7 @@ format = 1
 
 [action.teams.open_chat]
 summary = "Bring Teams forward and open the chat with this name from the chat list."
-args.name = { type = "text", max_len = 200 }
+args.name = { type = "text", max_len = 200, doc = "the chat's name, or a chat or person id of the people map in apps.toml" }
 
 [[action.teams.open_chat.step]]
 do = "focus"
@@ -14,10 +14,12 @@ view = "chat"
 
 # The header shows the open chat's name next to icon glyphs and cut short when long: it is
 # matched as a name (a prefix up to an ellipsis, junk glyphs ignored), not as exact text.
-# A chat already open is not clicked again in the list, which would also mark it read.
+# An id of the people map is the chat it names, in the list and the header alike, under any
+# of its names. A chat already open is not clicked again in the list, which would also mark
+# it read.
 [[action.teams.open_chat.step]]
 do = "click"
-target = { text = "{name}", region = "list" }
+target = { name = "{name}", region = "list" }
 unless = { name = "{name}", region = "header" }
 expect = { name = "{name}", region = "header" }
 
@@ -27,7 +29,7 @@ back until one at or before `from` is on screen (or the chat's start), then down
 until one past `to` shows (or the newest message). Each has sender, time and text (screen
 text). Days are inclusive (`to = "27/09"` keeps all of 27/09). Without chat, the open chat
 is read."""
-args.chat = { type = "text", max_len = 200, default = "", doc = "omit to read the chat open now" }
+args.chat = { type = "text", max_len = 200, default = "", doc = "the chat's name, or a chat or person id of the people map in apps.toml; omit to read the chat open now" }
 args.from = { type = "text", pattern = '[\w/:., ]{2,30}', doc = "as the thread prints times: 14/03, 21/03 11:40, Yesterday, Mon" }
 args.to = { type = "text", pattern = '[\w/:., ]{2,30}', default = "", doc = "the last day or time kept; omit for up to now" }
 
@@ -38,7 +40,7 @@ view = "chat"
 
 [[action.teams.messages.step]]
 do = "click"
-target = { text = "{chat}", region = "list" }
+target = { name = "{chat}", region = "list" }
 unless = { name = "{chat}", region = "header" }
 expect = { name = "{chat}", region = "header" }
 
@@ -81,7 +83,7 @@ into = "count"
 summary = """The newest messages in a chat, oldest first, as far as the screen shows them:
 no scrolling. Each has sender, time and text (screen text). Without chat, the open chat is
 read."""
-args.chat = { type = "text", max_len = 200, default = "", doc = "omit to read the chat open now" }
+args.chat = { type = "text", max_len = 200, default = "", doc = "the chat's name, or a chat or person id of the people map in apps.toml; omit to read the chat open now" }
 args.n = { type = "number", default = 10, max = 50, doc = "how many, at most what one screen holds" }
 
 [[action.teams.latest.step]]
@@ -91,7 +93,7 @@ view = "chat"
 
 [[action.teams.latest.step]]
 do = "click"
-target = { text = "{chat}", region = "list" }
+target = { name = "{chat}", region = "list" }
 unless = { name = "{chat}", region = "header" }
 expect = { name = "{chat}", region = "header" }
 
@@ -114,7 +116,7 @@ last = "{n}"
 [action.teams.draft]
 summary = """Type text into a chat's compose box and leave it there: newlines become
 Shift+Enter, and nothing is sent. Read it back, then send it yourself if you mean to."""
-args.chat = { type = "text", max_len = 200 }
+args.chat = { type = "text", max_len = 200, doc = "the chat's name, or a chat or person id of the people map in apps.toml" }
 args.text = { type = "text", max_len = 4000 }
 
 [[action.teams.draft.step]]
@@ -124,7 +126,7 @@ view = "chat"
 
 [[action.teams.draft.step]]
 do = "click"
-target = { text = "{chat}", region = "list" }
+target = { name = "{chat}", region = "list" }
 unless = { name = "{chat}", region = "header" }
 expect = { name = "{chat}", region = "header" }
 

@@ -13,6 +13,10 @@ its centre, or a clear miss with the closest texts on screen.
     { region = "list", nth = 2 }              the second item of a region (-1: the last), as
                                               its reader makes items (core.readers)
     { text = "Open", nth = 2 }                the second match
+    { name = "team", region = "list" }        the entry whose title names a chat: an id of
+                                              the people map (core.people), a chat's or a
+                                              person's, under any of its names as the
+                                              screen cuts them; anything else is text
 
 Pure: no input, no reading; the caller passes what was read."""
 
@@ -21,13 +25,14 @@ from __future__ import annotations
 import difflib
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from jharokha.core import readers
-from jharokha.core.models import Box, Line, Point, Word, inside, rows
+from jharokha.core.models import Box, Line, Point, Word, inside, rows, union
+from jharokha.core.people import People
 from jharokha.core.text import clean, find, fold
 
-KEYS = ("text", "regex", "region", "right_of", "left_of", "below", "above", "spot", "nth")
+KEYS = ("text", "regex", "name", "region", "right_of", "left_of", "below", "above", "spot", "nth")
 _SIDES = ("right_of", "left_of", "below", "above")
 _SPOT = 16  # px; the box a spot stands for, about an icon's middle
 Spot = tuple[int, ...]  # a spot in pixels: x, y (and a size, if apps.toml gives one)
@@ -37,6 +42,7 @@ Spot = tuple[int, ...]  # a spot in pixels: x, y (and a size, if apps.toml gives
 class Locator:
     text: str | None = None
     regex: bool = False
+    name: str | None = None
     region: str | None = None
     right_of: str | None = None
     left_of: str | None = None
@@ -84,7 +90,7 @@ def locator(t: Mapping[str, object]) -> Locator:
     if extra:
         raise ValueError(f"unknown locator key {', '.join(extra)}; use {', '.join(KEYS)}")
     kw: dict[str, object] = {}
-    for k in ("text", "region", "spot", *_SIDES):
+    for k in ("text", "name", "region", "spot", *_SIDES):
         if k in t:
             if not isinstance(t[k], str) or not str(t[k]).strip():
                 raise ValueError(f"locator {k} must be text")
@@ -103,10 +109,12 @@ def locator(t: Mapping[str, object]) -> Locator:
     loc = Locator(**kw)  # type: ignore[arg-type]
     if sum(getattr(loc, k) is not None for k in _SIDES) > 1:
         raise ValueError("locator takes one of right_of, left_of, below, above")
-    if loc.spot and (loc.text or loc.region or any(getattr(loc, k) for k in _SIDES)):
+    if loc.spot and (loc.text or loc.name or loc.region or any(getattr(loc, k) for k in _SIDES)):
         raise ValueError("locator spot stands alone")
-    if not (loc.text or loc.region or loc.spot or any(getattr(loc, k) for k in _SIDES)):
-        raise ValueError("locator needs text, regex, region, spot or a side (right_of, ...)")
+    if loc.name and (loc.text or any(getattr(loc, k) for k in _SIDES)):
+        raise ValueError("locator name takes a region and nth, not text, regex or a side")
+    if not (loc.text or loc.name or loc.region or loc.spot or any(getattr(loc, k) for k in _SIDES)):
+        raise ValueError("locator needs text, regex, name, region, spot or a side (right_of, ...)")
     return loc
 
 
@@ -179,11 +187,13 @@ def locate(
     spots: Mapping[str, Spot],
     screen: Box,
     info: Mapping[str, RegionInfo] | None = None,
+    people: People | None = None,
 ) -> Hit | Miss:
     """loc on this screen. lines are the whole screen's; regions are the placed named
     regions of the view on screen and the session (full names, `teams.list`, or the short
     ones the caller resolved), info how each reads as items (text blocks when not given);
-    spots the session's spots and the front app's, in pixels."""
+    spots the session's spots and the front app's, in pixels; people the map a name's id
+    is looked up in."""
     if loc.spot:
         p = spots.get(loc.spot) or spots.get(f"session.{loc.spot}")
         if p is None:
@@ -202,6 +212,11 @@ def locate(
             return Miss(f"region '{loc.region}' is not on this screen (regions now: {known})")
         bounds = regions[loc.region]
     pool = inside(lines, bounds) if loc.region else lines
+    if loc.name:
+        cid = people.chat_of(loc.name) if people else ""
+        if people and cid:
+            return _named(loc, cid, people, pool, bounds, info)
+        loc = replace(loc, text=loc.name, name=None)
     side = next((k for k in _SIDES if getattr(loc, k)), None)
     if side:
         anchor_q = getattr(loc, side)
@@ -262,6 +277,43 @@ def locate(
             return Miss(f"region '{loc.region}' shows {len(its)} items, not item {loc.nth}")
         return Hit(it.box, it.center, f"item {loc.nth} of {loc.region}", it.text)
     return Hit(bounds, _center(bounds), f"centre of {loc.region}")
+
+
+def _named(
+    loc: Locator,
+    cid: str,
+    people: People,
+    pool: list[Line],
+    bounds: Box,
+    info: Mapping[str, RegionInfo] | None,
+) -> Hit | Miss:
+    """The entry whose title names chat cid: the top row of each item of a list region (a
+    preview below may quote a person, and is not the entry's name), else any row."""
+    reg = (info or {}).get(loc.region or "")
+    if reg is not None and reg.reader == "list":
+        its = readers.items(reg.reader, pool, bounds, reg.kind, reg.inner)
+        titles = [rows([pool[i] for i in it.refs])[0] for it in its if it.refs]
+    else:
+        titles = rows(pool)
+    where = f" in {loc.region}" if loc.region else ""
+    shown = ["  ".join(clean(ln.text) for ln in r) for r in titles]
+    found = []
+    for r, text in zip(titles, shown, strict=True):
+        if people.chat_in(text) == cid:
+            b = union(ln.box for ln in r)
+            found.append(Hit(b, _center(b), f"name{where}", text))
+    if loc.nth is None and len(found) > 1:
+        return Miss(
+            f"'{loc.name}'{where} is ambiguous: {len(found)} entries name it; nothing was "
+            "picked. Give nth (1 is the first in reading order, -1 the last)",
+            tuple(h.text for h in found)[:5],
+        )
+    hit = _pick(found, loc.nth)
+    if hit is None:
+        if found:
+            return Miss(f"'{loc.name}'{where} is on screen {len(found)} times, not {loc.nth}")
+        return Miss(f"nothing{where} names the chat '{loc.name}'", tuple(shown)[:5])
+    return hit
 
 
 def _side(b: Box, a: Box, side: str) -> float | None:

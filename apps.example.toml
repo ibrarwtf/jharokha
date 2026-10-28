@@ -83,3 +83,20 @@ focus = true
 
 [app.tickets.view.queue.region.filters]
 box = [0, 0.15, 0.2, 0.8]
+
+# The people map: short ids for the people and chats an app shows by name, so an action
+# takes `chat = "team"` or `chat = "ana"` and finds the chat in the list and its header
+# under any of its names, cut short (`Ana Ald..., +2`) or whole. A chat has the names its
+# list entry shows, or is the 1:1 chat with a person, named after them. The names here are
+# invented.
+[people.ana]
+names = ["Ana Alder", "Ana Alder (Guest)"]
+
+[people.bo]
+names = ["Bo Lindqvist"]
+
+[chats.team]
+names = ["Ana Alder, +2"]
+
+[chats.ana]
+person = "ana"

@@ -68,6 +68,15 @@ class People:
                 return got
         return ""
 
+    def chat_of(self, ref: str) -> str:
+        """The chat an action's argument names by id: a chat's own id, or a person's (their
+        1:1 chat); "" for anything else, a display name included."""
+        if ref in self.chats:
+            return ref
+        if ref in self.people:
+            return self.chat_with.get(ref, ref)
+        return ""
+
     def chat(self, header: str) -> str:
         """The id of the chat whose name a header shows: a chat's own names first, then a
         person's (a 1:1 chat is named after them), cut names allowed."""
@@ -142,25 +151,26 @@ def _same_marks(shown: str, name: str) -> bool:
     return got.count(",") == want.count(",") and all(c in rest for c in got)
 
 
-def parse(data: Mapping[str, Any], where: str = "people") -> People:
-    """The `people` and `chats` tables of a TOML document as a People."""
+def parse(data: Mapping[str, Any], where: str = "") -> People:
+    """The `people` and `chats` tables of a TOML document as a People. where prefixes the
+    table an error names (`apps.toml: `)."""
     people: dict[str, tuple[str, ...]] = {}
-    for pid, t in _tables(data.get("people", {}), f"{where}.people").items():
-        people[pid] = _names(t.get("names", []), f"{where}.people.{pid}")
+    for pid, t in _tables(data.get("people", {}), f"{where}people").items():
+        people[pid] = _names(t.get("names", []), f"{where}people.{pid}")
     chats: dict[str, tuple[str, ...]] = {}
     chat_with: dict[str, str] = {}
-    for cid, t in _tables(data.get("chats", {}), f"{where}.chats").items():
-        chats[cid] = _names(t.get("names", []), f"{where}.chats.{cid}")
+    for cid, t in _tables(data.get("chats", {}), f"{where}chats").items():
+        chats[cid] = _names(t.get("names", []), f"{where}chats.{cid}")
         person = t.get("person")
         if person is not None:
-            if person not in people:
-                raise ValueError(f"{where}.chats.{cid}: person {person!r} is not in people")
+            if not isinstance(person, str) or person not in people:
+                raise ValueError(f"{where}chats.{cid}: person {person!r} is not in people")
             chat_with[person] = cid
     return People(people, chats, chat_with)
 
 
 def load(path: Path) -> People:
-    return parse(tomllib.loads(path.read_text("utf-8")), str(path))
+    return parse(tomllib.loads(path.read_text("utf-8")), f"{path}: ")
 
 
 def _tables(v: Any, where: str) -> dict[str, dict[str, Any]]:

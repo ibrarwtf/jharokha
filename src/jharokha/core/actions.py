@@ -41,7 +41,8 @@ marker Windows OCR drops at 1x (it does, on Cascadia rows) is looked for again i
 rows read up close, then by the second engine, once the screen holds still.
 
 Conditions: text, regex, gone (in region), name (a name as a header shows it: cut short
-with an ellipsis, icon glyphs beside it, a letter misread; core.actions.name_on), app,
+with an ellipsis, icon glyphs beside it, a letter misread; or an id of the local people
+map, the chat it names under any of its names; core.actions.name_on), app,
 view, ready, before (an item of a list region at or before this time), after (one past
 it). A scroll's collected items keep those since a time and upto one. An empty text or
 name (an optional argument left out) holds. Arguments fill `{name}` in step values; in a
@@ -86,6 +87,7 @@ from jharokha.core.locate import (
     unwrapped,
 )
 from jharokha.core.models import Box, Line, inside
+from jharokha.core.people import People
 from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.text import find, fold
 
@@ -531,16 +533,19 @@ class Runner:
     """Runs one action against an executor. allow is a `do` call's: 'irreversible' lets a
     step press a key the app's policy calls irreversible (Enter in Teams). policies are the
     apps' input policies (core.guard.Policy, from apps.Catalog.policies()), applied as the
-    input tools apply them."""
+    input tools apply them. people is the local people map (apps.Catalog.people): a `name`
+    condition or locator given one of its ids finds that chat by any of its names."""
 
     def __init__(
         self,
         ex: Executor,
         allow: str | None = None,
         policies: Mapping[str, Policy] | None = None,
+        people: People | None = None,
     ) -> None:
         self.ex, self.allow = ex, allow
         self.policies = dict(policies or {})
+        self.people = people or People()
 
     def run(self, action: Action, args: Mapping[str, Any], dry_run: bool = False) -> Result:
         res = Result(action.id, dry_run=dry_run)
@@ -620,7 +625,7 @@ class Runner:
             if s.unless:
                 snap = self._look()
                 cond = fill(s.unless, env)
-                if _holds(cond, snap, self._regions(snap), self._info(snap))[0]:
+                if self._check(cond, snap)[0]:
                     ms = int((self.ex.now() - t0) * 1000)
                     note = f"skipped: {_describe(cond)} holds"
                     self.res.steps.append(StepReport(f"{prefix}{i + 1}", s.kind, ms, note))
@@ -730,7 +735,7 @@ class Runner:
         screen = (0, 0, *snap.size)
         regions, info = self._regions(snap), self._info(snap)
         spots = self._short(snap.spots)
-        hit = locate(loc, snap.lines, regions, spots, screen, info)
+        hit = locate(loc, snap.lines, regions, spots, screen, info, self.people)
         if isinstance(hit, Miss):
             raise _Fail(f"{loc.describe()}: {hit.reason}", hit.candidates)
         return hit
@@ -750,6 +755,9 @@ class Runner:
 
     def _info(self, snap: Snapshot) -> dict[str, RegionInfo]:
         return self._short(snap.info)
+
+    def _check(self, cond: Mapping[str, Any], snap: Snapshot) -> tuple[bool, str]:
+        return _holds(cond, snap, self._regions(snap), self._info(snap), self.people)
 
     def _click(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         snap = self._look()
@@ -811,12 +819,12 @@ class Runner:
                 # Scrolling up (ticks > 0) reads further up: what is read now comes first.
                 got, overlapped = _merge(its, got) if ticks > 0 else _merge(got, its)
                 gaps += not overlapped
-            if until and _holds(until, snap, self._regions(snap), self._info(snap))[0]:
+            if until and self._check(until, snap)[0]:
                 why = f"{_describe(until)} held"
                 break
             # end marks the list's end positively (a chat's first line): reached, nothing
             # further can hold until.
-            if p.get("end") and _holds(p["end"], snap, self._regions(snap), self._info(snap))[0]:
+            if p.get("end") and self._check(p["end"], snap)[0]:
                 why = "the list's end"
                 break
             # A list that loads more as it nears its end holds still while it loads (a Teams
@@ -981,7 +989,7 @@ class Runner:
             if p.get("until"):
                 snap = self._look()
                 cond = fill(s.params["until"], inner)
-                if _holds(cond, snap, self._regions(snap), self._info(snap))[0]:
+                if self._check(cond, snap)[0]:
                     break
         return f"{n} times"
 
@@ -1327,7 +1335,7 @@ class Runner:
         end = self.ex.now() + timeout
         while True:
             snap = self._look()
-            ok, why = _holds(cond, snap, self._regions(snap), self._info(snap))
+            ok, why = self._check(cond, snap)
             if ok:
                 return snap
             if self.ex.now() >= end:
@@ -1350,6 +1358,7 @@ def _holds(
     snap: Snapshot,
     regions: Mapping[str, Box],
     info: Mapping[str, RegionInfo] | None = None,
+    people: People | None = None,
 ) -> tuple[bool, str]:
     if "app" in cond and snap.app != cond["app"]:
         return False, _on(snap)
@@ -1368,7 +1377,7 @@ def _holds(
         last = [t for t in str(cond["text"]).splitlines() if t.strip()][-1:]
         if last and not find(pool, last[0]):
             return False, f"'{last[0]}' is not on screen"
-    if "name" in cond and not name_on(pool, str(cond["name"])):
+    if "name" in cond and not name_on(pool, str(cond["name"]), people):
         return False, f"'{cond['name']}' is not the name shown"
     if "regex" in cond and not find(pool, str(cond["regex"]), regex=True):
         return False, "the regex matches nothing on screen"
@@ -1398,10 +1407,14 @@ _ELLIPSIS = re.compile(r"(?:\.{2,}|…)$")
 NAME_RATIO = 0.85  # how alike a name and what a header shows of it must read
 
 
-def name_on(lines: list[Line], want: str) -> bool:
+def name_on(lines: list[Line], want: str, people: People | None = None) -> bool:
     """Whether a row shows the name want as a header does: whole, or cut short at its end
     (`Ana Ald…`), with an avatar's initials or an icon OCR read as a stray glyph or two in
-    front, and a character or two misread. An empty name is always shown."""
+    front, and a character or two misread. An empty name is always shown. want an id of
+    the people map is the chat it names, shown under any of that chat's names (core.people:
+    cut in the middle, `Ana Ald…, +2`), and not a chat whose name only starts the same."""
+    if people and (cid := people.chat_of(want)):
+        return any(people.chat_in(row) == cid for row in row_texts(lines))
     w = _compact(want)
     if not w:
         return True
