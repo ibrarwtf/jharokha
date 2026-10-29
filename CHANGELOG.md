@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.33.0
+
+Teams reader improvements.
+
+- Who is who: `[people.<id>]` and `[chats.<id>]` tables in the local apps.toml map the names a chat shows to short ids (`core/people.py`; `apps.example.toml` has a synthetic one). A sender cut short by the screen, or with avatar initials glued in front, still maps; a chat is found among the icons, tabs and counts of a header, a name cut in the middle keeping its tail (`Ana Ald…, +2`). The Teams actions (`open_chat`, `messages`, `latest`, `draft`) take a chat or person id as well as a display name; the `name` locator and the header checks resolve ids through the map.
+- What an agent gets back: with a map configured, every message from `jharokha_read` and from the Teams actions carries `who` (the id, or none for a stranger, `system` for a call or meeting event), `day` (the absolute date when the screen gave one: a divider above, a date in the stamp; none for a bare clock, which says nothing about the day) and `time` as `HH:MM`, or `~HH:MM` borrowed from the header above for a message under it. Without a map nothing changes.
+- The thread's bubbles from the pixels (`core/bubbles.py`): the filled and bordered rectangles a chat draws its messages, pictures and cards in, found without any text. Rows in one bubble are one message whatever their spacing; a bubble with no rows is a picture, an image-only message with empty text; text OCR'd out of a picture is no message. This settles what OCR lines cannot: an own-side paragraph two line pitches below its first lines reads like the next bubble.
+- Grouping rules learned on the frames: a blank of two line pitches inside one sender's run is a paragraph, not the next message; a row that starts with a stamp and goes on with text (`dd/mm hh:mm Meeting ended 16m`) is an event from `system`, at that stamp; a centred `Last read` marker is no message; indented blocks (lists, code) and the row back at the text column under them stay in their message, but not two own bubbles that end flush right; a row the region's top cuts measures from a line above its bottom; own-side digits that make a clock and end where the other stamps end are a stamp with its colon lost (`1148`).
+
+
 ## v0.32.1
 
 - A run that has sent its command never fails as if it had not: when the start of its output scrolled off and could not be paged back, the run keeps its status, exit code and the lines it read, with `missing_lines` and a warning that says the command ran. It used to fail with "Nothing was sent", and a caller retrying would have run the command twice.
