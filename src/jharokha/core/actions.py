@@ -72,7 +72,7 @@ from functools import cache
 from importlib import resources
 from typing import Any, Protocol
 
-from jharokha.core import glyphs, guard, listread, readers
+from jharokha.core import guard, listread, readers
 from jharokha.core import shell as sh
 from jharokha.core.apps import GENERIC
 from jharokha.core.guard import Policy
@@ -1037,18 +1037,16 @@ class Runner:
         return f"exit {r.prompt.code}"
 
     def _prepare(self, s: Step, p: dict[str, Any]) -> None:
-        """The tab prepared when its state prompt is not on screen, and the font learned
-        when this executor knows no glyph of it yet (a new process over a prepared tab):
-        until then its cells go to the engine, which garbles lookalikes."""
+        """The tab prepared when its state prompt is not on screen, or when this executor
+        knows too few of its glyphs (a new process over a prepared tab): until then its
+        cells go to the engine, which garbles lookalikes, so a line checked letter by letter
+        fails on its own echo. Setup is sent unchecked and is safe to repeat: the counter
+        goes on."""
         rows = self._rows(self._look(), p)
-        if not sh.prepared(rows):
-            self._setup(s, p)
-            return
         known = getattr(self.ex, "glyphs", None)
         n = known() if known else None
-        if n is not None and n < GLYPHS_MIN:
-            self._command(s, p, glyphs.ALPHABET_COMMAND, raw=True)
-            self._learn()
+        if not sh.prepared(rows) or (n is not None and n < GLYPHS_MIN):
+            self._setup(s, p)
 
     def _setup(self, s: Step, p: dict[str, Any]) -> str:
         """core.shell.SETUP sent and its first state prompt waited for, then the glyphs

@@ -93,7 +93,9 @@ _STATE = re.compile(
 # Before the glyphs are learned, Windows OCR reads a state row with digits as lookalikes
 # and spaces dropped: enough of its shape to know the tab is prepared.
 _STATE_LOOSE = re.compile(r"^\s*[I1l|]?A[0-9OIl|!]+\s*[0-9OIl]{4}-[0-9OIl]{2}-[0-9OIl]{2}")
-_INPUT = re.compile(r"^>\s?(.*)$")
+# The row under a state row is the input row by construction; its `>` alone in a cell the
+# glyphs do not know yet goes to the engine, which often reads it as `v`.
+_INPUT = re.compile(r"^[>v]\s?(.*)$")
 _NUMBERED = re.compile(r"^\s{0,3}(\d+) (.*)$")
 
 

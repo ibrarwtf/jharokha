@@ -12,6 +12,7 @@ from datetime import datetime
 import pytest
 
 from jharokha.core import actions, listread, people
+from jharokha.core import shell as sh
 from jharokha.core.actions import ActionError, Runner, Snapshot
 from jharokha.core.guard import Policy
 from jharokha.core.locate import Hit, Miss, RegionInfo, inside, locate, locator, unwrapped
@@ -787,7 +788,8 @@ def test_the_font_is_learned_before_the_first_command_in_a_prepared_tab():
     ex = Unlearned(["out"])
     r = run(ex)
     assert r.ok and r.output == ["out"] and r.fields["glyphs"] == 94
-    assert ex.inputs[0] == "type cls; -join [char[]](33..79); -join [char[]](80..126)"
+    # The whole setup, sent unchecked: its echo cannot be read before the font is known.
+    assert ex.inputs[0] == f"type {sh.SETUP}"
     assert ex.inputs.count("press enter") == 2
     r = run(ex)
     assert ex.inputs.count("press enter") == 3  # learned once

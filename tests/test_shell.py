@@ -50,6 +50,8 @@ def test_a_prepared_tab_is_told_from_an_ocr_read_too():
 def test_idle_is_the_empty_prompt_at_the_bottom():
     assert sh.idle([state(1), "> "]) is not None
     assert sh.idle([state(1), ">"]) is not None
+    assert sh.idle([state(1), "v"]) is not None  # `>` read by the engine, glyphs unknown
+    assert sh.idle([state(1), "v gc x"]) is None
     assert sh.idle([state(1), "> gc Dockerfile"]) is None  # text typed
     assert sh.idle([state(1), "> ", "output of a running command"]) is None
     assert sh.idle(["   1 out", state(2)]) is None  # input row not on screen yet
