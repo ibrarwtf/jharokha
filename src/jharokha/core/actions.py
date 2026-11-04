@@ -324,7 +324,7 @@ def parse(text: str, source: str = "actions", origin: str = "local") -> dict[str
         raise ActionError(f"{source}: {e}") from e
     if data.get("format") != FORMAT:
         raise ActionError(f"{source}: needs `format = {FORMAT}` at the top")
-    _only(data, ("format", "action", "app", "session", "calibration"), source)
+    _only(data, ("format", "action", "app", "session", "calibration", "people", "chats"), source)
     out: dict[str, Action] = {}
     for app, acts in data.get("action", {}).items():
         if not isinstance(acts, dict):

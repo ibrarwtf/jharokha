@@ -90,6 +90,15 @@ def test_apps_toml_holds_local_actions_beside_app_definitions():
     assert "x" in apps.catalog(apps.parse(text)).apps
 
 
+def test_the_example_apps_toml_with_a_people_map_loads_as_actions():
+    # 0.33.0 refused its own people map here, and the server did not start.
+    from pathlib import Path
+
+    text = (Path(__file__).parent.parent / "apps.example.toml").read_text(encoding="utf-8")
+    assert "[people." in text and "[chats." in text
+    assert "teams.draft" in actions.load(text)
+
+
 def test_before_a_time_by_the_list_reader():
     now = datetime(2030, 10, 18, 9, 41)
     thread = lines_for([("Ana Silva  7:05", 10, 30), ("first", 10, 52), ("You  7:12", 10, 100)])
