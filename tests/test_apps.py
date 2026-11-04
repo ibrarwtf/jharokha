@@ -198,6 +198,37 @@ def test_teams_holds_with_its_anchor_misread_and_no_rail_labels():
     assert who.app != "teams"
 
 
+def test_a_browser_page_with_a_side_nav_is_not_teams():
+    """A page whose side nav and title strip look like Teams' rail and title bar, with a
+    `Chat` button in the toolbar, an address OCR read without its scheme's first letter and
+    the address box's suggestions open: it was Teams' chat at 0.5, its thread read as
+    messages, and the browser 0.42 on the URLs among the suggestions."""
+    w = W
+    panes = [(0, 0, w, 62), (0, 63, 88, 1058)]
+    page = [
+        ("Request queue", 266, 12),
+        ("ttps://portal.example.net", 215, 67),
+        ("Chat", 1102, 69),
+        ("Request queue https://portal.example.net", 206, 267),
+        ("Favourites", 465, 529),
+        ("Datasets", 20, 347),
+        ("Settings", 21, 1098),
+    ]
+    cat = apps.catalog().apps.values()
+    who = identify(cat, lines_for(page), panes, (255, 255, 255), w, H)
+    assert (who.app, who.view) == ("browser", "page")
+    assert who.facts == {"url": "ttps://portal.example.net"}
+    assert who.scores["teams.chat"] < THRESHOLD
+    # Teams' panes and a `Chat` alone are not Teams: its search box is.
+    chat = [("Chat", 100, 90), ("Ana Alder", 100, 160)]
+    who = identify(cat, lines_for(chat), TEAMS_PANES, (255, 255, 255), W, H)
+    assert who.app != "teams"
+    who = identify(
+        cat, lines_for([TEAMS_TEXT[0], *chat]), TEAMS_PANES, (255, 255, 255), W, H
+    )
+    assert (who.app, who.view) == ("teams", "chat") and who.confidence >= 0.9
+
+
 def test_session_spots_keep_their_pixels_when_the_window_is_resized():
     """Taskbar icons keep their distance from the left and bottom edges: a fraction measured
     at 1200 px wide would click 15 px right of the terminal's icon at 1300."""

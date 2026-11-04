@@ -7,10 +7,12 @@ format = 1
 [app.teams]
 name = "Microsoft Teams"
 
+# Teams' own text: without it the panes and `Chat` stay under the threshold, as they do on a
+# web page with a side nav and a `Chat` button.
 [[app.teams.cue]]
 text = "Search (Ctrl+E)"
 at = [0.3, 0.02]
-weight = 2
+weight = 3
 
 # The rail's labels, in the rail: one of them is enough. OCR often misses all of them
 # (small text under icons), so they only add.

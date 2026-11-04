@@ -7,8 +7,10 @@ format = 1
 [app.browser]
 name = "Web browser"
 
+# Any scheme, and OCR drops a scheme's first letter (`ttps://`): without this, a page whose
+# address has no path goes unrecognised.
 [[app.browser.cue]]
-regex = 'https?://\S+|\b(?:[\w-]+\.)+[a-z]{2,}/\S*'
+regex = '[a-z]*://\S+|\b(?:[\w-]+\.)+[a-z]{2,}/\S*'
 at = [0.12, 0.05]
 weight = 3
 report = "url"
