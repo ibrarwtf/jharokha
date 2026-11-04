@@ -935,6 +935,50 @@ def test_a_scroll_back_that_reaches_the_start_ends_there_with_a_warning():
     assert len([i for i in ex.inputs if i == "scroll 7"]) == 3
 
 
+class LongThread(Scripted):
+    """A Teams chat of 120 messages three minutes apart from 06:00, two rows each, in a view
+    ten rows tall; the wheel moves it a row a notch."""
+
+    def __init__(self) -> None:
+        regions = {
+            "teams.header": (0, 0, 640, 20),
+            "teams.thread": (0, 20, 640, 280),
+            "teams.compose": (0, 300, 640, 100),
+        }
+        super().__init__({}, "teams", regions={"teams": regions})
+        self.rows: list[str] = []
+        for i in range(120):
+            m = 360 + 3 * i
+            self.rows += [f"Ana Silva  {m // 60}:{m % 60:02d}", f"message {i}"]
+        self.up = 0
+        self.reads = 0
+
+    def read(self) -> Snapshot:
+        self.reads += 1
+        end = len(self.rows) - self.up
+        shown = self.rows[max(0, end - 10) : end]
+        lines = lines_for([(t, 10, 30 + 26 * i) for i, t in enumerate(shown)])
+        info = {"teams.thread": RegionInfo("list", "messages")}
+        regions = self.regions["teams"]
+        return Snapshot(self.up, (640, 400), lines, "teams", "chat", True, regions, info=info)
+
+    def scroll(self, x: int, y: int, ticks: int) -> None:
+        super().scroll(x, y, ticks)
+        self.up = max(0, min(len(self.rows) - 10, self.up + ticks))
+
+
+def test_a_long_read_back_narrows_its_overshoot_before_collecting():
+    """150-notch strides overshoot `from` by up to a stride; unnarrowed, the collect would
+    read every screen of the overshoot on its way down."""
+    ex = LongThread()
+    r = Runner(ex).run(actions.builtin()["teams.messages"], {"from": "08:00", "to": "08:30"})
+    assert r.ok, r.failed
+    texts = [m["text"] for m in r.items["messages"]]
+    assert texts[0] == "message 40" and texts[-1] == "message 50"
+    collect = [i for i in ex.inputs if i == "scroll -7"]
+    assert len(collect) <= 5, (len(collect), ex.reads)
+
+
 def test_teams_latest_reads_the_last_n_without_scrolling_back():
     thread = [
         ("Ana Silva  7:05", 10, 30),

@@ -820,7 +820,7 @@ class Runner:
         got: list[Any] = []
         gaps = 0  # reads that shared no item with the read before
         last_seen: tuple[str, ...] | None = None
-        n = still = 0
+        n = still = last = 0  # last: the stride scrolled last
         waited = False
         why = f"{most} scrolls"
         for n in range(most + 1):
@@ -832,6 +832,9 @@ class Runner:
                 gaps += not overlapped
             if until and self._check(until, snap)[0]:
                 why = f"{_describe(until)} held"
+                if grow and not p.get("collect") and abs(last) > abs(ticks):
+                    k = self._narrow(snap, p, until, last, abs(ticks))
+                    why += f", {k} probes back down"
                 break
             # end marks the list's end positively (a chat's first line): reached, nothing
             # further can hold until.
@@ -876,6 +879,7 @@ class Runner:
             self.ex.scroll(*at, step)
             self._lifted[at] = self._lifted.get(at, 0) + step
             self.ex.settle(box)
+            last = step
             # Doubling up to max_ticks: a start close to the newest end is found in a short
             # stride or two, one far back in a few long ones, and a stride never overshoots
             # by more than the way already come.
@@ -890,6 +894,33 @@ class Runner:
                     "between them may be missing (the list moved more than a screen)"
                 )
         return f"{n} scrolls, stopped: {why}" + (f", {gaps} gaps" if gaps else "")
+
+    def _narrow(
+        self, snap: Snapshot, p: dict[str, Any], until: Any, stride: int, least: int
+    ) -> int:
+        """Back down after a doubling stride overshot: until held after it, not before it,
+        so its edge lies within the stride. Half the stride back, kept while until still
+        holds, undone when not; then half that, down to least. The reads that follow (a
+        collect a screen at a time) then start within a screen of the edge, not up to a
+        whole stride above it: a 150-notch stride can mean some 20 screens of messages
+        older than asked for. Returns the probes made."""
+        box = self._box(snap, p["region"])
+        at = (box[0] + box[2] // 2, box[1] + box[3] // 2)
+        sign = 1 if stride > 0 else -1
+        back, probes = abs(stride) // 2, 0
+        while back >= least:
+            self._guard(snap)
+            self.ex.scroll(*at, -sign * back)
+            self._lifted[at] = self._lifted.get(at, 0) - sign * back
+            self.ex.settle(box)
+            probes += 1
+            snap = self._look()
+            if not self._check(until, snap)[0]:
+                self.ex.scroll(*at, sign * back)
+                self._lifted[at] = self._lifted.get(at, 0) + sign * back
+                self.ex.settle(box)
+            back //= 2
+        return probes
 
     def _partial(self, got: list[Any], p: dict[str, Any]) -> None:
         """What a collecting scroll read before it failed: a long read cut short still
