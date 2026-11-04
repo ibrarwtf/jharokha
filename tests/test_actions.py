@@ -439,11 +439,19 @@ def test_the_list_entry_clicked_is_the_one_whose_title_names_the_chat():
     bo = at("bo")
     assert isinstance(bo, Hit) and bo.box[1] == 170
     miss = at("cy")  # no such id: text, and not on screen
-    assert isinstance(miss, Miss) and "'cy' is not on screen in list" in miss.reason
+    assert isinstance(miss, Miss) and "no entry in list is named 'cy'" in miss.reason
     # Without a map, a display name is found as text is.
     shown = at("Bo Lindqvist", None)
     assert isinstance(shown, Hit) and shown.box[1] == 170
     assert isinstance(at("team", None), Miss)
+    # A name as agents give it: a first name, a word of the title, a cut title; never a
+    # preview row, and a tie or nothing is refused with the entries to pick from.
+    assert at("Bo", None).box[1] == 170  # type: ignore[union-attr]
+    assert at("lindqvist", None).box[1] == 170  # type: ignore[union-attr]
+    ana_or_team = at("Ana", None)
+    assert isinstance(ana_or_team, Miss) and "ambiguous" in ana_or_team.reason
+    nobody = at("Cy North", None)
+    assert isinstance(nobody, Miss) and "Bo Lindqvist" in nobody.candidates
     with pytest.raises(ValueError, match="locator name takes"):
         locator({"name": "team", "text": "Ana"})
 
@@ -479,7 +487,7 @@ def test_the_teams_actions_open_a_chat_by_its_id_in_the_people_map():
     # Without the map the id is only text, which no entry shows.
     ex.opened = "Bo Lindqvist"
     r = Runner(ex).run(actions.builtin()["teams.open_chat"], {"name": "team"})
-    assert not r.ok and "'team' is not on screen in list" in r.failed["reason"]  # type: ignore[index]
+    assert not r.ok and "no entry in list is named 'team'" in r.failed["reason"]  # type: ignore[index]
     assert len(ex.inputs) == 1
     # A display name still opens its chat without one.
     r = Runner(ex).run(actions.builtin()["teams.open_chat"], {"name": "Ana Alder, +2"})

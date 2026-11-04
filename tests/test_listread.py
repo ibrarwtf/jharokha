@@ -136,7 +136,7 @@ def test_one_row_entries_a_few_line_pitches_apart_are_entries_each():
         ("Favourites", 20, 190),
         ("Ana Alder", 40, 220),
         ("Ben Brook, +2", 40, 248),
-        ("Mia Torres", 40, 276),
+        ("Cy North", 40, 276),
         ("Teams and channels", 20, 320),
         ("See all your teams", 40, 350),
     ]
@@ -144,7 +144,7 @@ def test_one_row_entries_a_few_line_pitches_apart_are_entries_each():
     assert [it.title for it in got if it.section == "Favourites"] == [
         "Ana Alder",
         "Ben Brook, +2",
-        "Mia Torres",
+        "Cy North",
     ]
 
 

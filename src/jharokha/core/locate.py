@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -216,6 +217,9 @@ def locate(
         cid = people.chat_of(loc.name) if people else ""
         if people and cid:
             return _named(loc, cid, people, pool, bounds, info)
+        reg = (info or {}).get(loc.region or "")
+        if reg is not None and reg.reader == "list":
+            return _titled(loc, pool, bounds, reg)
         loc = replace(loc, text=loc.name, name=None)
     side = next((k for k in _SIDES if getattr(loc, k)), None)
     if side:
@@ -314,6 +318,68 @@ def _named(
             return Miss(f"'{loc.name}'{where} is on screen {len(found)} times, not {loc.nth}")
         return Miss(f"nothing{where} names the chat '{loc.name}'", tuple(shown)[:5])
     return hit
+
+
+def _plain(s: str) -> str:
+    """fold without accents: a name typed as `bea` is the `Béa` the list shows."""
+    d = unicodedata.normalize("NFKD", s)
+    return fold("".join(c for c in d if not unicodedata.combining(c)))
+
+
+def _title_score(title: str, name: str) -> int:
+    """How well a list entry's title names name: 3 the whole title, 2 the title cut short
+    where name goes on (`Ana Ald…`) or name the start of the title (a first name), 1 each
+    word of name starting a word of the title (`bea` in `Ana-Lou Béa Brook`), else 0."""
+    cut = bool(re.search(r"(?:\.{2,}|…)\s*$", title))
+    t = _plain(re.sub(r"(?:\.{2,}|…)\s*$", "", title)).strip()
+    q = _plain(name).strip()
+    tc, qc = re.sub(r"[\W_]+", "", t), re.sub(r"[\W_]+", "", q)
+    if not tc or not qc:
+        return 0
+    if tc == qc:
+        return 3
+    if (cut and len(tc) >= 4 and qc.startswith(tc)) or (len(qc) >= 4 and tc.startswith(qc)):
+        return 2
+    words = re.findall(r"[^\W_]+", t)
+    if all(any(w.startswith(qw) for w in words) for qw in re.findall(r"[^\W_]+", q)):
+        return 1
+    return 0
+
+
+def _titled(loc: Locator, pool: list[Line], bounds: Box, reg: RegionInfo) -> Hit | Miss:
+    """The list entry whose title names loc.name, by _title_score: the one best, never a
+    preview row that quotes the name. None or a tie: a miss listing every title on screen,
+    with its section, to pick from or to give whole."""
+    assert loc.name is not None
+    its = readers.items(reg.reader, pool, bounds, reg.kind, reg.inner)
+    entries = [(it, rows([pool[i] for i in it.refs])[0]) for it in its if it.refs]
+    scored = [(_title_score(it.title, loc.name), it, r) for it, r in entries if it.title]
+    best = max((s for s, _, _ in scored), default=0)
+    top = [(it, r) for s, it, r in scored if s == best and best > 0]
+    where = f" in {loc.region}" if loc.region else ""
+    shown = tuple(f"{it.title} ({it.section})" if it.section else it.title for _, it, _ in scored)
+    if len(top) == 1 or (top and loc.nth is not None):
+        hit = _pick(
+            [
+                Hit(
+                    union(ln.box for ln in r),
+                    _center(union(ln.box for ln in r)),
+                    f"name{where}",
+                    it.title,
+                )
+                for it, r in top
+            ],
+            loc.nth,
+        )
+        if hit is not None:
+            return hit
+    if len(top) > 1:
+        return Miss(
+            f"'{loc.name}'{where} is ambiguous: {len(top)} entries name it alike; nothing was "
+            "picked. Give more of the name, or nth",
+            tuple(it.title for it, _ in top),
+        )
+    return Miss(f"no entry{where} is named '{loc.name}'; the entries on screen:", shown[:20])
 
 
 def _side(b: Box, a: Box, side: str) -> float | None:
