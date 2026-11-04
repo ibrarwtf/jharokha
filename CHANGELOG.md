@@ -9,6 +9,10 @@
 - `teams.new {chat}`: the messages since the last check of that chat (the newest seen is kept per chat in the server's memory, nothing on disk), for the re-check loop that guessed a `from` each time.
 - Teams: one-row favourites read as an entry each (a chat id matched none of them); a group's header `Ana Ald…, +2` matches the list's `Ana Alder and Ben Brook`, its ellipsis read as one dot too; a scroll back that reaches a chat's start waits once for history, then ends there with a warning instead of failing. A browser page with a side nav is no longer Teams.
 - An unknown action argument is refused with the ones the action takes.
+- A session spot may be `{ slot = n }`: the nth taskbar icon, found from the pixels on every frame (`core.elements`). Running apps move the icons closer together, so a fixed spot could click a neighbouring app; their order holds.
+- A chat name that is no people-map id is matched against the list's entry titles (a first name, a word of the title, a cut title, accents aside); a tie is refused, a miss lists every entry on screen. No search.
+- `teams.messages` reading far back narrows its doubling stride's overshoot before collecting, so fewer screens are collected.
+- Regions and spots are placed in one place (`Session.regions`, `Session.spots`) for the read tools, the actions and the capture, where there were three copies.
 
 ## v0.33.2
 
