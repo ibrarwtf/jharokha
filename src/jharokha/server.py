@@ -37,7 +37,7 @@ from jharokha.core.locate import Hit, Miss, RegionInfo, locate, spot_px, unwrapp
 from jharokha.core.locate import locator as parse_locator
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo, inside, within
 from jharokha.core.panes import reading_panes
-from jharokha.core.screen import Screen, ScreenError, Source, check_region, png
+from jharokha.core.screen import Screen, ScreenError, Source, check_region, image
 from jharokha.core.session import Session, Where
 from jharokha.core.text import (
     agree,
@@ -794,7 +794,7 @@ def build_server(
         region: Region = None,
         max_long_edge: int = 1024,
     ) -> list[Any]:
-        """A PNG of the window or a region: the last resort. Use it only for what text
+        """A WebP image of the window or a region: the last resort. Use it only for what text
         cannot tell (images, icons you cannot place with find's locator, colours), or when
         verify still disagrees on a value that matters. Who wrote what, which mails are
         new, a calendar or a table are read as items, at a fraction of an image's tokens.
@@ -805,9 +805,9 @@ def build_server(
         if region is not None and region != "screen":
             a, frame = area(window_title, region)
             box = a.box
-        data, used, scale = png(frame, box, max_long_edge)
+        data, used, scale = image(frame, box, max_long_edge)
         meta = {"frame_id": frame.frame_id, "region": list(used), "scale": scale}
-        return [json.dumps(meta), Image(data=data, format="png")]
+        return [json.dumps(meta), Image(data=data, format="webp")]
 
     def condition(until: str | dict[str, Any]) -> tuple[dict[str, Any], float]:
         cond = {"text": until} if isinstance(until, str) else dict(until)

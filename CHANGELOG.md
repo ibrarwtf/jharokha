@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.33.1
+
+`jharokha_screenshot` returns a WebP (quality 80) instead of a lossless PNG. A 1024-px screen was 250-400 KB as PNG, and Claude Code sizes an image result by its base64, so each screenshot counted as ~100k tokens in its context report (the model itself is billed by pixels, ~1.4k tokens). The WebP is ~5x smaller; pixels and `scale` are unchanged. The `screenshot` shell command writes the same WebP.
+
 ## v0.33.0
 
 Teams reader improvements.

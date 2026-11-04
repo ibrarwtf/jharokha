@@ -189,8 +189,8 @@ def check_region(region: Box, frame: Frame) -> None:
         )
 
 
-def png(frame: Frame, region: Box | None, max_long_edge: int) -> tuple[bytes, Box, float]:
-    """PNG of the region (or whole frame), downscaled so the long edge fits. Returns the
+def image(frame: Frame, region: Box | None, max_long_edge: int) -> tuple[bytes, Box, float]:
+    """WebP of the region (or whole frame), downscaled so the long edge fits. Returns the
     bytes, the region used, and the scale from client pixels to image pixels."""
     img = frame.image()
     box = region or (0, 0, frame.width, frame.height)
@@ -203,7 +203,10 @@ def png(frame: Frame, region: Box | None, max_long_edge: int) -> tuple[bytes, Bo
             (round(img.width * scale), round(img.height * scale)), Image.Resampling.LANCZOS
         )
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, "PNG", optimize=True)
+    # The model is billed by pixels, but clients size a result by its base64: a lossless
+    # PNG of a downscaled screen is 250-400 KB, which Claude Code counts as ~100k tokens
+    # per call. Lossy WebP is ~5x smaller with text still legible.
+    img.convert("RGB").save(buf, "WEBP", quality=80, method=6)
     return buf.getvalue(), box, scale
 
 

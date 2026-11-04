@@ -115,8 +115,9 @@ def test_the_ocr_engine_loads_onnxruntime_before_winrt():
     assert out.stdout.strip() == "True", out.stderr
 
 
-def test_screenshot_writes_a_png(monkeypatch, source, tmp_path, capsys):
-    out = tmp_path / "s.png"
+def test_screenshot_writes_a_webp(monkeypatch, source, tmp_path, capsys):
+    out = tmp_path / "s.webp"
     run(monkeypatch, source, "screenshot", str(out))
-    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    b = out.read_bytes()
+    assert b[:4] == b"RIFF" and b[8:12] == b"WEBP"
     assert json.loads(capsys.readouterr().out)["out"] == str(out)

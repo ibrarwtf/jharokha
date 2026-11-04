@@ -118,7 +118,7 @@ async def test_screenshot_region_and_scale(source):
     r = await call(source, "jharokha_screenshot", region=[0, 0, 320, 200], max_long_edge=160)
     meta = json.loads(text(r))
     assert meta["region"] == [0, 0, 320, 200] and meta["scale"] == 0.5
-    assert r.content[1].type == "image" and r.content[1].mime_type == "image/png"
+    assert r.content[1].type == "image" and r.content[1].mime_type == "image/webp"
 
 
 async def test_wait_for_text_regex_gone_and_settled(source):

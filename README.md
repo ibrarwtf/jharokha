@@ -38,7 +38,7 @@ Screen text comes back inside `<screen_text source="ocr" untrusted="true">`. Coo
 | `jharokha_wait` | Until a text appears or goes, or the screen holds still. |
 | `jharokha_do` | An action in one call with a structured result (below). Without `--allow-input`, its plan only. |
 | `jharokha_act` | With `--allow-input`: one click, type, paste, press or scroll, guarded. |
-| `jharokha_screenshot` | The last resort: a PNG. |
+| `jharokha_screenshot` | The last resort: a WebP image. |
 
 The same verbs run in a shell, each the tool called in-process: `jharokha status`, `jharokha read --region teams.thread`, `jharokha --allow-input do teams.messages --args '{"from": "18/03", "to": "21/03"}'`. `--window-title` picks the window when more than one session is open.
 
