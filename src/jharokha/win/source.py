@@ -164,9 +164,9 @@ class WindowsSource:
 
         return restore
 
-    def paste_line(self, w: WindowInfo, text: str) -> bool:
+    def paste_line(self, w: WindowInfo, text: str) -> None:
         """One line pasted, no Enter, returning once it is on screen (win.input.paste_line);
-        True when a terminal's paste warning was accepted on the way."""
+        a terminal's paste warning is dismissed, never accepted."""
         before = [self.frame(w)]
 
         def arrived() -> bool:
@@ -185,7 +185,7 @@ class WindowsSource:
                     return (x + bw // 2, y + bh // 2)
             return None
 
-        return bool(self._input(w, "paste_line", text, arrived, warning))
+        self._input(w, "paste_line", text, arrived, warning)
 
 
 def _round(v: float | None) -> float | None:

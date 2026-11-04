@@ -1207,13 +1207,14 @@ class Runner:
             self.ex.type(line)
             return "typed"
         try:
-            return "pasted after its warning" if paste(line) else "pasted"
+            paste(line)
+            return "pasted"
         except ScreenError as e:
             if e.code != "paste_failed":
                 raise
             self.ex.press("escape")  # whatever part of it came in
             self.ex.type(line)
-            return "typed: the paste did not arrive"
+            return "typed: " + str(e).removeprefix("paste_failed: ")
 
     def _send(self, line: str, p: dict[str, Any], prompt: sh.Prompt, typed: bool = False) -> str:
         """line into the input row after prompt, and Enter only once the row shows exactly

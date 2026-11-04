@@ -280,7 +280,6 @@ class Marked(Shell):
 
     def paste_line(self, w, text):  # noqa: ANN001, ANN201
         self.type_text(w, text)
-        return False
 
     def press(self, w, combo, focus_at=None):  # noqa: ANN001, ANN201
         if combo != "enter":

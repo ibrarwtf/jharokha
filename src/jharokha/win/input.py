@@ -363,19 +363,19 @@ def paste_line(
     arrived: Callable[[], bool],
     warning: Callable[[], tuple[int, int] | None],
     timeout_s: float = PASTE_WAIT_S,
-) -> bool:
+) -> None:
     """One line through the clipboard and Ctrl+V, no Enter: the caller presses it once the
     text is in. The session fetches the clipboard only when Ctrl+V lands, so the text can
     arrive a second later, after an Enter sent behind it (which then runs half a command);
-    arrived() says it is on screen. A terminal may ask first ("Paste anyway"): warning()
-    gives that button's point, clicked once. The local clipboard is put back only after the
-    text arrived, or the session could fetch it instead. Returns whether a warning was
-    accepted; raises PasteNotArrived when nothing came within timeout_s."""
+    arrived() says it is on screen. The local clipboard is put back only after the text
+    arrived, or the session could fetch it instead. Raises PasteNotArrived when nothing came
+    within timeout_s, or when the terminal asked before pasting: warning() finds its
+    "Paste anyway" button, which one short line never brings up, so what the session
+    fetched was an older clipboard; the question is dismissed and nothing is pasted."""
     if "\n" in text or "\r" in text:
         raise ValueError("paste_line takes one line; its newline is the caller's Enter")
     old = clipboard()
     set_clipboard(text)
-    accepted = False
     try:
         time.sleep(0.2)  # the client announces the new clipboard to the session
         with _active(hwnd):
@@ -384,11 +384,16 @@ def paste_line(
         end = time.monotonic() + timeout_s
         while time.monotonic() < end:
             if arrived():
-                point = None if accepted else warning()
-                if point is None:
-                    return accepted
-                click(hwnd, *point)
-                accepted = True
+                if warning() is None:
+                    return
+                # Accepting it would run a pasted file's lines one by one as commands.
+                with _active(hwnd):
+                    _chord(_vks("escape"))
+                raise PasteNotArrived(
+                    "the session fetched an older clipboard, not this line (the terminal "
+                    "asked before pasting several lines): the question was dismissed and "
+                    "nothing was pasted"
+                )
             time.sleep(0.1)
         raise PasteNotArrived(f"the pasted text did not arrive within {timeout_s:g} s")
     finally:

@@ -100,9 +100,8 @@ class FakeSource:
     def press(self, w: WindowInfo, combo: str, focus_at: Point | None = None) -> None:
         self.items.append((f"pressed {combo}", 10, 260))
 
-    def paste_line(self, w: WindowInfo, text: str) -> bool:
+    def paste_line(self, w: WindowInfo, text: str) -> None:
         self.items.append((f"pasted {text}", 10, 230))
-        return False
 
     def clipboard(self, w: WindowInfo, text: str) -> Callable[[], None]:
         self.clipboards.append(text)

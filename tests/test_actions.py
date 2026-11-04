@@ -475,11 +475,10 @@ def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():
     class Pasting(Scripted):
         fail: bool = False
 
-        def paste(self, text: str) -> bool:
+        def paste(self, text: str) -> None:
             if self.fail:
                 raise ScreenError("paste_failed", "nothing came")
             self.inputs.append(f"paste {text}")
-            return False
 
     def send(line: str, fail: bool = False) -> tuple[list[str], str]:
         ex = Pasting({"terminal": [(r"PS C:\>", 10, 10)]}, "terminal")
@@ -494,7 +493,7 @@ def test_a_short_line_is_typed_and_a_long_one_pasted_else_typed():
     assert send(long) == ([f"paste {long}"], "pasted")
     assert send(long, fail=True) == (
         ["press escape", f"type {long}"],
-        "typed: the paste did not arrive",
+        "typed: nothing came",
     )
 
 

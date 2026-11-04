@@ -162,12 +162,10 @@ class SessionExecutor:
         src = self.session.screen.source
         self._send("type", text, {"text": text}, lambda w: src.type_text(w, text))
 
-    def paste(self, text: str) -> bool:
+    def paste(self, text: str) -> None:
         """One line pasted, no Enter, once it is on screen (Source.paste_line)."""
         src = self.session.screen.source
-        got: list[bool] = []
-        self._send("paste", text, {"text": text}, lambda w: got.append(src.paste_line(w, text)))
-        return bool(got and got[0])
+        self._send("paste", text, {"text": text}, lambda w: src.paste_line(w, text))
 
     def press(self, keys: str) -> None:
         src = self.session.screen.source
