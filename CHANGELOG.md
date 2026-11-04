@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.34.0
+
+- Terminal: most "the shell's input showed … twice" refusals were the reader, not lost keys. The body pane took in the tab strip, whose titles pulled the measured row pitch from 23 to 22.3 px, so by the fourth row every cell sat a pixel off its glyph: a grid now keeps to its region's rows, and a pitch within a third of a pixel of a whole one is taken as it. A cell no glyph names (the scrollbar's thumb, the cursor) is no typed character. A new process over a prepared tab read the prompt's `>` as `v` and could neither run nor learn the font: the input row takes `v`, and the font is relearned by sending setup unchecked.
+- Terminal: a paste the terminal asks about ("Paste anyway") is dismissed, never accepted. One short line never brings that question up, so the session has fetched an older clipboard, and accepting it could run that clipboard's lines as commands.
+- `terminal.result {timeout_s}`: the output, exit code and status of a command that outlived its `terminal.run`, waited for at the state prompt, instead of sleeps and regex waits.
+- The terminal actions bring the terminal forward by its taskbar icon, as the Teams ones do; brought forward on a tab that is not prepared they refuse rather than prepare it.
+- `teams.new {chat}`: the messages since the last check of that chat (the newest seen is kept per chat in the server's memory, nothing on disk), for the re-check loop that guessed a `from` each time.
+- Teams: one-row favourites read as an entry each (a chat id matched none of them); a group's header `Ana Ald…, +2` matches the list's `Ana Alder and Ben Brook`, its ellipsis read as one dot too; a scroll back that reaches a chat's start waits once for history, then ends there with a warning instead of failing. A browser page with a side nav is no longer Teams.
+- An unknown action argument is refused with the ones the action takes.
+
 ## v0.33.2
 
 A local apps.toml holding the 0.33 people map (`[people]`, `[chats]`) loads again as an actions file: 0.33.0 refused its own tables there, and the server did not start. The skill names the terminal actions as they are since 0.31 (`terminal.run`, `read_file`, `write_file`, `setup`) instead of the removed `put_file` and `glyphs`.
