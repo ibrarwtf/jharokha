@@ -122,7 +122,7 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom", "mark"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
-    "run": ("command", "region", "clear", "first", "setup"),
+    "run": ("command", "region", "clear", "first", "setup", "result"),
     "write_file": ("path", "text", "region"),
 }
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
@@ -283,7 +283,7 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         "type": ("text",),
         "press": ("keys",),
         "click": ("target",),
-        "run": () if params.get("setup") else ("command",),
+        "run": () if params.get("setup") or params.get("result") else ("command",),
         "write_file": ("path", "text"),
         "read": ("region", "into"),
         "scroll": ("region",),
@@ -1068,12 +1068,42 @@ class Runner:
     def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         if p.get("setup"):
             return self._setup(s, p)
+        if p.get("result"):
+            return self._result(s, p)
         self._prepare(s, p)
         command = str(p["command"])
         if "\n" in command or "\r" in command:
             raise _Fail("a command is one line; nothing was typed")
         base = int(p.get("first", 1)) - 1
-        r = self._command(s, p, command, base=base, clear=bool(p.get("clear", True)))
+        clear = bool(p.get("clear", True))
+        return self._answer(self._command(s, p, command, base=base, clear=clear))
+
+    def _result(self, s: Step, p: dict[str, Any]) -> str:
+        """What the last command sent printed, as a run returns it: once the shell is idle
+        at a state prompt, the command before that prompt has ended. Waited for up to the
+        step's timeout while it runs (its own `cls` takes the prompt off the screen), at
+        once when it has ended. For a run that timed out: its command goes on, and this is
+        how its end is read, rather than a sleep and a guess."""
+        end = self.ex.now() + s.timeout_s
+        while True:
+            rows = self._rows(self._look(), p)
+            if q := sh.idle(rows):
+                self.res.fields["prompt"] = q.n - 1
+                r = sh.reply(rows, q.n - 1, 0)
+                return self._answer(self._paged(s, p, r, 0))
+            if self.ex.now() >= end:
+                ps = sh.prompts(rows)
+                self.res.output = sh.reply(rows, ps[-1].n if ps else 0, 0).lines
+                self.res.fields["finished"] = False
+                raise _Fail(
+                    f"the shell is not idle at a state prompt after {s.timeout_s:g} s: the "
+                    "command is still running (output holds what it printed so far: call "
+                    "terminal.result again), or text sits in the input (read terminal.body)"
+                )
+            self.ex.wait(POLL_S)
+
+    def _answer(self, r: sh.Reply) -> str:
+        """A command's reply as the result: its output, exit code, status and directory."""
         assert r.prompt is not None
         self.res.output = r.lines
         self.res.exit_code = r.prompt.code
@@ -1173,8 +1203,12 @@ class Runner:
         else:
             line = sh.wrapped(command, base, clear)
         self.res.fields["input"] = self._send(line, p, prompt, typed)
-        r = self._reply(p, prompt.n, base, s.timeout_s)
-        lines, n = r.lines, prompt.n + 1
+        return self._paged(s, p, self._reply(p, prompt.n, base, s.timeout_s), base)
+
+    def _paged(self, s: Step, p: dict[str, Any], r: sh.Reply, base: int) -> sh.Reply:
+        """r with the lines that scrolled off the top fetched again, a page at a time."""
+        assert r.prompt is not None
+        lines, n = r.lines, r.prompt.n
         pages = 0
         try:
             while r.first > base + 1 and pages < PAGE_MAX:
@@ -1252,8 +1286,8 @@ class Runner:
                     continue
                 raise _Fail(
                     "no empty prompt at the bottom of the shell: a command may still be "
-                    "running (wait, or press ctrl+c with jharokha_act: the next state row "
-                    "says when it stopped), or this is not the prepared tab"
+                    "running (terminal.result waits for its end and returns its output; "
+                    "ctrl+c with jharokha_act stops it), or this is not the prepared tab"
                 )
             self.ex.wait(POLL_S)
 
@@ -1360,9 +1394,9 @@ class Runner:
                 self.res.fields["finished"] = False
                 raise _Fail(
                     f"no state prompt within {timeout:g} s: the command may still be running "
-                    "(output holds what it printed so far: wait, read terminal.body, or press "
-                    "ctrl+c with jharokha_act; the next state row says when it stopped; give "
-                    "the next one a longer timeout_s), or it went somewhere else"
+                    "(output holds what it printed so far: terminal.result waits for its end "
+                    "and returns all of it; or press ctrl+c with jharokha_act), or it went "
+                    "somewhere else"
                 )
             self.ex.wait(POLL_S)
 

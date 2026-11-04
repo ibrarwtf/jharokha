@@ -33,6 +33,26 @@ region = "body"
 clear = true  # cls on the same line, so the output starts at the top of the screen
 timeout_s = "{timeout_s}"
 
+# A command longer than a run's timeout goes on in the shell; its end is read from the
+# state prompt like any other, not slept on: without it, an agent sleeps blind, waits on
+# regexes, or runs the command again.
+[action.terminal.result]
+summary = """What the last command sent in the PowerShell tab in front printed, its exit
+code and status, as terminal.run returns them: waits up to timeout_s for it to end, and
+returns at once when it has. After a terminal.run whose fields.finished is false, call this
+(again, while finished stays false) instead of sleeping or running the command again."""
+args.timeout_s = { type = "number", default = 60, max = 300, doc = "seconds to wait for the command to end, up to 300" }
+
+[[action.terminal.result.step]]
+do = "focus"
+switch = true
+
+[[action.terminal.result.step]]
+do = "run"
+result = true
+region = "body"
+timeout_s = "{timeout_s}"
+
 [action.terminal.read_file]
 summary = """Lines of a text file in the PowerShell tab in front, numbered from the file's
 first line: count lines from line from on (40 from line 1 by default). Ask for the next

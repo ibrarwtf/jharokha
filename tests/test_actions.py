@@ -31,6 +31,7 @@ def test_builtin_actions_parse():
     assert set(acts) == {
         "terminal.run",
         "terminal.setup",
+        "terminal.result",
         "terminal.read_file",
         "terminal.write_file",
         "teams.open_chat",
@@ -633,6 +634,23 @@ SCREEN_REGIONS: dict[str, Box] = {"terminal.body": SCREEN}
 
 def run(ex: Shell, **args: object) -> actions.Result:
     return Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-Thing", **args})
+
+
+def test_a_run_that_timed_out_is_finished_by_terminal_result():
+    ex = Shell(["one", "two"], finish=False)
+    r = run(ex, timeout_s=5)
+    assert not r.ok and r.fields["finished"] is False
+    assert "terminal.result" in r.failed["reason"]  # type: ignore[index]
+    result = actions.builtin()["terminal.result"]
+    r = Runner(ex).run(result, {"timeout_s": 5})
+    assert not r.ok and r.fields["finished"] is False  # still running: call it again
+    ex.running, ex.n = False, ex.n + 1  # the command ends
+    r = Runner(ex).run(result, {})
+    assert r.ok and r.output == ["one", "two"] and r.exit_code == 0
+    assert r.fields["prompt"] == 1
+    sent = len(ex.inputs)
+    r = Runner(ex).run(result, {})  # ended already: at once, nothing sent
+    assert r.ok and r.output == ["one", "two"] and len(ex.inputs) == sent
 
 
 def test_a_command_is_wrapped_numbered_and_read_up_to_the_next_prompt():
