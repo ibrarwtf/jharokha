@@ -71,7 +71,7 @@ def test_arguments_are_checked_and_filled_literally_into_a_regex():
     assert actions.check_args(goto, {"url": "status.example.net"}) == {"url": "status.example.net"}
     with pytest.raises(ActionError, match="does not match"):
         actions.check_args(goto, {"url": "Get-ChildItem"})
-    with pytest.raises(ActionError, match="takes no argument"):
+    with pytest.raises(ActionError, match="takes no argument x; it takes url"):
         actions.check_args(goto, {"url": "a.example.net", "x": 1})
     assert actions.fill({"regex": r"{f}\s+(\d+)", "text": "{f}"}, {"f": "a.b"}) == {
         "regex": r"a\.b\s+(\d+)",

@@ -478,7 +478,8 @@ def check_args(action: Action, args: Mapping[str, Any]) -> dict[str, Any]:
     """The arguments, validated and with defaults; ActionError naming what is wrong."""
     extra = sorted(set(args) - set(action.args))
     if extra:
-        raise ActionError(f"{action.id} takes no argument {', '.join(extra)}")
+        takes = ", ".join(action.args) or "no arguments"
+        raise ActionError(f"{action.id} takes no argument {', '.join(extra)}; it takes {takes}")
     env: dict[str, Any] = {}
     for name, a in action.args.items():
         if name not in args:
