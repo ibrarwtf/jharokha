@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from jharokha.core.glyphs import ALPHABET_COMMAND
+from jharokha.core.glyphs import ALPHABET_COMMAND, UNREADABLE
 
 # The prompt's marker; an environment variable lets frames saved under another marker
 # still be read.
@@ -34,6 +34,7 @@ VAR = "__jk"
 
 # Lookalikes read in place of digits, in a counter or an exit code read by OCR before the
 # glyphs are learned.
+MAX_HOLES = 2  # unreadable cells a sent line may show and still be the line
 _DIGIT = str.maketrans("OoQDIl|!iSsBZzG", "000011111558226")
 _HEX = str.maketrans("oqdil|!sbgz", "09011115862")
 
@@ -254,4 +255,13 @@ def looks_like(a: str, b: str) -> bool:
         return True
     fa = "".join(a.split()).translate(_DIGIT).lower()
     fb = "".join(b.split()).translate(_DIGIT).lower()
-    return fa == fb
+    if fa == fb:
+        return True
+    # A cell no glyph names is no typed character (every printable one is learned): the
+    # scrollbar's thumb beside a row that reaches the edge, or the cursor: a sent line
+    # read as `| w <?>here` would otherwise be refused. Each stands for one character or none.
+    holes = fa.count(UNREADABLE)
+    if not 0 < holes <= MAX_HOLES:
+        return False
+    pattern = ".?".join(re.escape(part) for part in fa.split(UNREADABLE))
+    return re.fullmatch(pattern, fb, re.DOTALL) is not None

@@ -150,3 +150,10 @@ def test_looks_like_is_exact_for_the_glyph_reader_and_loose_for_ocr():
     )  # spaces dropped, 0 for O
     assert not sh.looks_like(line[:-3], line)  # still arriving
     assert not sh.looks_like("", line)
+    # Unreadable cells, no typed character: the scrollbar's thumb in the row, the cursor.
+    u = "�"
+    assert sh.looks_like(f"cls; . {{ gc Docker{u}file }} 2>&1 | Out-String -Stream | jk", line)
+    assert sh.looks_like(line + u, line)
+    assert sh.looks_like(f"cls; . {{ gc Docker{u}ile }} 2>&1 | Out-String -Stream | jk", line)
+    assert not sh.looks_like(f"cls; . {{ gc Docker{u}e }} 2>&1 | Out-String -Stream | jk", line)
+    assert not sh.looks_like(u * 3 + line, line)
