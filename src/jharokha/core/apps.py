@@ -611,8 +611,20 @@ class Catalog:
         if var and name in var.regions:
             how = f"calibrated {var.name}" if var.name else "calibrated"
             return to_box(var.regions[name], width, height), how
-        reg = self.apps[app].views[view].regions.get(name)
-        return place(reg, panes, width, height) if reg else None
+        v = self.apps[app].views[view]
+        reg = v.regions.get(name)
+        got = place(reg, panes, width, height) if reg else None
+        if got and reg and reg.box and got[1] == "pane" and name in v.grids:
+            # A terminal's tab strip shares the body's background, so the pane takes it in:
+            # its titles, off the rows' rhythm, pull the measured pitch from 23 to 22.3 px
+            # and the cells a pixel further off each row down. A grid keeps to its box's
+            # rows and the pane's columns, which end before the scrollbar.
+            x, y, w, h = got[0]
+            _, by, _, bh = to_box(reg.box, width, height)
+            top, bottom = max(y, by), min(y + h, by + bh)
+            if bottom > top:
+                got = ((x, top, w, bottom - top), "pane")
+        return got
 
     def nested(
         self,

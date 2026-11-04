@@ -152,11 +152,12 @@ def store_key(grid: Grid) -> tuple[int, int]:
 def snapped(grid: Grid) -> Grid:
     """The grid on whole pixels: a terminal draws its cells a whole number of pixels apart
     and wide, and a sub-pixel origin or pitch would cut the same glyph differently in two
-    columns or two frames. Values within a fifth of a pixel of a whole one are taken as
-    it; others (a calibration that says otherwise) stay."""
+    columns or two frames. Values within a third of a pixel of a whole one are taken as
+    it (four rows after a cls measured a 23 px pitch as 23.3); others (a calibration that
+    says otherwise) stay."""
 
     def near(v: float) -> float:
-        return float(round(v)) if abs(v - round(v)) <= 0.2 else v
+        return float(round(v)) if abs(v - round(v)) <= 0.35 else v
 
     return replace(
         grid,
