@@ -56,7 +56,7 @@ Nothing was sent. Do not work around a refusal.
 
 ## Switching apps
 
-Actions bring their app forward by its taskbar icon, a session spot `taskbar.<app>` in the user's `apps.toml`. If one says it cannot switch, ask the user to add the spot (a screenshot of the taskbar gives its centre, as fractions of the client area) or to bring the app forward themselves. Teaching jharokha a whole new app is not built yet: say so.
+Actions bring their app forward by its taskbar icon, a session spot `taskbar.<app>` in the user's `apps.toml`; do not click it yourself first. A terminal brought forward on a tab that is not prepared is refused, never prepared: ask the user which tab to use. If one says it cannot switch, ask the user to add the spot (a screenshot of the taskbar gives its centre, as fractions of the client area) or to bring the app forward themselves. Teaching jharokha a whole new app is not built yet: say so.
 
 ## Rules
 

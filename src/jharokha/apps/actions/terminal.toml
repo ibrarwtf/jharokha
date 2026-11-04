@@ -1,8 +1,11 @@
-# Terminal actions, built in. They work only in a terminal already in front: they never
-# switch to one, since a command typed anywhere else goes somewhere else (a browser's
-# address bar searches the web for it). A command runs under the default allow: which
-# commands only read cannot be told from their text (an allowlist passed none of a live
-# day's 93), and a flag every call carries guards nothing. --allow-input is the opt-in.
+# Terminal actions, built in. They bring the terminal forward by its taskbar icon when
+# another app is in front (otherwise an agent clicks it by hand before nearly every run), and
+# send nothing until the guard reads the terminal in front: a command typed anywhere else
+# goes somewhere else (a browser's address bar searches the web for it). Brought forward on
+# a tab that is not prepared, they refuse rather than prepare it; terminal.setup never
+# switches. A command runs under the default allow: which commands only read cannot be
+# told from their text (an allowlist passes almost none of the commands a day needs), and
+# a flag every call carries guards nothing. --allow-input is the opt-in.
 #
 # The shell is PowerShell in a tab prepared once (core.shell): its prompt shows a counter,
 # the date and time, the last command's status and exit code and the directory, so a
@@ -21,6 +24,7 @@ args.timeout_s = { type = "number", default = 30, max = 300, doc = "seconds for 
 
 [[action.terminal.run.step]]
 do = "focus"
+switch = true
 
 [[action.terminal.run.step]]
 do = "run"
@@ -39,6 +43,7 @@ args.count = { type = "number", default = 40, max = 400 }
 
 [[action.terminal.read_file.step]]
 do = "focus"
+switch = true
 
 [[action.terminal.read_file.step]]
 do = "run"
@@ -77,6 +82,7 @@ args.text = { type = "text", max_len = 1000000 }
 
 [[action.terminal.write_file.step]]
 do = "focus"
+switch = true
 
 [[action.terminal.write_file.step]]
 do = "write_file"

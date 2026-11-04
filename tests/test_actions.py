@@ -311,14 +311,22 @@ def test_dry_run_returns_the_plan_without_input():
     assert seq.plan[1]["steps"][0]["steps"][0]["target"] == {"text": "{button}"}  # type: ignore[index]
 
 
-def test_terminal_run_with_another_app_in_front_is_refused():
-    ex = Scripted({"browser": [("https://requests.example.net/queue", 140, 61)]}, "browser")
-    r = Runner(ex).run(actions.builtin()["terminal.run"], {"command": "Get-ChildItem"})
+def test_terminal_run_brings_the_terminal_forward_and_never_prepares_a_tab_it_found():
+    screens = {
+        "browser": [("https://requests.example.net/queue", 140, 61)],
+        "terminal": [("PS C:\\Users\\X>", 10, 10)],
+    }
+    run = actions.builtin()["terminal.run"]
+    ex = Scripted(screens, "browser")
+    r = Runner(ex).run(run, {"command": "Get-ChildItem"})
     assert not r.ok and ex.inputs == []
-    assert r.failed["step"] == "1:focus" and r.failed["code"] == "wrong_app"  # type: ignore[index]
-    detail = r.failed["reason"]  # type: ignore[index]
-    assert detail.startswith("expected terminal in front, but the screen shows browser main")
-    assert "nothing was sent" in detail
+    assert r.failed["step"] == "1:focus"  # type: ignore[index]
+    assert "taskbar.terminal" in r.failed["reason"]  # type: ignore[index]
+    # Brought forward by its icon, on a tab not prepared: another shell, perhaps the user's.
+    ex = Scripted(screens, "browser", spots={"session.taskbar.terminal": (90, 390)})
+    r = Runner(ex).run(run, {"command": "Get-ChildItem"})
+    assert ex.inputs == ["click 90,390"]
+    assert not r.ok and "shows no prepared tab" in r.failed["reason"]  # type: ignore[index]
 
 
 def test_steps_check_their_outcome_and_report_where_they_failed():

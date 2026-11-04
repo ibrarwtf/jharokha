@@ -579,6 +579,7 @@ class Runner:
         self._last: str | None = None  # the last app recognised during this run
         self._close: dict[tuple[int, str], list[Line]] = {}  # rows read again, per frame
         self._lifted: dict[tuple[int, int], int] = {}  # wheel notches up, net, per point
+        self._switched = False  # a focus step brought the app forward by its taskbar icon
         try:
             self._steps(action.steps, env, "")
         except _Fail as e:
@@ -669,6 +670,7 @@ class Runner:
             self.ex.click(*hit.center)
             self.ex.settle()
             snap = self._until({"app": app}, s.timeout_s, f"switching to {app}")
+            self._switched = True
         self._guard(snap, app)
         if view and snap.view != view:
             raise _Fail(f"{app} shows its {snap.view} view, not {view}")
@@ -1096,6 +1098,13 @@ class Runner:
         rows = self._rows(self._look(), p)
         known = getattr(self.ex, "glyphs", None)
         n = known() if known else None
+        if not sh.prepared(rows) and self._switched:
+            # The window that came forward shows another tab (the user's own, perhaps):
+            # preparing it would change a shell nobody asked for.
+            raise _Fail(
+                "nothing was sent: the terminal brought forward shows no prepared tab. Ask "
+                "the user which tab to use, bring it forward, and run terminal.setup there"
+            )
         if not sh.prepared(rows) or (n is not None and n < GLYPHS_MIN):
             self._setup(s, p)
 
