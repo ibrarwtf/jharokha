@@ -9,14 +9,17 @@ from collections.abc import Callable
 from typing import Any
 
 from jharokha.core import apps, glyphs, rows
-from jharokha.core.apps import Catalog
+from jharokha.core.apps import SESSION, Catalog
 from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
+from jharokha.core.locate import RegionInfo, Spot, spot_px
 from jharokha.core.models import Box, Frame, Line, inside, iou
 from jharokha.core.panes import background, panes
 from jharokha.core.screen import Screen, ScreenError
 from jharokha.core.text import grid
 from jharokha.core.watch import changed_bbox
+
+TASKBAR = f"{SESSION}.taskbar"
 
 
 class Where:
@@ -113,16 +116,45 @@ class Session:
         return last
 
     def _placed(self, at: Where) -> dict[str, Box]:
-        """The session's regions and the view's, placed on at, as an action's read has them."""
+        return self.regions(at)[0]
+
+    def regions(
+        self, at: Where, short: bool = False
+    ) -> tuple[dict[str, Box], dict[str, RegionInfo]]:
+        """The session's regions and the view's, placed on at (`teams.thread`; with short,
+        `thread` too), and how each of the view's reads as items: what every tool, action
+        and capture places the same way."""
         f, ident, cat = at.frame, at.ident, self.catalog
-        out: dict[str, Box] = {}
+        boxes: dict[str, Box] = {}
+        info: dict[str, RegionInfo] = {}
         for name in dict.fromkeys([*cat.session_cal, *cat.session]):
             if p := cat.session_box(name, at.panes, f.width, f.height):
-                out[name] = p[0]
+                boxes[name] = p[0]
         if ident.app and ident.view:
-            for name in cat.apps[ident.app].views[ident.view].regions:
+            for name, reg in cat.apps[ident.app].views[ident.view].regions.items():
                 if p := self.place(at, ident.app, ident.view, name):
-                    out[f"{ident.app}.{name}"] = p[0]
+                    inner = tuple(self.nested(at, ident.app, ident.view, name))
+                    for k in (f"{ident.app}.{name}", name) if short else (f"{ident.app}.{name}",):
+                        boxes.setdefault(k, p[0])
+                        info.setdefault(k, RegionInfo(reg.reader, reg.kind, inner))
+        return boxes, info
+
+    def spots(self, at: Where, app: str | None) -> dict[str, Spot]:
+        """The session's spots and app's (the one in front; None: none of an app's), in
+        pixels of at's frame. A spot given as a slot is the nth icon found on the session's
+        taskbar now (core.elements), and missing while the bar shows fewer."""
+        f, cat = at.frame, self.catalog
+        out = {
+            k: spot_px(p, f.width, f.height)
+            for k, p in cat.spots_for(app, f.width, f.height).items()
+        }
+        if cat.slots and (bar := cat.session_box(TASKBAR, at.panes, f.width, f.height)):
+            from jharokha.core.elements import taskbar_icons  # numpy: the server starts without it
+            icons = taskbar_icons(f, bar[0])
+            for k, n in cat.slots.items():
+                if n <= len(icons):
+                    x, y, w, h = icons[n - 1]
+                    out[k] = (x + w // 2, y + h // 2)
         return out
 
     def place(self, at: Where, app: str, view: str, name: str) -> tuple[Box, str] | None:

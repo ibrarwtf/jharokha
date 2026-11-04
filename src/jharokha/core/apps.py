@@ -213,6 +213,7 @@ class Doc:
     session_cal: dict[str, Fraction] = field(default_factory=dict)
     spots: dict[str, Point2] = field(default_factory=dict)
     spots_size: tuple[int, int] | None = None  # the client size the session's spots fit
+    slots: dict[str, int] = field(default_factory=dict)  # spots as the nth taskbar icon
     people: People | None = None  # None: the file has no people map
 
 
@@ -254,6 +255,16 @@ def _point(v: Any, where: str) -> Point2:
     if not all(0 <= f <= 1 for f in v):
         raise AppError(f"{where} must be [x, y] as fractions 0..1")
     return (float(v[0]), float(v[1]))
+
+
+def _slot(v: Mapping[str, Any], where: str) -> int:
+    """`{ slot = n }`: the nth icon from the left on the session's taskbar (core.elements),
+    found on every frame, where a point stays put when running apps move the icons."""
+    _only(v, ("slot",), where)
+    n = v.get("slot")
+    if not (isinstance(n, int) and not isinstance(n, bool) and n >= 1):
+        raise AppError(f"{where} must be [x, y] or {{ slot = n }}, n from 1 at the left")
+    return n
 
 
 def _size(v: Any, where: str) -> tuple[int, int]:
@@ -508,7 +519,10 @@ def parse(text: str, source: str = "apps", origin: str = "local") -> Doc:
             for k, f in views.get("regions", {}).items():
                 doc.session_cal[f"{SESSION}.{k}"] = _frac(f, f"{where}.regions.{k}")
             for k, p in views.get("spots", {}).items():
-                doc.spots[f"{SESSION}.{k}"] = _point(p, f"{where}.spots.{k}")
+                if isinstance(p, dict):
+                    doc.slots[f"{SESSION}.{k}"] = _slot(p, f"{where}.spots.{k}")
+                else:
+                    doc.spots[f"{SESSION}.{k}"] = _point(p, f"{where}.spots.{k}")
             if "size" in views:
                 doc.spots_size = _size(views["size"], f"{where}.size")
             continue
@@ -552,6 +566,7 @@ class Catalog:
     spots: dict[str, Point2]
     spots_size: tuple[int, int] | None = None
     people: People = field(default_factory=People)
+    slots: dict[str, int] = field(default_factory=dict)
 
     def knows(self, target: str) -> bool:
         """target is an app id or 'app.view', as input tools' expect takes it."""
@@ -744,20 +759,26 @@ def catalog(*docs: Doc) -> Catalog:
     session: dict[str, Region] = {}
     session_cal: dict[str, Fraction] = {}
     spots: dict[str, Point2] = {}
+    slots: dict[str, int] = {}
     spots_size: tuple[int, int] | None = None
     for d in (*builtin(), *docs):
         apps.update(d.apps)
         cal.update(d.calibration)
         session.update(d.session)
         session_cal.update(d.session_cal)
-        spots.update(d.spots)
+        for k, pt in d.spots.items():
+            spots[k] = pt
+            slots.pop(k, None)
+        for k, n in d.slots.items():
+            slots[k] = n
+            spots.pop(k, None)
         spots_size = d.spots_size or spots_size
     people = next((d.people for d in reversed(docs) if d.people is not None), People())
     for (aid, vid), c in cal.items():
         if aid not in apps:
             raise AppError(f"calibration.{aid}.{vid}: no app '{aid}' is defined")
         apps[aid] = _calibrated(apps[aid], vid, c)
-    return Catalog(apps, cal, session, session_cal, spots, spots_size, people)
+    return Catalog(apps, cal, session, session_cal, spots, spots_size, people, slots)
 
 
 def load(path: Path | None = None) -> Catalog:

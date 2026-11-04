@@ -33,7 +33,7 @@ from jharokha.core.capture import Capture, outcome
 from jharokha.core.executor import SessionExecutor
 from jharokha.core.guard import Policy
 from jharokha.core.identify import THRESHOLD, Identity
-from jharokha.core.locate import Hit, Miss, RegionInfo, locate, spot_px, unwrapped
+from jharokha.core.locate import Hit, Miss, locate, unwrapped
 from jharokha.core.locate import locator as parse_locator
 from jharokha.core.models import Box, Frame, Line, Point, WindowInfo, inside, within
 from jharokha.core.panes import reading_panes
@@ -465,11 +465,8 @@ def build_server(
         ]
         if sess:
             out.append("session: " + "; ".join(sess))
-        if here := session.catalog.spots_for(ident.app, frame.width, frame.height):
-            spots = (
-                f"{k} {_nums(spot_px(p, frame.width, frame.height)[:2])}" for k, p in here.items()
-            )
-            out.append("spots: " + "; ".join(spots))
+        if here := session.spots(at, ident.app):
+            out.append("spots: " + "; ".join(f"{k} {_nums(p[:2])}" for k, p in here.items()))
         return "\n".join(out)
 
     def jharokha_status() -> str:
@@ -711,24 +708,6 @@ def build_server(
         show = format_detailed if fmt == "detailed" else format_concise
         return f"{head}{note}\n{show(lines, offset, limit, alt)}"
 
-    def regions_now(at: Where) -> tuple[dict[str, Box], dict[str, RegionInfo]]:
-        """The named regions placed on this screen (full names, and short ones for the app
-        in front) and the session's, and how each reads as items."""
-        f, ident = at.frame, at.ident
-        boxes: dict[str, Box] = {}
-        info: dict[str, RegionInfo] = {}
-        for name in dict.fromkeys([*session.catalog.session_cal, *session.catalog.session]):
-            if got := session.catalog.session_box(name, at.panes, f.width, f.height):
-                boxes[name] = got[0]
-        if ident.app and ident.view:
-            for name, reg in session.catalog.apps[ident.app].views[ident.view].regions.items():
-                if got := session.place(at, ident.app, ident.view, name):
-                    inner = tuple(session.nested(at, ident.app, ident.view, name))
-                    for k in (f"{ident.app}.{name}", name):
-                        boxes.setdefault(k, got[0])
-                        info.setdefault(k, RegionInfo(reg.reader, reg.kind, inner))
-        return boxes, info
-
     def hits_for(
         title: str | None, loc_t: dict[str, Any], region: Region, all_: bool
     ) -> tuple[Frame, list[Hit] | Miss]:
@@ -738,16 +717,13 @@ def build_server(
         except ValueError as e:
             raise ScreenError("bad_argument", f"locator: {e}") from None
         frame, lines, at = whole(title)
-        boxes, info = regions_now(at)
+        boxes, info = session.regions(at, short=True)
         if region is not None and region != "screen":
             a, _ = area(title, region)
             assert a.box is not None
             boxes[a.label] = a.box
             loc = parse_locator({**loc_t, "region": a.label})
-        spots = {
-            k: spot_px(p, frame.width, frame.height)
-            for k, p in session.catalog.spots_for(at.ident.app, frame.width, frame.height).items()
-        }
+        spots = session.spots(at, at.ident.app)
         screen_box = (0, 0, frame.width, frame.height)
         hit = locate(loc, lines, boxes, spots, screen_box, info, session.catalog.people)
         return frame, hit if isinstance(hit, Miss) else [hit]

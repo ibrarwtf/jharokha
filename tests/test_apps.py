@@ -5,9 +5,11 @@ from __future__ import annotations
 import pathlib
 
 import pytest
+from PIL import Image, ImageDraw
 
 from jharokha.core import apps, geometry
 from jharokha.core.identify import THRESHOLD, identify
+from jharokha.core.models import Frame
 
 from .conftest import lines_for
 
@@ -223,9 +225,7 @@ def test_a_browser_page_with_a_side_nav_is_not_teams():
     chat = [("Chat", 100, 90), ("Ana Alder", 100, 160)]
     who = identify(cat, lines_for(chat), TEAMS_PANES, (255, 255, 255), W, H)
     assert who.app != "teams"
-    who = identify(
-        cat, lines_for([TEAMS_TEXT[0], *chat]), TEAMS_PANES, (255, 255, 255), W, H
-    )
+    who = identify(cat, lines_for([TEAMS_TEXT[0], *chat]), TEAMS_PANES, (255, 255, 255), W, H)
     assert (who.app, who.view) == ("teams", "chat") and who.confidence >= 0.9
 
 
@@ -246,6 +246,45 @@ def test_session_spots_keep_their_pixels_when_the_window_is_resized():
     assert plain.spots_for(None, 1300, 1200)["session.taskbar.terminal"] == (0.15, 0.975)
     with pytest.raises(apps.AppError, match="size must be"):
         apps.parse("format = 1\n[calibration.session]\nsize = [0.5, 1]\n")
+
+
+def _taskbar(xs: list[int], size: tuple[int, int] = (1200, 1200)) -> Frame:
+    """A session screen whose taskbar holds 24 px icons centred at xs, a running mark under
+    each, as Windows draws them."""
+    img = Image.new("RGBA", size, (32, 32, 32))
+    d = ImageDraw.Draw(img)
+    top = size[1] - 65
+    d.rectangle((0, top, size[0], size[1]), fill=(238, 240, 244))
+    for x in xs:
+        d.rectangle((x - 12, top + 20, x + 12, top + 44), fill=(80, 90, 200))
+        d.rectangle((x - 3, top + 58, x + 3, top + 60), fill=(120, 120, 120))
+    return Frame(size[0], size[1], img.tobytes("raw", "BGRA"), 1, 0.0)
+
+
+def test_a_spot_as_a_slot_is_the_nth_taskbar_icon_wherever_it_moved():
+    """More running apps move the pinned icons closer (55 to 40 px apart), so a Teams spot
+    measured as a fraction would click the icon right of Teams'."""
+    from jharokha.core.elements import taskbar_icons
+    from jharokha.core.session import Session, Where
+
+    toml = (
+        "format = 1\n[calibration.session]\nsize = [1200, 1200]\n"
+        "spots = { 'taskbar.start' = [0.03, 0.975], 'taskbar.teams' = { slot = 3 } }\n"
+    )
+    cat = apps.catalog(apps.parse(toml))
+    assert cat.slots == {"session.taskbar.teams": 3}
+    wide = [40 + 55 * i for i in range(10)]
+    tight = [33 + 40 * i for i in range(12)]
+    assert [b[0] + b[2] // 2 for b in taskbar_icons(_taskbar(wide), (0, 1135, 1200, 65))] == wide
+    s = Session(None, cat)  # type: ignore[arg-type]
+    for xs in (wide, tight):
+        f = _taskbar(xs)
+        spots = s.spots(Where(f, None, [], []), None)  # type: ignore[arg-type]
+        assert spots["session.taskbar.teams"][0] == xs[2]
+        assert spots["session.taskbar.start"][:2] == (36, 1170)  # a point stays a point
+    assert "session.taskbar.teams" not in s.spots(Where(_taskbar(wide[:2]), None, [], []), None)  # type: ignore[arg-type]
+    with pytest.raises(apps.AppError, match="slot = n"):
+        apps.parse("format = 1\n[calibration.session]\nspots = { 'a' = { slot = 0 } }\n")
 
 
 OUTLOOK_PANES = [(0, 0, W, 59), (0, 59, 60, 1062), (60, 103, 1068, 56)]

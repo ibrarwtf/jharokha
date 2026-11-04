@@ -9,8 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from jharokha.core.actions import RegionInfo, Snapshot
-from jharokha.core.locate import spot_px
+from jharokha.core.actions import Snapshot
 from jharokha.core.models import Box, Frame, Line, WindowInfo
 from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.session import Session
@@ -65,29 +64,19 @@ class SessionExecutor:
             return self._glanced
         self.reads += 1
         s = self.session
-        cat = s.catalog
         lines = s.screen.lines(frame, None)
         size = (frame.width, frame.height)
         at = s.where(frame, lines)
-        front = None if looks_locked(lines) else at.ident.app
-        spots = {k: spot_px(p, *size) for k, p in cat.spots_for(front, *size).items()}
-        regions: dict[str, Box] = {}
-        for name in dict.fromkeys([*cat.session_cal, *cat.session]):
-            if p := cat.session_box(name, at.panes, *size):
-                regions[name] = p[0]
+        regions, info = s.regions(at)
         if looks_locked(lines):
+            # A lock screen is no app: only the session's own regions and spots.
+            regions = {k: b for k, b in regions.items() if k.startswith("session.")}
+            spots = s.spots(at, None)
             snap = Snapshot(frame.frame_id, size, lines, None, None, None, regions, spots, True)
         else:
             ident = at.ident
+            spots = s.spots(at, ident.app)
             lines = lines if fast else s.shape(at, lines)
-            info: dict[str, RegionInfo] = {}
-            if ident.app and ident.view:
-                for name, reg in cat.apps[ident.app].views[ident.view].regions.items():
-                    if placed := s.place(at, ident.app, ident.view, name):
-                        key = f"{ident.app}.{name}"
-                        regions[key] = placed[0]
-                        inner = tuple(s.nested(at, ident.app, ident.view, name))
-                        info[key] = RegionInfo(reg.reader, reg.kind, inner)
             snap = Snapshot(
                 frame.frame_id,
                 size,

@@ -13,7 +13,9 @@ format = 1
 # The session's own Windows taskbar, and spots on it (points: icons have no text). With
 # size, the client size they were measured at, spots keep their pixels from the left and
 # bottom edges when the window is resized, as a left-aligned taskbar's icons do; without
-# it they stay fractions of the client area.
+# it they stay fractions of the client area. A spot given as { slot = n } is the nth icon
+# from the left, found on the taskbar on every frame: icons keep their order but move when
+# more apps run, so a slot is what an app's taskbar icon should be.
 [calibration.session]
 size = [1200, 1200]
 
@@ -23,6 +25,8 @@ taskbar = [0, 0.95, 1, 0.05]
 [calibration.session.spots]
 start = [0.45, 0.975]
 search = [0.49, 0.975]
+"taskbar.terminal" = { slot = 2 }
+"taskbar.teams" = { slot = 3 }
 
 # One view measured at several zoom levels: a variant each, told apart by where the anchor
 # text sat (anchor_at); the nearest one is used. focus names the region input tools report
