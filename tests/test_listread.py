@@ -127,6 +127,27 @@ def test_chat_list_entries():
     assert got[0].as_dict()["section"] == "Favourites"
 
 
+def test_one_row_entries_a_few_line_pitches_apart_are_entries_each():
+    """Teams favourites: one row each, 28 px apart with 12 px text, and wider steps around
+    the rows above and the next section; each is an entry, not one entry together."""
+    rows = [
+        ("Unread Channels Chats", 20, 100),
+        ("Saved", 20, 145),
+        ("Favourites", 20, 190),
+        ("Ana Alder", 40, 220),
+        ("Ben Brook, +2", 40, 248),
+        ("Mia Torres", 40, 276),
+        ("Teams and channels", 20, 320),
+        ("See all your teams", 40, 350),
+    ]
+    got = items(lines_for(rows), (0, 90, 300, 300), "entries")
+    assert [it.title for it in got if it.section == "Favourites"] == [
+        "Ana Alder",
+        "Ben Brook, +2",
+        "Mia Torres",
+    ]
+
+
 MAIL_BOX = (300, 100, 500, 600)
 MAIL = [
     ("Today", 310, 100),

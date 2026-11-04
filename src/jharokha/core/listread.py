@@ -107,6 +107,7 @@ _SECTION = re.compile(
     r"|teams and channels))$",
     re.I,
 )
+_ALONE = 2.0  # text heights from one row's top to the next's beyond which they are two entries
 # Of the region's width. In Teams, others' text at 13%, the quotes inside their messages up
 # to 20%, your own bubbles from 32%.
 _OWN_SIDE = 0.25
@@ -614,13 +615,18 @@ def _listed(rows: list[_Row], box: Box, kind: str) -> list[Item]:
             gaps.append(_step(prev, r))
         prev = r
     split = _split_gap(gaps)
+    # Rows of one entry are a line pitch apart, never two: Teams favourites, one row
+    # each 40 px apart with 17 px text, would split on wider steps around their section
+    # headers instead and come out as one entry.
+    hs = sorted(r.box[3] for r in rows)
+    alone = _ALONE * hs[len(hs) // 2] if hs else float("inf")
     groups: list[tuple[str, list[_Row]]] = []
     section, prev = "", None
     for r, sec in zip(rows, sections, strict=True):
         if sec:
             section, prev = sec, None
             continue
-        if prev is None or _step(prev, r) > split:
+        if prev is None or _step(prev, r) > split or _step(prev, r) > alone:
             groups.append((section, []))
         groups[-1][1].append(r)
         prev = r

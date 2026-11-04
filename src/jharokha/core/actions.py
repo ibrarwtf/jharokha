@@ -1410,6 +1410,8 @@ def _holds(
 
 
 _ELLIPSIS = re.compile(r"(?:\.{2,}|…)$")
+_CUT_DOT = re.compile(r"(\w)\.(\s*,\s*\+\d)")
+_COUNT = re.compile(r"^,?\+\d+$")
 NAME_RATIO = 0.85  # how alike a name and what a header shows of it must read
 
 
@@ -1427,19 +1429,25 @@ def name_on(lines: list[Line], want: str, people: People | None = None) -> bool:
     for row in row_texts(lines):
         if w in _compact(row):
             return True
+        # OCR reads a group header's ellipsis as one dot too (`Ana A., +2`).
+        row = _CUT_DOT.sub("\\1…\\2", row)
         # A group chat's count follows the cut name unspaced: `Ana Ald...,+2`.
         tokens = re.sub(r"(\.{2,}|…)(?=\S)", r"\1 ", row).split()
         for j, tok in enumerate(tokens):
             cut = bool(_ELLIPSIS.search(tok))
             if not cut and j < len(tokens) - 1:
                 continue  # a cut name ends at its ellipsis, a whole one anywhere
+            # A group's header cuts its members' names short before their count, where the
+            # list joins them (`Ana and Ben` over `Ana…, +2`): its start is enough.
+            counted = _COUNT.match("".join(tokens[j + 1 : j + 3]))
             for i in range(j + 1):
                 got = _compact(" ".join(tokens[i : j + 1]))
                 if not got:
                     continue
                 if difflib.SequenceMatcher(None, got, w, autojunk=False).ratio() >= NAME_RATIO:
                     return True
-                if cut and len(got) >= max(4, len(w) // 2) and w.startswith(got):
+                least = 4 if counted else max(4, len(w) // 2)
+                if cut and len(got) >= least and w.startswith(got):
                     return True
     return False
 

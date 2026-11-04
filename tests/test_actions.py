@@ -364,6 +364,12 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     # A group chat's count right after the cut, unspaced.
     assert name_on(lines_for([("Ana Ald...,+2 ('2 Chat Shared", 0, 0)]), "Ana Alder, +2")
     assert not name_on(lines_for([("Ana Alt...,+2", 0, 0)]), "Ana Alder, +2")
+    # The list joins a group's members where its header cuts them before the count,
+    # and OCR reads the ellipsis as one dot.
+    assert name_on(lines_for([("Ana Ald…, +2", 0, 0)]), "Ana Alder and Ben Brook")
+    assert name_on(lines_for([("Ana A., +2", 0, 0)]), "Ana Alder and Ben Brook")
+    assert not name_on(lines_for([("Ana Ald…", 0, 0)]), "Ana Alder and Ben Brook")
+    assert not name_on(lines_for([("Ben Bro…, +2", 0, 0)]), "Ana Alder and Ben Brook")
     assert name_on([], "")
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
