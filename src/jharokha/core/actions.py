@@ -119,7 +119,7 @@ PARAMS: dict[str, tuple[str, ...]] = {
         "upto",
     ),
     "wait": ("for", "until"),
-    "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom"),
+    "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom", "mark"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
     "run": ("command", "region", "clear", "first", "setup"),
@@ -130,6 +130,7 @@ TIMEOUT_S = 5.0
 POLL_S = 0.1
 MAX_REPEAT = 50  # passes of a repeat, whatever times says
 STILL_ENDS = 3  # scrolls in a row that change nothing: the end of a list
+LOAD_WAIT_S = 3.0  # how long a list that stopped going back gets to load older items
 # A line this short is typed: under 2 s at about 100 characters a second, what a
 # paste takes to arrive and settle.
 TYPE_MAX = 200
@@ -544,10 +545,14 @@ class Runner:
         allow: str | None = None,
         policies: Mapping[str, Policy] | None = None,
         people: People | None = None,
+        marks: dict[str, str] | None = None,
     ) -> None:
         self.ex, self.allow = ex, allow
         self.policies = dict(policies or {})
         self.people = people or People()
+        # The newest item a read with a mark returned, per list: the caller keeps it across
+        # runs (the server, in memory only), so the next read returns what came after it.
+        self.marks = marks if marks is not None else {}
 
     def run(self, action: Action, args: Mapping[str, Any], dry_run: bool = False) -> Result:
         res = Result(action.id, dry_run=dry_run)
@@ -813,6 +818,7 @@ class Runner:
         gaps = 0  # reads that shared no item with the read before
         last_seen: tuple[str, ...] | None = None
         n = still = 0
+        waited = False
         why = f"{most} scrolls"
         for n in range(most + 1):
             snap = self._look()
@@ -839,8 +845,18 @@ class Runner:
             if still >= STILL_ENDS:
                 # Only history loads late; the newest end of a list is all there.
                 if until and ticks > 0:
-                    self._partial(got, p)
-                    raise _Fail(f"the list stopped moving before {_describe(until)} held")
+                    if not waited:
+                        # A chat whose every message is newer than `from` would fail here at
+                        # its start; history that loads comes within a few seconds.
+                        waited = True
+                        self.ex.wait(LOAD_WAIT_S)
+                        continue
+                    why = "the list's start: nothing older came after a wait"
+                    self._warn(
+                        f"{_describe(until)} never held: the list stopped moving and nothing "
+                        f"older loaded in {LOAD_WAIT_S:g} s, so it was taken as its start"
+                    )
+                    break
                 why = "the list stopped moving: its newest end"
                 break
             box = self._box(snap, p["region"])
@@ -955,11 +971,46 @@ class Runner:
                 if again.frame_id == snap.frame_id
                 else {id(i) for i in its if readers.key(i) not in seen}
             )
-            self._store(p["into"], its[-int(p["last"]) :] if p.get("last") else its, p, shaky)
+            after = self._after_mark(snap, p, its) if "mark" in p else None
+            if after is not None:
+                its = after
+            elif p.get("last"):
+                its = its[-int(p["last"]) :]
+            self._store(p["into"], its, p, shaky)
             n = sum("unsteady" in d for d in self.res.items[p["into"]])
             return f"{len(self.res.items[p['into']])} items" + (f", {n} unsteady" if n else "")
         self.res.lines[p["into"]] = row_texts(self._pool(snap, p))
         return f"{len(self.res.lines[p['into']])} lines"
+
+    def _after_mark(self, snap: Snapshot, p: dict[str, Any], its: list[Any]) -> list[Any] | None:
+        """The items after the one the last read with the same mark ended on, and the mark
+        moved to the newest; None the first time (the step's `last` then applies). The mark
+        names the list: a chat's name or people-map id, or, empty, the chat the header shows.
+        An item is known again by its sender and text: the time a message borrows from the
+        header above it goes when that header scrolls off."""
+        name = str(p["mark"]).strip()
+        if not name and "header" in self._regions(snap):
+            rows = row_texts(self._pool(snap, {"region": "header"}))
+            name = next((c for r in rows if (c := self.people.chat_in(r))), " ".join(rows))
+        cid = self.people.chat_of(name) or self.people.chat(name) if name else ""
+        key = f"{self.action.app}:{cid or _compact(name)}"
+        seen = [_seen(i) for i in its]
+        prev = self.marks.get(key)
+        if seen:
+            self.marks[key] = seen[-1]
+        if prev is None:
+            self.res.fields["new"] = "first check of this chat: the newest messages"
+            return None
+        if prev in seen:
+            k = len(seen) - 1 - seen[::-1].index(prev)
+            self.res.fields["new"] = f"{len(seen) - 1 - k} since the last check"
+            return its[k + 1 :]
+        self.res.fields["new"] = "all on screen: the last check's newest is not among them"
+        self._warn(
+            "the newest message of the last check is not on screen any more: more came "
+            "than one screen shows; read from its time with teams.messages"
+        )
+        return its
 
     def _extract(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         if "items" in p:
@@ -1450,6 +1501,11 @@ def name_on(lines: list[Line], want: str, people: People | None = None) -> bool:
                 if cut and len(got) >= least and w.startswith(got):
                     return True
     return False
+
+
+def _seen(it: Any) -> str:
+    d = it.as_dict() if hasattr(it, "as_dict") else dict(it)
+    return _compact(f"{d.get('who') or d.get('sender') or ''} {readers.item_text(it)}")
 
 
 def _compact(s: str) -> str:

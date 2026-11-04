@@ -172,6 +172,8 @@ def build_server(
     session = Session(screen, catalog or apps.catalog(), frames)
     actions = dict(actions if actions is not None else act.builtin())
     policies = session.catalog.policies()
+    # teams.new: the newest message returned per chat, for this process only (nothing on disk).
+    marks: dict[str, str] = {}
     trace = trace or Trace(None)
     v = version()
     mcp = MCPServer("jharokha", instructions=f"jharokha {v}. {INSTRUCTIONS}", version=v)
@@ -1220,7 +1222,7 @@ def build_server(
             screen.source.wait_idle_s = max(idle, DO_WAIT_IDLE_S)  # type: ignore[attr-defined]
         try:
             with hold(screen.window(window_title)) if hold and not dry_run else nullcontext():
-                runner = act.Runner(ex, allow, policies, session.catalog.people)
+                runner = act.Runner(ex, allow, policies, session.catalog.people, marks)
                 r = runner.run(a, args or {}, dry_run)
         finally:
             if idle is not None:

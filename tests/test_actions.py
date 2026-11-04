@@ -36,6 +36,7 @@ def test_builtin_actions_parse():
         "teams.open_chat",
         "teams.messages",
         "teams.latest",
+        "teams.new",
         "teams.draft",
         "outlook.unread",
         "outlook.open",
@@ -889,6 +890,25 @@ def test_a_scroll_back_doubles_its_stride_and_a_run_ends_scrolled_down():
     assert "scrolled back down" in r.failed["reason"]  # type: ignore[index]
 
 
+def test_a_scroll_back_that_reaches_the_start_ends_there_with_a_warning():
+    """When every message of a new chat is newer than `from`, scrolling up stops at its
+    start; after a wait for history to load, that is the start, not a failure."""
+    a = one(
+        '[[action.chat.a.step]]\ndo = "scroll"\nregion = "thread"\nticks = 7\n'
+        'max = 20\nuntil = { text = "never" }'
+    )
+
+    class Still(Scripted):
+        def read(self) -> Snapshot:
+            snap = super().read()
+            return replace(snap, lines=lines_for([("hi", 10, 10)]), regions={"chat.thread": SCREEN})
+
+    ex = Still({}, "chat")
+    r = Runner(ex).run(a, {})
+    assert r.ok and "nothing older loaded" in r.fields["warning"]
+    assert len([i for i in ex.inputs if i == "scroll 7"]) == 3
+
+
 def test_teams_latest_reads_the_last_n_without_scrolling_back():
     thread = [
         ("Ana Silva  7:05", 10, 30),
@@ -927,6 +947,23 @@ def test_teams_latest_reads_the_last_n_without_scrolling_back():
         ("7:12", "third"),
     ]
     assert [i for i in ex.inputs if i.startswith("scroll")] == ["scroll -150"]
+
+    # teams.new: what came since its last check of the chat, kept by the caller.
+    marks: dict[str, str] = {}
+    new = actions.builtin()["teams.new"]
+    r = Runner(ex, marks=marks).run(new, {"n": 2})
+    assert [m["text"] for m in r.items["messages"]] == ["second", "third"]
+    assert r.fields["new"].startswith("first check")
+    r = Runner(ex, marks=marks).run(new, {"n": 2})
+    assert r.ok and r.items.get("messages", []) == []
+    assert r.fields["new"] == "0 since the last check"
+    thread += [("Ana Silva  7:20", 10, 240), ("fourth", 10, 262)]
+    r = Runner(ex, marks=marks).run(new, {"n": 2})
+    assert [m["text"] for m in r.items["messages"]] == ["fourth"]
+    thread[:] = [("Ana Silva  7:30", 10, 30), ("fifth", 10, 52)]  # the mark scrolled off
+    r = Runner(ex, marks=marks).run(new, {"n": 2})
+    assert [m["text"] for m in r.items["messages"]] == ["fifth"]
+    assert "not on screen any more" in r.fields["warning"]
 
 
 def test_an_ambiguous_text_target_is_refused_not_guessed():

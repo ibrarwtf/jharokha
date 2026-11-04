@@ -113,6 +113,42 @@ as = "items"
 into = "messages"
 last = "{n}"
 
+[action.teams.new]
+summary = """The messages that came into a chat since the last teams.new of that chat, oldest
+first: opens it unless it is open, reads its newest screen, no scrolling. The first check of
+a chat (each time the server starts) returns its newest n. When more came than one screen
+shows, all on screen come back with a warning: read the rest with teams.messages. Fields
+as teams.latest; `new` says which case it was."""
+args.chat = { type = "text", max_len = 200, default = "", doc = "the chat's name, or a chat or person id of the people map in apps.toml; omit for the chat open now" }
+args.n = { type = "number", default = 10, max = 50, doc = "how many on a chat's first check" }
+
+[[action.teams.new.step]]
+do = "focus"
+switch = true
+view = "chat"
+
+[[action.teams.new.step]]
+do = "click"
+target = { name = "{chat}", region = "list" }
+unless = { name = "{chat}", region = "header" }
+expect = { name = "{chat}", region = "header" }
+
+[[action.teams.new.step]]
+do = "scroll"
+region = "thread"
+exclude = "compose"
+ticks = -150
+max = 1
+
+[[action.teams.new.step]]
+do = "read"
+region = "thread"
+exclude = "compose"
+as = "items"
+into = "messages"
+last = "{n}"
+mark = "{chat}"
+
 [action.teams.draft]
 summary = """Type text into a chat's compose box and leave it there: newlines become
 Shift+Enter, and nothing is sent. Read it back, then send it yourself if you mean to."""
