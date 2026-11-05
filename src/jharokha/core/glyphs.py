@@ -312,8 +312,9 @@ def _cursor(c: Cells) -> np.ndarray:
     h, w = round(c.grid.pitch), round(c.grid.char_w)
     if n == 0 or h * w != c.f.shape[2]:
         return np.zeros((n, cols), bool)
-    ink = c.f.reshape(n, cols, h, w) > 0.5
-    by_col = ink.any(axis=2)
+    # np.asarray: the stubs of older numpy (the one Python 3.11 gets) type these as np.bool.
+    ink = np.asarray(c.f.reshape(n, cols, h, w) > 0.5)
+    by_col = np.asarray(ink.any(axis=2))
     left = max(2, w // 4)
     only_left = by_col[..., :left].any(axis=2) & ~by_col[..., left:].any(axis=2)
     tall = ink.any(axis=3).sum(axis=2) >= 0.7 * h

@@ -150,6 +150,7 @@ class Session:
         }
         if cat.slots and (bar := cat.session_box(TASKBAR, at.panes, f.width, f.height)):
             from jharokha.core.elements import taskbar_icons  # numpy: the server starts without it
+
             icons = taskbar_icons(f, bar[0])
             for k, n in cat.slots.items():
                 if n <= len(icons):
