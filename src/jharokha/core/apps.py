@@ -632,11 +632,13 @@ class Catalog:
         if got and reg and reg.box and got[1] == "pane" and name in v.grids:
             # A terminal's tab strip shares the body's background, so the pane takes it in:
             # its titles, off the rows' rhythm, pull the measured pitch from 23 to 22.3 px
-            # and the cells a pixel further off each row down. A grid keeps to its box's
-            # rows and the pane's columns, which end before the scrollbar.
+            # and the cells a pixel further off each row down. A grid starts below its box's
+            # top and takes the pane's columns, which end before the scrollbar, and its
+            # bottom: the taskbar's top, or the window's when the taskbar is hidden (the box
+            # alone can cut the last rows off, and with them the prompt that ends a command).
             x, y, w, h = got[0]
-            _, by, _, bh = to_box(reg.box, width, height)
-            top, bottom = max(y, by), min(y + h, by + bh)
+            _, by, _, _ = to_box(reg.box, width, height)
+            top, bottom = max(y, by), y + h
             if bottom > top:
                 got = ((x, top, w, bottom - top), "pane")
         return got

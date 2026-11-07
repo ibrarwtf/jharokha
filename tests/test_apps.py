@@ -386,6 +386,12 @@ def test_regions_take_the_pane_under_their_point_else_their_box():
     box, how = cat.region_box("teams", "chat", "thread", [(0, 0, W, H)], {}, W, H)  # type: ignore[misc]
     assert how == "box" and box == geometry.to_box((0.378, 0.122, 0.622, 0.828), W, H)
     assert cat.region_box("teams", "chat", "compose", TEAMS_PANES, {}, W, H)[1] == "box"  # type: ignore[index]
+    # A terminal's grid keeps below its box's top (the tab strip) but reaches the pane's
+    # bottom: the taskbar's top when one is shown, the window's when it is hidden.
+    shown = [(0, 0, 1180, 1140), (1180, 0, 20, 1140), (0, 1140, W, 60)]
+    assert cat.region_box("terminal", "shell", "body", shown, {}, W, H)[0] == (0, 40, 1180, 1100)  # type: ignore[index]
+    hidden = [(0, 0, W, 59), (0, 59, 1180, 1141), (1180, 59, 20, 1141)]
+    assert cat.region_box("terminal", "shell", "body", hidden, {}, W, H)[0] == (0, 59, 1180, 1141)  # type: ignore[index]
     # `to` widens a region over cells, as a calendar grid's.
     cells = [(300, 216, 40, 924), (341, 216, 165, 34), (1035, 1055, 165, 85)]
     assert apps.pane_at(cells, (0.26, 0.19), (0.97, 0.9), W, H) == (300, 216, 900, 924)
