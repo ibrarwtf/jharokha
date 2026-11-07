@@ -97,6 +97,21 @@ def test_a_row_without_the_next_number_continues_the_line_before():
     assert sh.reply(rows, 1).lines == ["total42 bytes", "next"]
 
 
+def test_an_empty_line_is_its_number_alone():
+    # The reader trims a row's trailing spaces: an empty line shows as its number only.
+    rows = ["   1 Ana Alder", "   2", "   3", "   4 Ben Brook", state(2), ">"]
+    r = sh.reply(rows, 1)
+    assert r.lines == ["Ana Alder", "", "", "Ben Brook"] and r.last == 4
+    assert sh.reply(["   1", "   2 two", state(2), ">"], 1).lines == ["", "two"]
+    # A number alone that is not the next one continues the line before, as any row.
+    assert sh.reply(["   1 total", "   7", state(2), ">"], 1).lines == ["total   7"]
+    # An empty line joined to a line that filled the row: its number in four columns.
+    rows = ["   1 as wide as the screen   2", "   3 Ben Brook", state(2), ">"]
+    assert sh.reply(rows, 1).lines == ["as wide as the screen", "", "Ben Brook"]
+    rows = ["   1 sum 2", "   2 two", state(2), ">"]  # a number ending a line is text
+    assert sh.reply(rows, 1).lines == ["sum 2", "two"]
+
+
 def test_two_rows_the_reader_joined_are_split_at_the_next_number():
     rows = ["   1 exactly as wide as the screen   2 and the next", state(2), ">"]
     assert sh.reply(rows, 1).lines == ["exactly as wide as the screen", "and the next"]

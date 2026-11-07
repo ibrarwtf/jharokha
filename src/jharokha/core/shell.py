@@ -97,7 +97,8 @@ _STATE_LOOSE = re.compile(r"^\s*[I1l|]?A[0-9OIl|!]+\s*[0-9OIl]{4}-[0-9OIl]{2}-[0
 # The row under a state row is the input row by construction; its `>` alone in a cell the
 # glyphs do not know yet goes to the engine, which often reads it as `v`.
 _INPUT = re.compile(r"^[>v]\s?(.*)$")
-_NUMBERED = re.compile(r"^\s{0,3}(\d+) (.*)$")
+# An empty line is its number alone: the reader trims the space after it.
+_NUMBERED = re.compile(r"^\s{0,3}(\d+)(?: (.*))?$")
 
 
 @dataclass(frozen=True)
@@ -196,18 +197,32 @@ def reply(rows: list[str], n: int, base: int = 0) -> Reply:
             if not lines:
                 first = int(m[1])
             lines.append("")
-            want, row = int(m[1]), m[2]
+            want, row = int(m[1]), m[2] or ""
         elif not lines:
             continue  # the echo, an older prompt: nothing numbered yet
+        elif m and m[2] is None and int(m[1]) == want + 1:
+            lines.append("")
+            want += 1
+            continue
         # The row continues the line (one that wrapped), unless the next line's number
         # sits further in: two rows the reader joined, split there.
-        while k := re.search(rf"\s{{1,4}}{want + 1} ", row):
+        while k := _next_line(row, want + 1):
             lines[-1] += row[: k.start()]
             lines.append("")
             want, row = want + 1, row[k.end() :]
         lines[-1] += row
     last = first + len(lines) - 1 if lines else base
     return Reply(lines, first if lines else base + 1, last, ended)
+
+
+def _next_line(row: str, n: int) -> re.Match[str] | None:
+    """Where line n starts inside row: its number between spaces, or, at the row's end, an
+    empty line n alone in the filter's four columns, joined to a line that filled the row
+    before it (e.g. `...layout:   5`)."""
+    if k := re.search(rf"\s{{1,4}}{n} ", row):
+        return k
+    pad = 4 - len(str(n))
+    return re.search(rf"(?<=\S) {{{pad}}}{n}$", row) if pad > 0 else None
 
 
 def wrapped(command: str, base: int = 0, clear: bool = True) -> str:
