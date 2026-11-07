@@ -1536,8 +1536,10 @@ def _holds(
 
 
 _ELLIPSIS = re.compile(r"(?:\.{2,}|…)$")
-_CUT_DOT = re.compile(r"(\w)\.(\s*,\s*\+\d)")
-_COUNT = re.compile(r"^,?\+\d+$")
+_CUT_DOT = re.compile(r"(\w)\.(\s*,?\s*\+\d)")
+# A group's count after its cut name; OCR may lose the count and keep its comma.
+_COUNT = re.compile(r"^(?:,|,?\+\d+)$")
+_GROUP = re.compile(r",|\sand\s")  # a group chat as the list names it: `Ana, Ben, +2`
 NAME_RATIO = 0.85  # how alike a name and what a header shows of it must read
 
 
@@ -1552,20 +1554,24 @@ def name_on(lines: list[Line], want: str, people: People | None = None) -> bool:
     w = _compact(want)
     if not w:
         return True
+    group = bool(_GROUP.search(want))
     for row in row_texts(lines):
         if w in _compact(row):
             return True
-        # OCR reads a group header's ellipsis as one dot too (`Ana A., +2`).
+        # OCR reads a group header's ellipsis as one dot too, losing the comma at times
+        # (`Ana A., +2`, `Ana. +2`).
         row = _CUT_DOT.sub("\\1…\\2", row)
-        # A group chat's count follows the cut name unspaced: `Ana Ald...,+2`.
-        tokens = re.sub(r"(\.{2,}|…)(?=\S)", r"\1 ", row).split()
+        # A group chat's count follows the cut name unspaced: `Ana Ald...,+2`. Not a dot:
+        # `...` would split as `.. .` and lose its ellipsis.
+        tokens = re.sub(r"(\.{2,}|…)(?=[^\s.])", r"\1 ", row).split()
         for j, tok in enumerate(tokens):
             cut = bool(_ELLIPSIS.search(tok))
             if not cut and j < len(tokens) - 1:
                 continue  # a cut name ends at its ellipsis, a whole one anywhere
             # A group's header cuts its members' names short before their count, where the
             # list joins them (`Ana and Ben` over `Ana…, +2`): its start is enough.
-            counted = _COUNT.match("".join(tokens[j + 1 : j + 3]))
+            # Only a group's name: a person's chat starting the same is another chat.
+            counted = group and _COUNT.match("".join(tokens[j + 1 : j + 3]))
             for i in range(j + 1):
                 got = _compact(" ".join(tokens[i : j + 1]))
                 if not got:

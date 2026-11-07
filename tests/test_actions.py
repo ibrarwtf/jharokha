@@ -380,6 +380,12 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
     assert name_on(lines_for([("Ana A., +2", 0, 0)]), "Ana Alder and Ben Brook")
     assert not name_on(lines_for([("Ana Ald…", 0, 0)]), "Ana Alder and Ben Brook")
     assert not name_on(lines_for([("Ben Bro…, +2", 0, 0)]), "Ana Alder and Ben Brook")
+    # A group header cut to a first name, OCR losing the count and keeping its
+    # comma, or reading the ellipsis as a dot and losing the comma, an icon after it.
+    assert name_on(lines_for([("Anabel... ,", 0, 0)]), "Anabel Alder and Ben Brook")
+    assert name_on(lines_for([("Anabel.  +2 42", 0, 0)]), "Anabel Alder, +2")
+    assert not name_on(lines_for([("Anabel...", 0, 0)]), "Anabel Alder and Ben Brook")
+    assert not name_on(lines_for([("Anabel... ,", 0, 0)]), "Anabel Alder (Guest)")
     assert name_on([], "")
     check_front("generic", "generic", "screen", 0.55)  # holds at any confidence
     with pytest.raises(WrongApp):
