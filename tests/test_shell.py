@@ -38,6 +38,15 @@ def test_state_rows_are_parsed_exactly():
     assert sh.prompts(["JK 2030-10-23 18:17:42 True 0 x", "JKx", "  JK3"]) == []
 
 
+def test_a_state_row_joined_to_a_full_output_line_is_split_off():
+    full = "   2 " + "Ana Alder " * 9
+    rows = sh.split(["   1 one", full + state(5), "> "])
+    assert rows == ["   1 one", full, state(5), "> "]
+    assert [p.n for p in sh.prompts(rows)] == [5] and sh.idle(rows) is not None
+    assert sh.reply(rows, 4).lines[-1] == full[5:]
+    assert sh.split([state(5), "  " + state(6)]) == [state(5), "  " + state(6)]  # nothing before
+
+
 def test_a_prepared_tab_is_told_from_an_ocr_read_too():
     assert sh.prepared([state(1), ">"])
     assert sh.prepared(

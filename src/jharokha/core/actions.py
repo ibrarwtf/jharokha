@@ -1095,7 +1095,7 @@ class Runner:
     def _rows(self, snap: Snapshot, p: dict[str, Any]) -> list[str]:
         """The shell's rows as text, a wrapped row joined to the one it continues on."""
         box = self._shell_box(snap, p)
-        return unwrapped(inside(snap.lines, box), box[0] + box[2])
+        return sh.split(unwrapped(inside(snap.lines, box), box[0] + box[2]))
 
     def _run(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         if p.get("setup"):

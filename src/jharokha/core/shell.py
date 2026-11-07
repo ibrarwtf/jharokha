@@ -113,6 +113,22 @@ class Prompt:
     """Index of the state row among the rows it was read from."""
 
 
+_STATE_IN = re.compile(rf"{MARK}\d+ \d{{4}}-\d\d-\d\d \d\d:\d\d:\d\d (?:True|False) -?\d+")
+
+
+def split(rows: list[str]) -> list[str]:
+    """rows with each state row on a row of its own: the unwrapping joins it to an output
+    line that filled the row above (otherwise a command that has ended, its prompt on
+    screen, has the run wait out its timeout for it)."""
+    out = []
+    for r in rows:
+        while (m := _STATE_IN.search(r, 1)) and r[: m.start()].strip():
+            out.append(r[: m.start()])
+            r = r[m.start() :]
+        out.append(r)
+    return out
+
+
 def prompts(rows: list[str]) -> list[Prompt]:
     """The state rows among rows, in order."""
     out = []

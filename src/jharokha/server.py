@@ -209,7 +209,7 @@ def build_server(
         if not placed:
             return None
         box = placed[0]
-        return unwrapped(inside(lines, box), box[0] + box[2])
+        return sh.split(unwrapped(inside(lines, box), box[0] + box[2]))
 
     def shell_state(
         title: str | None, at: Where, lines: list[Line] | None = None
