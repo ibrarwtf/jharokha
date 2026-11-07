@@ -7,21 +7,29 @@ format = 1
 name = "Windows Terminal"
 
 # A fresh terminal shows little text: the tab's title, small, and a prompt, one short line
-# OCR often misses on the dark body. Either is enough, so one cue takes both, and with the
-# dark body a terminal with only its title or only its prompt identifies above 0.8. With
-# neither, the pixels alone stay under 0.6: a dark screen is not taken for a terminal.
+# OCR often misses on the dark body. The title counts fully only in the tab strip: a
+# browser's web shell has `PowerShell` on a button in its page, which alone made the
+# browser a terminal. The prompt counts when seen. With neither, the pixels alone stay
+# under 0.6: a dark screen is not taken for a terminal.
 
 [[app.terminal.cue]]  # the title as an anchor that calibration can place regions from
 text = ["PowerShell", "Command Prompt", "Ubuntu"]
 weight = 0.5
 
-# The terminal's own text: a tab title (with the spellings OCR leaves of it: `owerShelI`,
-# `:ommand Prompt`, `Jbuntu`) or a prompt at the start of a line: PowerShell's, cmd's,
-# user@host:path$ (OCR may space the colon, drop a drive letter or read ~ as N), or the
-# state row of a tab core.shell prepared (`JK12 2030-10-28 18:17:42 True 0 ..\dir`).
+# The tab's title, with the spellings OCR leaves of it (`owerShelI`, `:ommand Prompt`,
+# `Jbuntu`), in any of the first tabs.
 [[app.terminal.cue]]
-regex = 'owerShel|ommand ?Prompt|buntu|\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$|[I1l]A\d+ ?\d{4}-\d\d-\d\d ?\d\d:\d\d:\d\d)'
+regex = 'owerShel|ommand ?Prompt|buntu'
+at = [[0.05, 0.013], [0.25, 0.013], [0.45, 0.013], [0.65, 0.013]]
 weight = 3
+
+# A prompt at the start of a line: PowerShell's, cmd's, user@host:path$ (OCR may space the
+# colon, drop a drive letter or read ~ as N), or the state row of a tab core.shell prepared
+# (`JK12 2030-01-31 18:17:42 True 0 ..\dir`; any two-letter marker, see JHAROKHA_MARK).
+[[app.terminal.cue]]
+regex = '\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$|[A-Z1l]{2}\d+ ?\d{4}-\d\d-\d\d ?\d\d:\d\d:\d\d)'
+weight = 3
+optional = true
 
 [[app.terminal.cue]]
 background = [12, 12, 12]

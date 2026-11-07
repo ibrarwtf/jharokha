@@ -25,7 +25,9 @@ from jharokha.core.text import find, fold, normalize
 
 THRESHOLD = 0.5
 ELSEWHERE = 0.3
-COLOUR = 12
+# Windows Terminal's body is (12, 12, 12), read as low as (8, 8, 8); a browser's web
+# shell is (0, 0, 0), which a looser match would take for the terminal.
+COLOUR = 6
 PANE_MATCH = 0.6
 CARET_MIN = 8  # letters a text cue needs before it may match without its first one
 

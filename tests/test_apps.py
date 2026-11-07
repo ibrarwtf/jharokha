@@ -355,6 +355,29 @@ def test_identify_terminal_browser_and_generic():
     assert (who.app, who.view) == ("generic", "screen") and who.confidence > 0.5
 
 
+def test_a_browser_with_a_web_shell_is_a_browser_not_a_terminal():
+    """A private browser window (no favourites bar) with a web shell open under its page,
+    dark and with `PowerShell` on a button, is the browser above the input guard's 0.6, not
+    the terminal."""
+    cat = apps.catalog().apps.values()
+    url = "https://portal.example.net/#/resource/app"
+    shown = [
+        ("Request queue", 24, 15),
+        (url, 140, 61),
+        ("Switch to PowerShell Restart Manage files", 10, 620),
+        ("Welcome to the cloud shell", 8, 660),
+    ]
+    panes = [(0, 0, W, 38), (0, 39, W, 1082)]
+    who = identify(cat, lines_for(shown), panes, (0, 0, 0), W, H)
+    assert who.app == "browser" and who.confidence >= 0.6
+    who = identify(cat, lines_for(shown), [], (255, 255, 255), W, H)
+    assert who.app == "browser" and who.confidence >= 0.6
+    # The title in the tab strip still makes a terminal.
+    term = lines_for([("PowerShell", 30, 12), ("Get-ChildItem", 8, 300)])
+    who = identify(cat, term, panes, (12, 12, 12), W, H)
+    assert who.app == "terminal" and who.confidence >= 0.8
+
+
 def test_regions_take_the_pane_under_their_point_else_their_box():
     cat = apps.catalog()
     box, how = cat.region_box("teams", "chat", "thread", TEAMS_PANES, {}, W, H)  # type: ignore[misc]
