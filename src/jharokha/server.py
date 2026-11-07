@@ -901,7 +901,13 @@ def build_server(
                 still | {"waited_for": "the screen to hold still (no text, regex, gone or ready)"}
             )
         cond, _ = condition({**given, "timeout_s": timeout_s})
-        return json.dumps(poll(window_title, cond, region, timeout_s))
+        got = poll(window_title, cond, region, timeout_s)
+        shell = got.get("shell") or {}
+        frames.note(
+            action={"ok": True, "ended": got["ended"]}
+            | {f"shell_{k}": shell[k] for k in ("idle", "ok", "code") if k in shell}
+        )
+        return json.dumps(got)
 
     # Input: every input goes through front() (the app in front and its policy), the
     # source's own guards (lease, the user's activity), and the trace.
@@ -1206,6 +1212,13 @@ def build_server(
         ms = int((time.monotonic() - start) * 1000)
         head = f"action={a.id} ok={str(r.ok).lower()} ms={ms}"
         code = (r.failed or {}).get("code")
+        # Metadata only: the candidates are screen text, the reason the runner's sentence.
+        failed = {}
+        if r.failed:
+            failed = {k: r.failed[k] for k in ("step", "code", "reason") if r.failed.get(k)}
+        frames.note(
+            action={"id": a.id, "ok": r.ok, "ms": ms} | ({"failed": failed} if failed else {})
+        )
         if not dry_run and code in act.REFUSALS and code not in results:
             # Refused by the runner's own checks, before an input the source could refuse.
             trace.record("do", title, keys=a.id, front_app=ex.front, result=code)

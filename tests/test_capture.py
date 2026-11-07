@@ -152,3 +152,23 @@ def test_calls_in_parallel_each_log_their_own_name_and_result(tmp_path: Path):
         ("jharokha_status", "status"),
         ("jharokha_read", "read"),
     }
+
+
+async def test_an_actions_own_failure_is_logged_without_its_screen_text(
+    source: FakeSource, tmp_path: Path
+):
+    """calls.jsonl logs an action's own failure: a do that fails returns ok=false inside a
+    tool result that succeeded, so the tool's ok alone undercounts failures."""
+    out = tmp_path / "frames"
+    async with Client(build_server(source, allow_input=True, capture=out)) as c:
+        r = await c.call_tool("jharokha_do", {"action": "terminal.run", "args": {"command": "x"}})
+        await c.call_tool("jharokha_wait", {"text": "Order"})
+    assert not r.is_error
+    do, wait = calls(out)
+    assert do["ok"] is True  # the tool's
+    action = do["action"]
+    assert action["id"] == "terminal.run" and action["ok"] is False and action["ms"] >= 0
+    assert action["failed"]["step"] == "1:focus"
+    assert "taskbar.terminal" in action["failed"]["reason"]
+    assert "candidates" not in action["failed"]
+    assert wait["action"] == {"ok": True, "ended": "appeared"}

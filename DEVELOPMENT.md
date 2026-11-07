@@ -35,7 +35,8 @@ The frames hold real names and messages: point DIR outside the repo (or at the g
 `captures/`) and never commit them. A replay test can then run the readers on those lines
 and regions offline; a terminal frame's sidecar also holds `rows`, the body read cell by cell
 (what `terminal.run` reads), and `calls.jsonl` each call's arguments, timing, frames and
-result or error.
+result or error, and for `do` and `wait` the action's own `ok` and `failed` step, code and
+reason (an action can fail inside a call that succeeded).
 
 ## Release
 

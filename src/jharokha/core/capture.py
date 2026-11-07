@@ -89,8 +89,9 @@ class Capture:
         # The call running in this context and the file stems of the frames it saved or saw
         # again: per call, since an agent calls tools in parallel (a status and a
         # read at once, where one shared slot would log the status as the read and crash it).
-        self._call: ContextVar[tuple[dict[str, Any], list[str]] | None] = ContextVar(
-            f"capture_call_{id(self)}", default=None
+        # With what the tool noted of its own result (note()).
+        self._call: ContextVar[tuple[dict[str, Any], list[str], dict[str, Any]] | None] = (
+            ContextVar(f"capture_call_{id(self)}", default=None)
         )
 
     @property
@@ -110,7 +111,8 @@ class Capture:
         it, with its code."""
         call: dict[str, Any] = {"tool": tool, "args": dict(args)}
         seen: list[str] = []
-        token = self._call.set((call, seen))
+        noted: dict[str, Any] = {}
+        token = self._call.set((call, seen, noted))
         started = time.time()
         done: dict[str, Any] = {}
         try:
@@ -126,10 +128,19 @@ class Capture:
                 "ms": round((time.time() - started) * 1000),
                 **call,
                 "frames": seen,
+                **noted,
                 **done,
             }
             self._call.reset(token)
             self._append(entry)
+
+    def note(self, **fields: Any) -> None:
+        """Adds fields to the running call's line in calls.jsonl, kept when it then raises:
+        an action's own ok and failure live inside a tool result that succeeded, where a
+        tool-level ok would count most failed actions as successes."""
+        cur = self._call.get()
+        if cur is not None:
+            cur[2].update(fields)
 
     def _append(self, entry: dict[str, Any]) -> None:
         if self.dir is None:
