@@ -22,6 +22,7 @@ that the glyphs changed: `refine` searches the phase that brings them back."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
@@ -197,6 +198,29 @@ def learn_alphabet(c: Cells, store: Store) -> int:
     store.learned = "alphabet"
     store.grid = c.grid
     return len(store)
+
+
+def learn_fitted(frame: Frame, grid: Grid, box: Box) -> Store:
+    """The alphabet learned on the whole pitch near grid's that leaves the fewest cells on
+    screen no template names. The pitch measured from the ink can be a fraction or a pixel
+    off (23.5 or 24 for 23), which the two alphabet rows barely show but the rows
+    below drift off their cells by, until `;` reads `i`; on the right pitch every cell is
+    one of the alphabet's. An empty store when the lines are not there."""
+    best, fewest = Store(), -1
+    bottom = box[1] + box[3]
+    for p in sorted(
+        range(math.floor(grid.pitch) - 1, math.ceil(grid.pitch) + 2),
+        key=lambda p: abs(p - grid.pitch),
+    ):
+        g = replace(grid, pitch=float(p), rows=int((bottom - grid.origin_y) / p))
+        g = snapped(refine(frame, g, box))
+        store = Store()
+        if not learn_alphabet(cells(frame, g, box), store):
+            continue
+        unknown = read(frame, g, box, store).unknown
+        if fewest < 0 or unknown < fewest:
+            best, fewest = store, unknown
+    return best
 
 
 def read(

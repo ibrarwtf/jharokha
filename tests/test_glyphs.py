@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -204,6 +205,19 @@ def test_refine_puts_a_shifted_grid_back_on_its_cells():
     assert fixed.origin_y == pytest.approx(OY + 3, abs=0.5) and fixed.pitch == PITCH
     got = glyphs.read(frame, fixed, BOX, store)
     assert got.texts[4] == "0O1lI5S8B2Z6G" and got.distance < glyphs.OFF_GRID
+
+
+def test_the_alphabet_is_learned_on_the_whole_pitch_the_screen_fits():
+    """The pitch measured from the ink can be 23.5 (or 24) for a 23 px font; the two alphabet
+    rows learn fine with it, but the rows below drift off their cells and `;` reads `i`."""
+    below = ["JK7 2030-01-02 03:04:05 True 0 C:\\x", "> cls; . { gc Ana_Alder.txt }"] * 5
+    frame = draw(ALPHA_ROWS + below)
+    for off in (0.5, 1.0, -0.5):
+        store = glyphs.learn_fitted(frame, replace(GRID, pitch=PITCH + off), BOX)
+        assert len(store) == 94 and store.grid is not None and store.grid.pitch == PITCH
+        got = glyphs.read(frame, store.grid, BOX, store)
+        assert got.unknown == 0 and got.texts[2 : 2 + len(below)] == tuple(below)
+    assert len(glyphs.learn_fitted(draw(below), GRID, BOX)) == 0  # no alphabet on screen
 
 
 def test_the_alphabet_command_prints_the_alphabet_lines():

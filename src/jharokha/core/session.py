@@ -267,9 +267,13 @@ class Session:
             g = self._grid(at, name, placed[0], cal)
             if g is None:
                 continue
-            g = rows.bounded(g, f, placed[0])
-            store = self._stores.setdefault(glyphs.store_key(g), glyphs.Store())
-            learned += glyphs.learn_alphabet(glyphs.cells(f, g, placed[0]), store)
+            store = glyphs.learn_fitted(f, rows.bounded(g, f, placed[0]), placed[0])
+            if store.grid is not None:
+                # The grid the glyphs fit is the region's from now on, its pitch included.
+                self._stores[glyphs.store_key(store.grid)] = store
+                key = (ident.app, ident.view, name, f.width, f.height)
+                self._grids[key] = rows.spanning(store.grid, placed[0])
+            learned += len(store)
         if learned:
             self._reads.clear()
         return learned
