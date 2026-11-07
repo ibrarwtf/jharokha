@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.35.0
+
+
+- `--capture`'s `calls.jsonl` records each `do` and `wait` action's own ok, ending and failed step and reason (metadata only): a failing action inside a successful tool call was invisible there.
+- Terminal: the alphabet is learned on the whole row pitch the screen fits, not the one measured from the ink (23.5 or 24 for a 23 px font drifted every row below it: `;` read as `i`, the state row missed). Far fewer unknown cells and many more state rows parsed.
+- Terminal: an empty numbered output line is its number alone (OCR trims the space; every line after an empty one was glued to the one before); a state row joined onto a full-width output line is split off; with the session taskbar hidden the grid reaches the pane's bottom, where the ending prompt and empty input row were cut off (the "input already holds ^C" refusals were this).
+- Teams: a group chat's header matches when cut to a first name with its count read as `,`, `.` or a spaced `...`; a 1:1 chat sharing that first name does not.
+- Identification: a browser with a web shell docked in the page is a browser, not the terminal (the title cue counts fully only in the tab strip; the background colour tolerance is 6, not 12).
+- `teams.draft`: a long draft is verified by the end of its wrapped last line anywhere on screen, since it grows the compose box over the thread.
+
 ## v0.34.0
 
 - Terminal: most "the shell's input showed … twice" refusals were the reader, not lost keys. The body pane took in the tab strip, whose titles pulled the measured row pitch from 23 to 22.3 px, so by the fourth row every cell sat a pixel off its glyph: a grid now keeps to its region's rows, and a pitch within a third of a pixel of a whole one is taken as it. A cell no glyph names (the scrollbar's thumb, the cursor) is no typed character. A new process over a prepared tab read the prompt's `>` as `v` and could neither run nor learn the font: the input row takes `v`, and the font is relearned by sending setup unchecked.
