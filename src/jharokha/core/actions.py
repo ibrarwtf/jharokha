@@ -1504,10 +1504,11 @@ def _holds(
             return False, f"region '{cond['region']}' is not on screen ({_on(snap)})"
         pool = inside(snap.lines, regions[cond["region"]])
     if "text" in cond:
-        # Of typed text over several lines, a box that scrolls shows the last line at least.
+        # Of typed text over several lines, a box that scrolls shows the last line at least,
+        # and of a long one, wrapped over rows whose first may be scrolled away, its end.
         # An empty text (an optional argument left out) asks for nothing.
         last = [t for t in str(cond["text"]).splitlines() if t.strip()][-1:]
-        if last and not find(pool, last[0]):
+        if last and not find(pool, last[0]) and not find(_wrapped(pool), _tail(last[0])):
             return False, f"'{last[0]}' is not on screen"
     if "name" in cond and not name_on(pool, str(cond["name"]), people):
         return False, f"'{cond['name']}' is not the name shown"
@@ -1533,6 +1534,41 @@ def _holds(
         except ValueError as e:
             return False, str(e)
     return True, ""
+
+
+TAIL = 60  # characters of a long line's end looked for: under two rows of a compose box
+WRAP_ROWS = 3
+
+
+def _tail(s: str) -> str:
+    """The last words of s, up to TAIL characters (one word at least)."""
+    words = s.split()
+    n = 1
+    while n < len(words) and len(" ".join(words[-n - 1 :])) <= TAIL:
+        n += 1
+    return " ".join(words[-n:])
+
+
+def _wrapped(lines: list[Line]) -> list[Line]:
+    """Each line joined with the rows wrapped under it, up to WRAP_ROWS: the next rows
+    starting at its left edge, each within two heights below the one before."""
+    rows = sorted(lines, key=lambda ln: ln.box[1])
+    out = []
+    for i, first in enumerate(rows):
+        run = [first]
+        for ln in rows[i + 1 :]:
+            prev = run[-1]
+            if len(run) == WRAP_ROWS or ln.box[1] - prev.box[1] > 2 * prev.box[3]:
+                break
+            if abs(ln.box[0] - first.box[0]) <= first.box[3] and ln.box[1] > prev.box[1]:
+                run.append(ln)
+        if len(run) > 1:
+            x, y = first.box[0], first.box[1]
+            right = max(ln.box[0] + ln.box[2] for ln in run)
+            bottom = run[-1].box[1] + run[-1].box[3]
+            words = tuple(w for ln in run for w in ln.words)
+            out.append(Line(" ".join(ln.text for ln in run), (x, y, right - x, bottom - y), words))
+    return out
 
 
 _ELLIPSIS = re.compile(r"(?:\.{2,}|…)$")

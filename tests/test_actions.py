@@ -392,6 +392,31 @@ def test_header_names_match_cut_short_and_beside_icon_glyphs():
         check_front("generic", "teams", "chat", 1.0)
 
 
+def test_typed_text_whose_last_line_wraps_is_found_by_its_end():
+    from jharokha.core.actions import Snapshot, _holds
+
+    from .conftest import lines_for
+
+    # A long draft's last line wraps over rows in the compose box, scrolled so
+    # that its first row is gone.
+    text = (
+        "Hi Ben\nNext: ask Ana Alder for the build logs of the nightly run, and whether "
+        "the retry rule counts timeouts, then plan the second test"
+    )
+    shown = lines_for(
+        [
+            ("Hi Ben", 400, 300),
+            ("Ben Brook 09:12", 40, 304),
+            ("ask Ana Alder for the build logs of the nightly run, and", 400, 330),
+            ("whether the retry rule counts timeouts, then plan the", 400, 352),
+            ("second test", 400, 374),
+        ]
+    )
+    snap = Snapshot(1, (1000, 800), shown, "teams", "chat")
+    assert _holds({"text": text}, snap, {}) == (True, "")
+    assert not _holds({"text": "Hi Ben\nand close the ticket"}, snap, {})[0]
+
+
 # The people map: an action's chat argument may be an id of it (core.people), synthetic here.
 PEOPLE = people.parse(
     {

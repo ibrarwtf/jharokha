@@ -174,4 +174,6 @@ target = { region = "compose" }
 do = "type"
 text = "{text}"
 newline = "shift+enter"
-expect = { text = "{text}", region = "compose" }
+# A long draft grows the compose box up over the thread, past the compose region's box:
+# its end is looked for anywhere on screen.
+expect = { text = "{text}" }
