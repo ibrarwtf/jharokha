@@ -73,6 +73,7 @@ from jharokha.core.models import Box, iou
 from jharokha.core.people import People
 from jharokha.core.people import parse as parse_people
 from jharokha.core.readers import KINDS, READERS
+from jharokha.core.taskbar import Bar
 
 FORMAT = 1
 GENERIC = "generic"
@@ -576,12 +577,18 @@ class Catalog:
     def views(self) -> list[str]:
         return [f"{a.id}.{v}" for a in self.apps.values() for v in a.views]
 
-    def spots_for(self, app: str | None, width: int = 0, height: int = 0) -> dict[str, Spot]:
+    def spots_for(
+        self, app: str | None, width: int = 0, height: int = 0, bar: Bar | None = None
+    ) -> dict[str, Spot]:
         """The session's spots, and those of app (the one in front) by `app.name`: an app's
         icon is a target only while its app is on screen. With the size the session's spots
         were measured at, they are moved to this window size: a taskbar icon keeps its
         distance in pixels from the left and bottom edges and does not grow with the window
-        (a wider window put a fraction several px right of the icon)."""
+        (from 1200 to 1300 px wide, a fraction lands 15 px right of an icon). Spots are
+        measured on a taskbar at the bottom; with bar at the top, a spot in the bottom half
+        keeps its distance from the top edge instead (otherwise icons drawn 30 px from the
+        top get clicked 30 px from the bottom, inside the app). An app's own spots move
+        down with it."""
         out: dict[str, Spot] = dict(self.spots)
         if self.spots_size and width and height:
             w0, h0 = self.spots_size
@@ -589,9 +596,13 @@ class Catalog:
                 k: (min(1.0, p[0] * w0 / width), max(0.0, 1 - (1 - p[1]) * h0 / height))
                 for k, p in out.items()
             }
+        if bar is not None and bar.edge == "top":
+            out = {k: (p[0], 1 - p[1], *p[2:]) if p[1] > 0.5 else p for k, p in out.items()}
         a = self.apps.get(app or "")
         if a is not None:
-            out.update({f"{a.id}.{k}": p for k, p in a.spots.items()})
+            down = bar.shift / height if bar is not None and height else 0.0
+            for k, p in a.spots.items():
+                out[f"{a.id}.{k}"] = (p[0], min(1.0, p[1] + down), *p[2:])
         return out
 
     def policies(self) -> dict[str, Policy]:
@@ -605,10 +616,18 @@ class Catalog:
         return list(dict.fromkeys(names + list(self.session_cal) + list(self.session)))
 
     def variant(
-        self, app: str, view: str, found: Mapping[str, Box | None], width: int, height: int
+        self,
+        app: str,
+        view: str,
+        found: Mapping[str, Box | None],
+        width: int,
+        height: int,
+        bar: Bar | None = None,
     ) -> Variant | None:
+        """The calibrated variant of a view whose anchor is nearest where it was measured,
+        the anchors seen read as if the taskbar were at the bottom."""
         cal = self.calibration.get((app, view))
-        return choose(cal.variants, found, width, height) if cal else None
+        return choose(cal.variants, _up(found, bar), width, height) if cal else None
 
     def region_box(
         self,
@@ -619,16 +638,23 @@ class Catalog:
         found: Mapping[str, Box | None],
         width: int,
         height: int,
+        bar: Bar | None = None,
     ) -> tuple[Box, str] | None:
         """Where a region is now, and how that was decided: calibrated (variant), pane or
-        box. None when it cannot be placed."""
-        var = self.variant(app, view, found, width, height)
+        box. None when it cannot be placed. With bar (the session's taskbar as found on
+        the frame) at the top, the app is drawn lower by its height, and every placement
+        moves down with it."""
+        var = self.variant(app, view, found, width, height, bar)
+        v = self.apps[app].views[view]
+        shift = bar.shift if bar else 0
         if var and name in var.regions:
             how = f"calibrated {var.name}" if var.name else "calibrated"
-            return to_box(var.regions[name], width, height), how
-        v = self.apps[app].views[view]
+            box = _down(to_box(var.regions[name], width, height), shift, height)
+            if name in v.grids:
+                box = _to_bottom(box, panes, height, bar)
+            return box, how
         reg = v.regions.get(name)
-        got = place(reg, panes, width, height) if reg else None
+        got = place(reg, panes, width, height, shift) if reg else None
         if got and reg and reg.box and got[1] == "pane" and name in v.grids:
             # A terminal's tab strip shares the body's background, so the pane takes it in:
             # its titles, off the rows' rhythm, pull the measured pitch from 23 to 22.3 px
@@ -637,7 +663,7 @@ class Catalog:
             # bottom: the taskbar's top, or the window's when the taskbar is hidden (the box
             # alone can cut the last rows off, and with them the prompt that ends a command).
             x, y, w, h = got[0]
-            _, by, _, _ = to_box(reg.box, width, height)
+            _, by, _, _ = _down(to_box(reg.box, width, height), shift, height)
             top, bottom = max(y, by), y + h
             if bottom > top:
                 got = ((x, top, w, bottom - top), "pane")
@@ -652,15 +678,16 @@ class Catalog:
         found: Mapping[str, Box | None],
         width: int,
         height: int,
+        bar: Bar | None = None,
     ) -> list[Box]:
         """Where the view's other regions lie inside region name (a compose box in a
         thread's pane): their lines are not the region's items."""
-        outer = self.region_box(app, view, name, panes, found, width, height)
+        outer = self.region_box(app, view, name, panes, found, width, height, bar)
         if outer is None:
             return []
         out = []
         for other in self.apps[app].views[view].regions:
-            placed = self.region_box(app, view, other, panes, found, width, height)
+            placed = self.region_box(app, view, other, panes, found, width, height, bar)
             if other == name or placed is None:
                 continue
             b = placed[0]
@@ -669,21 +696,69 @@ class Catalog:
         return out
 
     def grid(
-        self, app: str, view: str, name: str, found: Mapping[str, Box | None], w: int, h: int
+        self,
+        app: str,
+        view: str,
+        name: str,
+        found: Mapping[str, Box | None],
+        w: int,
+        h: int,
+        bar: Bar | None = None,
     ) -> Grid:
-        var = self.variant(app, view, found, w, h)
+        var = self.variant(app, view, found, w, h, bar)
         return var.grids.get(name, Grid()) if var else Grid()
 
-    def session_box(self, name: str, panes: list[Box], w: int, h: int) -> tuple[Box, str] | None:
+    def session_box(
+        self, name: str, panes: list[Box], w: int, h: int, bar: Bar | None = None
+    ) -> tuple[Box, str] | None:
+        """A session region; the taskbar where it was found on the frame, when it was."""
+        if bar is not None and name == f"{SESSION}.taskbar":
+            return bar.box, f"found at the {bar.edge}"
         if name in self.session_cal:
             return to_box(self.session_cal[name], w, h), "calibrated"
         reg = self.session.get(name)
         return place(reg, panes, w, h) if reg else None
 
 
-def place(reg: Region, panes: list[Box], width: int, height: int) -> tuple[Box, str] | None:
-    fallback = to_box(reg.box, width, height) if reg.box else None
-    if reg.at and (b := pane_at(panes, reg.at, reg.to, width, height)):
+def _up(found: Mapping[str, Box | None], bar: Bar | None) -> Mapping[str, Box | None]:
+    """Anchors seen, moved up by the height of a taskbar at the top."""
+    if bar is None or not bar.shift:
+        return found
+    s = bar.shift
+    return {k: (b[0], b[1] - s, b[2], b[3]) if b else b for k, b in found.items()}
+
+
+def _down(box: Box, shift: int, height: int) -> Box:
+    """box moved down by shift pixels, cut at the window's bottom."""
+    if not shift:
+        return box
+    x, y, w, h = box
+    y = min(height, y + shift)
+    return (x, y, w, min(h, height - y))
+
+
+def _to_bottom(box: Box, panes: list[Box], height: int, bar: Bar | None) -> Box:
+    """A calibrated grid reaching down to the bottom of the pane under it when that pane
+    goes further (the taskbar hidden, or the window taller than when measured), never
+    into a taskbar at the bottom: a calibrated body that ends a row short of the window's
+    bottom cuts off the end of a wrapped command, which is then refused as lost keys."""
+    x, y, w, h = box
+    cx, cy = x + w // 2, y + h // 2
+    under = next((b for b in panes if b[0] <= cx < b[0] + b[2] and b[1] <= cy < b[1] + b[3]), None)
+    floor = bar.box[1] if bar is not None and bar.edge == "bottom" else height
+    bottom = y + h
+    if under is not None:
+        bottom = max(bottom, min(under[1] + under[3], floor))
+    return (x, y, w, max(1, bottom - y))
+
+
+def place(
+    reg: Region, panes: list[Box], width: int, height: int, shift: int = 0
+) -> tuple[Box, str] | None:
+    fallback = _down(to_box(reg.box, width, height), shift, height) if reg.box else None
+    at = (reg.at[0], reg.at[1] + shift / height) if reg.at and height else reg.at
+    to = (reg.to[0], reg.to[1] + shift / height) if reg.to and height else reg.to
+    if at and (b := pane_at(panes, at, to, width, height)):
         if fallback is None or iou(b, fallback) >= PANE_FIT:
             return b, "pane"
     return (fallback, "box") if fallback else None

@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from jharokha.core import apps, glyphs, rows
+from jharokha.core import apps, glyphs, rows, taskbar
 from jharokha.core.apps import SESSION, Catalog
 from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
@@ -16,6 +16,7 @@ from jharokha.core.locate import RegionInfo, Spot, spot_px
 from jharokha.core.models import Box, Frame, Line, inside, iou
 from jharokha.core.panes import background, panes
 from jharokha.core.screen import Screen, ScreenError
+from jharokha.core.taskbar import Bar
 from jharokha.core.text import grid
 from jharokha.core.watch import changed_bbox
 
@@ -37,6 +38,14 @@ class Where:
     ) -> None:
         self.frame, self.ident, self.panes, self.lines = frame, ident, found, lines
         self.partial = partial
+        self._bar: Bar | None | bool = False  # not looked for yet
+
+    def bar(self, guess: int) -> Bar | None:
+        """The session's taskbar on this frame (core.taskbar), found once."""
+        if self._bar is False:
+            f = self.frame
+            self._bar = taskbar.find(self.lines, self.panes, f.width, f.height, guess)
+        return self._bar  # type: ignore[return-value]
 
 
 def _swap(lines: list[Line], area: Box, within: Box | None, new: list[Line]) -> list[Line]:
@@ -127,8 +136,9 @@ class Session:
         f, ident, cat = at.frame, at.ident, self.catalog
         boxes: dict[str, Box] = {}
         info: dict[str, RegionInfo] = {}
+        bar = self.bar(at)
         for name in dict.fromkeys([*cat.session_cal, *cat.session]):
-            if p := cat.session_box(name, at.panes, f.width, f.height):
+            if p := cat.session_box(name, at.panes, f.width, f.height, bar):
                 boxes[name] = p[0]
         if ident.app and ident.view:
             for name, reg in cat.apps[ident.app].views[ident.view].regions.items():
@@ -144,11 +154,12 @@ class Session:
         pixels of at's frame. A spot given as a slot is the nth icon found on the session's
         taskbar now (core.elements), and missing while the bar shows fewer."""
         f, cat = at.frame, self.catalog
+        found = self.bar(at)
         out = {
             k: spot_px(p, f.width, f.height)
-            for k, p in cat.spots_for(app, f.width, f.height).items()
+            for k, p in cat.spots_for(app, f.width, f.height, found).items()
         }
-        if cat.slots and (bar := cat.session_box(TASKBAR, at.panes, f.width, f.height)):
+        if cat.slots and (bar := cat.session_box(TASKBAR, at.panes, f.width, f.height, found)):
             from jharokha.core.elements import taskbar_icons  # numpy: the server starts without it
 
             icons = taskbar_icons(f, bar[0])
@@ -156,16 +167,30 @@ class Session:
                 if n <= len(icons):
                     x, y, w, h = icons[n - 1]
                     out[k] = (x + w // 2, y + h // 2)
+        if found is not None:
+            # A taskbar spot off the bar found on screen would click into an app: none.
+            x0, y0, bw, bh = found.box
+            for k in [k for k in out if k.startswith(f"{SESSION}.taskbar.")]:
+                px, py = out[k][0], out[k][1]
+                if not (x0 <= px < x0 + bw and y0 <= py < y0 + bh):
+                    del out[k]
         return out
 
-    def place(self, at: Where, app: str, view: str, name: str) -> tuple[Box, str] | None:
+    def bar(self, at: Where) -> Bar | None:
+        """The session's taskbar on at's frame: at the top or bottom, or None (hidden)."""
         f = at.frame
-        return self.catalog.region_box(app, view, name, at.panes, at.ident.found, f.width, f.height)
+        guess = self.catalog.session_box(TASKBAR, [], f.width, f.height)
+        return at.bar(guess[0][3] if guess else round(0.051 * f.height))
+
+    def place(self, at: Where, app: str, view: str, name: str) -> tuple[Box, str] | None:
+        f, cat = at.frame, self.catalog
+        bar = self.bar(at)
+        return cat.region_box(app, view, name, at.panes, at.ident.found, f.width, f.height, bar)
 
     def nested(self, at: Where, app: str, view: str, name: str) -> list[Box]:
         """The boxes of the view's regions inside region name."""
-        f = at.frame
-        return self.catalog.nested(app, view, name, at.panes, at.ident.found, f.width, f.height)
+        f, bar, found = at.frame, self.bar(at), at.ident.found
+        return self.catalog.nested(app, view, name, at.panes, found, f.width, f.height, bar)
 
     def grids(self, at: Where) -> list[Box]:
         """Where the view on screen has terminal grids."""
@@ -187,7 +212,9 @@ class Session:
         for name in self.catalog.apps[ident.app].views[ident.view].grids:
             placed = self.place(at, ident.app, ident.view, name)
             if placed and (region is None or iou(placed[0], region) > 0):
-                g = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
+                g = self.catalog.grid(
+                    ident.app, ident.view, name, ident.found, f.width, f.height, self.bar(at)
+                )
                 got = self._by_cells(at, name, placed[0], g)
                 if got is not None and self.capture is not None and self.capture.enabled:
                     self.capture.rows(f, f"{ident.app}.{name}", got)
@@ -263,7 +290,9 @@ class Session:
             placed = self.place(at, ident.app, ident.view, name)
             if not placed:
                 continue
-            cal = self.catalog.grid(ident.app, ident.view, name, ident.found, f.width, f.height)
+            cal = self.catalog.grid(
+                ident.app, ident.view, name, ident.found, f.width, f.height, self.bar(at)
+            )
             g = self._grid(at, name, placed[0], cal)
             if g is None:
                 continue

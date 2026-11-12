@@ -313,7 +313,8 @@ def build_server(
             box, named = named_on(whole(title, frame)[2], app, key, region)
             return Area(box, named, region), frame
         at = current(title, frame)
-        if got := session.catalog.session_box(region, at.panes, frame.width, frame.height):
+        bar = session.bar(at)
+        if got := session.catalog.session_box(region, at.panes, frame.width, frame.height, bar):
             return Area(got[0], None, region), frame
         raise ScreenError(
             "region_unknown",
@@ -447,7 +448,7 @@ def build_server(
         if ident.app and ident.view:
             view = session.catalog.apps[ident.app].views[ident.view]
             var = session.catalog.variant(
-                ident.app, ident.view, ident.found, frame.width, frame.height
+                ident.app, ident.view, ident.found, frame.width, frame.height, session.bar(at)
             )
             label = f"regions of {ident.app} {ident.view}"
             if var and var.name:
@@ -461,7 +462,11 @@ def build_server(
         sess = [
             f"{name} {_nums(p[0])} {p[1]}"
             for name in dict.fromkeys([*session.catalog.session_cal, *session.catalog.session])
-            if (p := session.catalog.session_box(name, at.panes, frame.width, frame.height))
+            if (
+                p := session.catalog.session_box(
+                    name, at.panes, frame.width, frame.height, session.bar(at)
+                )
+            )
         ]
         if sess:
             out.append("session: " + "; ".join(sess))
@@ -518,8 +523,21 @@ def build_server(
                 )
             if shell := shell_state(window_title, at):
                 info["shell"] = shell
+            if bar := session.bar(at):
+                info["taskbar"] = bar.edge
             if stale := calibration_stale(at):
                 warnings.append({"kind": "calibration_stale", "detail": stale})
+            if info.get("found") and not info.get("foreground"):
+                warnings.append(
+                    {
+                        "kind": "not_foreground",
+                        "detail": "the session window is not the one in front on this "
+                        "computer, so it does not have the keyboard now. Input (act, do) "
+                        "brings it forward itself and checks it took the keyboard before "
+                        "sending a key; it fails not_foreground, sending nothing, when Windows "
+                        "refuses. No need to focus it by hand first",
+                    }
+                )
         except ScreenError as e:
             info["state"] = e.code
             info["detail"] = str(e)
@@ -556,10 +574,14 @@ def build_server(
         its anchors on screen, or the nearest far from where it was measured (the window
         was resized or zoomed)."""
         ident, f = at.ident, at.frame
+        if ident.app == "terminal" and (cut := text_below_grid(at)):
+            return cut
         cal = session.catalog.calibration.get((ident.app or "", ident.view or ""))
         anchored = [vr for vr in cal.variants if vr.anchor] if cal else []
         if not anchored:
             return None
+        bar = session.bar(at)
+        shift = bar.shift if bar else 0
         seen = [(vr, ident.found.get(vr.anchor or "")) for vr in anchored]
         seen = [(vr, b) for vr, b in seen if b]
         if not seen:
@@ -568,8 +590,12 @@ def build_server(
                 f"the calibration's anchor ({names}) is not on screen: its regions may be "
                 "wrong; measure the view again into apps.toml"
             )
+        # Measured with the taskbar at the bottom: one at the top moves the app down.
         dists = [
-            ((b[0] / f.width - vr.anchor_at[0]) ** 2 + (b[1] / f.height - vr.anchor_at[1]) ** 2)
+            (
+                (b[0] / f.width - vr.anchor_at[0]) ** 2
+                + ((b[1] - shift) / f.height - vr.anchor_at[1]) ** 2
+            )
             ** 0.5
             for vr, b in seen
             if b and vr.anchor_at
@@ -581,6 +607,30 @@ def build_server(
                 "add this zoom as a variant in apps.toml"
             )
         return None
+
+    def text_below_grid(at: Where) -> str | None:
+        """Text drawn below the terminal's grid region and above the window's bottom (or a
+        taskbar there): rows the region cuts off, where a wrapped command ends."""
+        f = at.frame
+        placed = session.place(at, "terminal", at.ident.view or "", "body")
+        if placed is None:
+            return None
+        x, y, w, h = placed[0]
+        bar = session.bar(at)
+        floor = bar.box[1] if bar is not None and bar.edge == "bottom" else f.height
+        below = [
+            ln
+            for ln in at.lines
+            if ln.box[1] >= y + h - 2 and ln.box[1] + ln.box[3] <= floor and x <= ln.box[0] < x + w
+        ]
+        if not below:
+            return None
+        return (
+            f"the terminal shows {len(below)} line(s) of text below its body region (y {y + h} "
+            f"to {floor}): a wrapped command or the prompt that ended one is cut off there, and "
+            "runs fail as if keys were lost. The region comes from calibration in apps.toml: "
+            "measure it again (the taskbar's place and the window size changed?)"
+        )
 
     def jharokha_apps() -> str:
         """The menu for read and do, from the app definitions (built in and apps.toml), not
