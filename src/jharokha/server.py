@@ -9,11 +9,12 @@ do (without it, do only shows an action's plan)."""
 
 from __future__ import annotations
 
+import difflib
 import functools
 import json
 import re
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
@@ -108,15 +110,81 @@ class Area:
     note: str = ""
 
 
+def _error(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
 def _guard(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Every error a tool ends with starts with a code. A bare "Error executing tool
+    jharokha_read" with nothing after it tells the caller neither what failed nor
+    whether to retry."""
+
     @functools.wraps(fn)
     def inner(*a: Any, **kw: Any) -> Any:
         try:
             return fn(*a, **kw)
         except ScreenError as e:
-            return CallToolResult(content=[TextContent(type="text", text=str(e))], is_error=True)
+            return _error(str(e))
+        except Exception as e:  # noqa: BLE001
+            return _error(
+                f"internal_error: {fn.__name__} failed inside jharokha ({type(e).__name__}: "
+                f"{e}); nothing more was sent by this call. Read the screen before retrying, "
+                "and report it if it repeats"
+            )
 
     return inner
+
+
+# Names callers give arguments by, for the names the tools take.
+ALIASES: dict[str, dict[str, str]] = {
+    "jharokha_act": {"action": "op", "operation": "op", "key": "keys", "spot": "target"},
+    "jharokha_do": {"name": "action", "arguments": "args", "params": "args", "parameters": "args"},
+    "jharokha_wait": {"timeout": "timeout_s", "pattern": "regex", "until": "text"},
+    "jharokha_read": {"area": "region", "fmt": "format"},
+    "jharokha_find": {"text": "query", "q": "query"},
+    "jharokha_screenshot": {"area": "region"},
+}
+
+
+def normalize_args(
+    tool: str,
+    args: Mapping[str, Any],
+    takes: Collection[str],
+    action_args: Callable[[str], Collection[str]] | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    """args as tool takes them: an alias renamed (ALIASES), and for jharokha_do an argument
+    of the action given beside it moved into args. Anything else is an error naming what
+    the tool takes and the nearest name: an unknown argument was dropped silently before,
+    so a wait given `until` waited for nothing and said the screen held still."""
+    out: dict[str, Any] = {}
+    unknown: list[str] = []
+    aliases = ALIASES.get(tool, {})
+    for k, v in args.items():
+        if k in takes:
+            out[k] = v
+        elif k in aliases and aliases[k] not in args:
+            out[aliases[k]] = v
+        else:
+            unknown.append(k)
+    if unknown and tool == "jharokha_do" and action_args and isinstance(out.get("action"), str):
+        inner = action_args(out["action"])
+        moved = [k for k in unknown if k in inner]
+        if moved:
+            given = dict(out.get("args") or {})
+            for k in moved:
+                given.setdefault(k, args[k])
+            out["args"] = given
+            unknown = [k for k in unknown if k not in moved]
+    if not unknown:
+        return out, None
+    hints = []
+    for k in unknown:
+        near = difflib.get_close_matches(k, list(takes), n=1, cutoff=0.5)
+        hints.append(f"'{k}'" + (f" (did you mean '{near[0]}'?)" if near else ""))
+    return out, (
+        f"bad_argument: {tool} takes no argument {', '.join(hints)}; it takes "
+        f"{', '.join(sorted(takes)) or 'no arguments'}. Nothing was sent."
+    )
 
 
 def _captured(fn: Callable[..., Any], frames: Capture) -> Callable[..., Any]:
@@ -177,6 +245,39 @@ def build_server(
     trace = trace or Trace(None)
     v = version()
     mcp = MCPServer("jharokha", instructions=f"jharokha {v}. {INSTRUCTIONS}", version=v)
+    call_tool = mcp.call_tool
+
+    async def checked_call(name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+        """Arguments checked by name before the tool sees them (normalize_args), and a
+        validation failure answered with a code and what the tool takes."""
+        tool_def = mcp._tool_manager.get_tool(name)  # noqa: SLF001
+        if tool_def is not None:
+            takes = list((tool_def.parameters or {}).get("properties", {}))
+
+            def action_args(a: str) -> Collection[str]:
+                return list(actions[a].args) if a in actions else []
+
+            arguments, err = normalize_args(name, arguments or {}, takes, action_args)
+            if err:
+                return _error(err)
+        try:
+            return await call_tool(name, arguments, context)
+        except ToolError as e:
+            # The SDK's argument validation (pydantic's, by duck type: no dependency of ours).
+            errors: Any = getattr(e.__cause__, "errors", None)
+            if callable(errors) and type(e.__cause__).__name__ == "ValidationError":
+                raw: Any = errors()
+                found: list[dict[str, Any]] = list(raw)
+                bad = "; ".join(
+                    f"{'.'.join(str(x) for x in er['loc'])}: {er['msg']}" for er in found
+                )
+                takes = list((tool_def.parameters or {}).get("properties", {})) if tool_def else []
+                return _error(
+                    f"bad_argument: {name}: {bad}. It takes {', '.join(takes)}. Nothing was sent."
+                )
+            raise
+
+    mcp.call_tool = checked_call  # type: ignore[method-assign]
     # The last read of each region (by how it was asked for), for since='last'.
     last_lines: dict[str, list[Line]] = {}
     last_items: dict[str, set[str]] = {}

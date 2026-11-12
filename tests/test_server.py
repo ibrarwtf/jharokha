@@ -826,3 +826,42 @@ async def test_a_wait_with_no_condition_says_it_waited_only_for_stillness(source
     async with Client(build_server(source)) as c:
         r = json.loads(text(await c.call_tool("jharokha_wait", {})))
         assert r["ended"] == "still" and "no text, regex, gone or ready" in r["waited_for"]
+
+
+async def test_arguments_by_another_name_are_taken_or_refused_with_the_right_one(source):
+    """Names an agent guesses (`action` for op, `key` for keys, `until` for a wait's text)
+    are taken or refused naming the right one, never dropped silently (a wait then waits
+    for nothing) or answered with a bare "Error executing tool"."""
+    async with Client(build_server(source, allow_input=True)) as c:
+        r = await c.call_tool("jharokha_act", {"action": "press", "key": "esc", "show": "none"})
+        assert not r.is_error and "op=press" in text(r)
+        r = await c.call_tool("jharokha_read", {"regoin": "screen"})
+        assert r.is_error and text(r).startswith("bad_argument: jharokha_read takes no argument")
+        assert "did you mean 'region'?" in text(r)
+        r = await c.call_tool("jharokha_act", {"keys": "esc"})
+        assert r.is_error and text(r).startswith("bad_argument: jharokha_act: op: Field required")
+        args = {"action": "terminal.run", "command": "Get-Date", "dry_run": True}
+        r = await c.call_tool("jharokha_do", args)  # the action's own argument beside it
+        assert not r.is_error and '"command": "Get-Date"' in text(r)
+
+
+def test_normalize_args_keeps_known_names_and_never_overrides_one_given():
+    from jharokha.server import normalize_args
+
+    takes = ["op", "keys", "target"]
+    assert normalize_args("jharokha_act", {"op": "press", "keys": "a"}, takes) == (
+        {"op": "press", "keys": "a"},
+        None,
+    )
+    out, err = normalize_args("jharokha_act", {"op": "press", "action": "click"}, takes)
+    assert err is not None and "'action'" in err  # op given: the alias is no alias here
+    out, err = normalize_args("jharokha_status", {"x": 1}, [])
+    assert err is not None and "it takes no arguments" in err
+
+
+async def test_an_unexpected_failure_inside_a_tool_carries_a_code(source, monkeypatch):
+    async with Client(build_server(source)) as c:
+        monkeypatch.setattr(source, "ocr", lambda *a, **k: 1 / 0)
+        r = await c.call_tool("jharokha_read", {"region": "screen"})
+        assert r.is_error and text(r).startswith("internal_error: jharokha_read failed")
+        assert "ZeroDivisionError" in text(r)
