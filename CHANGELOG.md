@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.36.0
+
+- Terminal: only a tab jharokha prepared takes input. run, read_file, write_file, output and edit_once refuse (nothing sent) when no `JK<n>` state prompt is on screen (`not_prepared`): a run used to prepare whatever tab it found, even one running another program, and paste the setup line into it. terminal.setup is the only way a tab gets prepared, and every terminal action refuses a tab showing Claude Code's TUI (`not_a_shell`) or, for setup, no prompt waiting (`no_prompt`). `shell.typed` stops at the next state row.
+- Terminal failures carry a code: not_prepared, not_a_shell, no_prompt, input_pending, echo_mismatch, still_running, unknown, edit_count, clipboard_mismatch, edit_failed; a timed-out run or result says `fields.state` running, input_pending or unknown. `terminal.result` waits up to 1800 s in one call.
+- `terminal.output {first, count}`: pages of the last command's output from the shell's own copy, with `total` and `more`.
+- `terminal.edit_once {path, old, new}`: replaced only where old occurs exactly once, old and new through the clipboard as plain JSON, the new SHA-256 returned; checked on Windows PowerShell 5.1.
+- A line the user's key stopped part-way is cleared (Escape) and sent once more; a second stop clears it and refuses. A sent line whose start showed but not its end is reported as wrapped out of the region, not as lost keys.
+- The session's taskbar is found on every frame by its date (core/taskbar.py). With the taskbar at the top, calibrated regions, anchors and app spots move down by its height and taskbar spots keep their distance from the top: the terminal's body no longer takes the tab strip in or cuts off a wrapped command's end, the spots land on the icons, Teams no longer warns calibration_stale. A calibrated grid reaches the pane's bottom; a taskbar spot off the bar is dropped. Status reports `taskbar`, warns calibration_stale when text sits below the terminal's grid, and warns not_foreground in plain words.
+- An action gives this computer's keyboard back to the user's window while it waits between inputs: a session window held in front through a run's echo check took the user's own keys into its shell.
+- Arguments: obvious aliases taken (`action`/`key` for act's op/keys, `until` for wait's text, an action's argument beside `action` in do), any other unknown name refused as bad_argument naming the nearest one (it was dropped silently), a validation failure answered with a code, and an unexpected failure inside a tool is `internal_error: ...` instead of a bare "Error executing tool".
+
 ## v0.35.0
 
 
