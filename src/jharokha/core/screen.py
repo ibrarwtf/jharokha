@@ -24,9 +24,11 @@ class ScreenError(Exception):
     verify_unavailable, clipboard_busy, bad_prompt, bad_argument; refusals of input, where
     nothing was sent: wrong_app, irreversible, input_leased, user_active."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, sent: int | None = None) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
+        # Typing stopped part-way (the user's own key): how many characters went before.
+        self.sent = sent
 
 
 class Source(Protocol):

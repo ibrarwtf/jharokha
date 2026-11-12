@@ -43,9 +43,10 @@ async def test_an_actions_steps_save_their_frames(tmp_path: Path):
     out = tmp_path / "frames"
     args = {"action": "terminal.run", "args": {"command": "Get-Date"}, "allow": "irreversible"}
     async with Client(build_server(shell, allow_input=True, capture=out)) as c:
+        await c.call_tool("jharokha_do", {"action": "terminal.setup"})
         r = await c.call_tool("jharokha_do", args)
     assert not r.is_error
-    recs = pairs(out)
+    recs = [rec for rec in pairs(out) if rec["call"]["args"].get("action") == "terminal.run"]
     assert len(recs) >= 2  # the prompt before, the output after
     assert all(rec["call"]["tool"] == "jharokha_do" for rec in recs)
     assert all(rec["call"]["args"].items() >= args.items() for rec in recs)

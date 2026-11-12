@@ -17,6 +17,7 @@ clipboard, which the session reads, and checked by its SHA-256.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -144,14 +145,53 @@ def prepared(rows: list[str]) -> bool:
 
 
 def typed(rows: list[str], p: Prompt) -> str | None:
-    """What the input row after prompt p holds (its wraps joined), or None when the row
-    is not on screen."""
+    """What the input row after prompt p holds (its wraps joined, up to the next state
+    row), or None when the row is not on screen. An Enter pressed by hand puts a new
+    prompt under the one a run waits at, and the run must not take that whole prompt for
+    its own input ("showed 'JK50 2030-01-31 ... > cls; . {'")."""
     if p.row + 1 >= len(rows):
         return None
     m = _INPUT.match(rows[p.row + 1])
     if not m:
         return None
-    return m[1] + "".join(rows[p.row + 2 :])
+    rest = rows[p.row + 2 :]
+    stop = next((i for i, r in enumerate(rest) if _STATE.match(r) or _STATE_LOOSE.match(r)), None)
+    return m[1] + "".join(rest[:stop])
+
+
+# What a terminal shows when the tab in front runs a full-screen program and not a shell:
+# Claude Code's TUI (its mode line, its hints, the `❯` of its input box). A run that finds
+# no state prompt in such a tab must not paste the setup line into the TUI's input box. A
+# shell's own prompt never shows these; a shell's output can, which is
+# why they count only below the last state row.
+_TUI = re.compile(
+    r"(auto mode|plan mode|accept edits|bypass permissions) on\b|shift\+tab to cycle|"
+    r"\? for shortcuts|esc to interrupt|ctrl\+c to exit|Claude Code|"
+    r"^\s*[❯›]|^\s*\*\s*\w+ed\s*for\s*\d+\s*[ms]\b",
+    re.IGNORECASE,
+)
+
+
+def not_a_shell(rows: list[str]) -> str | None:
+    """What says the rows are a full-screen program's (Claude Code's TUI), not a shell's,
+    or None. Checked only on rows below the last state row: a shell may print anything
+    above its prompt."""
+    ps = prompts(rows)
+    tail = rows[ps[-1].row + 1 :] if ps else rows
+    for r in tail:
+        if m := _TUI.search(r):
+            return m.group(0).strip()
+    return None
+
+
+_PROMPT_END = re.compile(r"(^\s*[>v]\s*$|>\s*$)")
+
+
+def at_prompt(rows: list[str]) -> bool:
+    """Whether the last row with text is a shell prompt waiting for input: a prepared
+    tab's input row, or a prompt that ends with `>` (PowerShell's `PS C:\\x>`)."""
+    last = next((r for r in reversed(rows) if r.strip()), "")
+    return bool(_PROMPT_END.search(last))
 
 
 def idle(rows: list[str]) -> Prompt | None:
@@ -252,6 +292,79 @@ def page(first: int, count: int, base: int = 0) -> str:
     """The line that shows lines first..first+count-1 of the last command's output again,
     with their numbers, from the variable `jk` kept them in."""
     return f"cls; ${VAR}.GetRange({first - 1 - base}, {count}) | jk {first - 1} -p"
+
+
+def page_from(first: int, count: int) -> str:
+    """The line that shows lines first..first+count-1 of the last command's output, with
+    their numbers, and the count of all of them first (`total=N`, no number of its own):
+    a page past the end shows fewer lines or none, never an error."""
+    return (
+        f'cls; "total=$(${VAR}.Count)"; ${VAR} | Select-Object -Skip {first - 1} '
+        f"-First {count} | jk {first - 1} -p"
+    )
+
+
+_TOTAL = re.compile(r"^\s*total\s*=\s*(\d+)\s*$")
+
+
+def total(rows: list[str]) -> int | None:
+    """The count a page_from line printed above its page, or None when not on screen."""
+    for r in rows:
+        if m := _TOTAL.match(r):
+            return int(m[1])
+    return None
+
+
+def utf16_len(s: str) -> int:
+    """A string's length as PowerShell counts it: in UTF-16 code units."""
+    return len(s.encode("utf-16-le")) // 2
+
+
+def edit_once(path: str, old: str, new: str) -> str:
+    """The command that replaces the one occurrence of old in the file at path by new,
+    both read from this machine's clipboard as JSON {"old", "new"} (readable text, never
+    typed or shown). It prints `clip=bad` and writes nothing when the clipboard did not
+    arrive as sent (told by the lengths), else `count=N`, the occurrences of old (ordinal,
+    overlapping ones counted), and only when N is 1 writes the file (UTF-8, its BOM kept
+    or not; in a CRLF file, old and new given with LF take CRLF) and prints `sha256=` and
+    the file's new hash."""
+    q = path.replace("'", "''")
+    return (
+        f"$j=Get-Clipboard -Raw|ConvertFrom-Json; $p='{q}'; "
+        f"if($j.old.Length -ne {utf16_len(old)} -or $j.new.Length -ne {utf16_len(new)})"
+        "{'clip=bad'} else { $b=[IO.File]::ReadAllBytes($p); "
+        "$m=$b.Length -ge 3 -and $b[0] -eq 239 -and $b[1] -eq 187 -and $b[2] -eq 191; "
+        "$t=[IO.File]::ReadAllText($p); $o=$j.old; $w=$j.new; "
+        'if(-not $t.Contains($o) -and $t.Contains("`r`n") -and -not $o.Contains("`r"))'
+        '{$o=$o.Replace("`n","`r`n"); $w=$w.Replace("`r`n","`n").Replace("`n","`r`n")}; '
+        "$k=0; $i=-1; while(($i=$t.IndexOf($o,$i+1,[StringComparison]::Ordinal)) -ge 0){$k++}; "
+        '"count=$k"; if($k -eq 1){ $i=$t.IndexOf($o,[StringComparison]::Ordinal); '
+        "$t=$t.Substring(0,$i)+$w+$t.Substring($i+$o.Length); "
+        "[IO.File]::WriteAllText($p,$t,(New-Object Text.UTF8Encoding $m)); "
+        "'sha256='+(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash } }"
+    )
+
+
+def edit_payload(old: str, new: str) -> str:
+    """What edit_once reads from the clipboard: plain JSON, readable as it is."""
+    return json.dumps({"old": old, "new": new}, ensure_ascii=False)
+
+
+_COUNT = re.compile(r"count=(\d+)")
+_SHA = re.compile(r"sha256=([0-9A-Za-z]{64})")
+
+
+def edit_result(lines: list[str]) -> tuple[str, int | None, str | None]:
+    """What an edit_once command printed: ('clip_bad' | 'count' | 'unknown', the count of
+    occurrences, the new SHA-256 as read, lowercased)."""
+    text = "".join("".join(ln.split()) for ln in lines)
+    if "clip=bad" in text:
+        return "clip_bad", None, None
+    c = _COUNT.search(text)
+    if c is None:
+        return "unknown", None, None
+    h = _SHA.search(text)
+    return "count", int(c[1]), h[1].lower() if h else None
 
 
 def write_file(path: str) -> str:

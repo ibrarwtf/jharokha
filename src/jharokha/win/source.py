@@ -99,7 +99,7 @@ class WindowsSource:
                 "paste_failed", f"{e}; the line may be partly in. Clear it and type instead."
             ) from e
         except (InputLeased, UserActive) as e:
-            raise ScreenError(*refusal(e)) from e
+            raise ScreenError(*refusal(e), sent=getattr(e, "sent", None)) from e
         except input.Covered as e:
             what = _covering(guard.covered(w.hwnd), args)
             raise ScreenError(

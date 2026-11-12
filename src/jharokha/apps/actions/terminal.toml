@@ -9,16 +9,21 @@
 #
 # The shell is PowerShell in a tab prepared once (core.shell): its prompt shows a counter,
 # the date and time, the last command's status and exit code and the directory, so a
-# command's end and result are read exactly; its output is numbered and paged. A run
-# prepares the tab itself when it finds no such prompt.
+# command's end and result are read exactly; its output is numbered and paged. Only an
+# explicit terminal.setup prepares a tab: a run, a read or a write that finds no such
+# prompt refuses (not_prepared), and every one of them refuses a tab running a program
+# such as Claude Code (not_a_shell). A run that prepared whatever tab it found could take
+# Claude Code's tab and paste the setup line into its input box.
 format = 1
 
 [action.terminal.run]
 summary = """Run one command in the PowerShell tab in front and return what it printed (output,
 its lines numbered on screen but not here), its exit code and status, read up to the
 shell's next state prompt. Output longer than the screen is paged back from the shell.
-On a timeout, output holds what it printed so far and fields.finished is false. Prepares
-the tab (terminal.setup) first when needed."""
+On a timeout, output holds what it printed so far, fields.finished is false and
+failed.code says still_running or unknown: call terminal.result. Only in a tab
+terminal.setup prepared: elsewhere it refuses (not_prepared, not_a_shell) and sends
+nothing. More of a long output: terminal.output."""
 args.command = { type = "text", max_len = 2000, doc = "one line of PowerShell" }
 args.timeout_s = { type = "number", default = 30, max = 300, doc = "seconds for the command to finish, up to 300" }
 
@@ -40,8 +45,11 @@ timeout_s = "{timeout_s}"
 summary = """What the last command sent in the PowerShell tab in front printed, its exit
 code and status, as terminal.run returns them: waits up to timeout_s for it to end, and
 returns at once when it has. After a terminal.run whose fields.finished is false, call this
-(again, while finished stays false) instead of sleeping or running the command again."""
-args.timeout_s = { type = "number", default = 60, max = 300, doc = "seconds to wait for the command to end, up to 300" }
+(again, while finished stays false) instead of sleeping or running the command again.
+One call can wait up to 30 minutes for a long command. fields.state is finished,
+running (failed.code still_running), input_pending, or unknown (another app or a
+program in front: nothing can be told)."""
+args.timeout_s = { type = "number", default = 60, max = 1800, doc = "seconds to wait for the command to end, up to 1800" }
 
 [[action.terminal.result.step]]
 do = "focus"
@@ -52,6 +60,29 @@ do = "run"
 result = true
 region = "body"
 timeout_s = "{timeout_s}"
+
+# A long output is paged from the variable the `jk` filter keeps the last command's lines
+# in, not from the screen: without it, an agent keeps output in a variable of its own and
+# pages it by hand (`cls; $a[n..n+19]`), a call per screen.
+[action.terminal.output]
+summary = """Lines of the last command's output in the prepared PowerShell tab, numbered as
+it printed them: count lines from line first on, a screenful per page whatever the pane
+shows, from the shell's own copy of them (nothing is run again). fields.total is how
+many lines it printed, fields.more whether lines follow."""
+args.first = { type = "number", default = 1, max = 10000000, doc = "the first line, 1-based" }
+args.count = { type = "number", default = 100, max = 2000 }
+
+[[action.terminal.output.step]]
+do = "focus"
+switch = true
+
+[[action.terminal.output.step]]
+do = "run"
+output = true
+first = "{first}"
+count = "{count}"
+region = "body"
+timeout_s = 30
 
 [action.terminal.read_file]
 summary = """Lines of a text file in the PowerShell tab in front, numbered from the file's
@@ -76,12 +107,15 @@ timeout_s = 30
 # Prepares the tab: the state prompt, the numbering filter, predictions off and one ink
 # (in memory only, gone with the tab), then prints the printable ASCII alphabet once and
 # learns what each glyph looks like, so terminal reads match cells instead of running OCR
-# (core.glyphs). terminal.run does this itself when the prompt is not there.
+# (core.glyphs). The only way a tab gets prepared; it refuses a tab running a program
+# (Claude Code's TUI) and one not waiting at a prompt.
 [action.terminal.setup]
 summary = """Prepare the PowerShell tab in front: a prompt that shows the command counter,
 date, time, status, exit code and directory, no colours or predictions, and the
-terminal's font learned from the alphabet it prints. Needed again after a zoom, font or
-window size change; terminal.run does it itself when the prompt is not there."""
+terminal's font learned from the alphabet it prints. The only action that prepares a
+tab: call it once in the tab to use, after making sure that tab is in front. Refuses a
+tab running a program such as Claude Code (not_a_shell) or with no prompt waiting
+(no_prompt). Needed again after a zoom, font or window size change."""
 
 [[action.terminal.setup.step]]
 do = "focus"
@@ -108,5 +142,30 @@ switch = true
 do = "write_file"
 path = "{path}"
 text = "{text}"
+region = "body"
+timeout_s = 30
+
+# One exact replacement in a file, instead of a helper typed again and again. old and new
+# go through the clipboard as plain JSON, never typed or shown and never encoded: the
+# remote machine may be monitored, and an encoded command looks like an attack.
+[action.terminal.edit_once]
+summary = """Replace text in a file on the remote machine, only where it occurs exactly once:
+old is replaced by new and the file's new SHA-256 returned. Refused, nothing written,
+when old occurs 0 or several times (failed.code edit_count, fields.count). old and new go
+through this machine's clipboard as plain text, nothing typed; the file keeps its
+encoding and, given LF text for a CRLF file, its line endings."""
+args.path = { type = "text", max_len = 260, pattern = "[^'\r\n]+" }
+args.old = { type = "text", max_len = 100000, pattern = "(?s).+", doc = "the exact text to replace, not empty" }
+args.new = { type = "text", max_len = 100000 }
+
+[[action.terminal.edit_once.step]]
+do = "focus"
+switch = true
+
+[[action.terminal.edit_once.step]]
+do = "edit_file"
+path = "{path}"
+old = "{old}"
+new = "{new}"
 region = "body"
 timeout_s = 30

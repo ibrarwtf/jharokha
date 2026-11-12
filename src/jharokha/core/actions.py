@@ -31,9 +31,13 @@ and `timeout_s`:
     run       command in the prepared shell in front (core.shell: ended by its next state
               prompt, output numbered and paged), its exit code and status; clear (cls)
               first; first = the number of its first output line; setup = true prepares
-              the tab instead and learns the terminal's glyphs (core.glyphs)
+              the tab instead and learns the terminal's glyphs (core.glyphs); result =
+              true waits for the last command's end; output = true pages the last
+              command's output (first, count) from the shell's variable
     write_file  path, text: the text put in this machine's clipboard, written from it by
               one command and its SHA-256 checked; nothing of it typed or shown
+    edit_file path, old, new: old replaced by new where it occurs exactly once, both
+              through the clipboard as plain JSON; the file's new SHA-256 returned
 
 Items are what jharokha_read format=items gives for the region (a Teams thread's
 messages: sender, time, text; who and day too with a people map, mapped once the scroll
@@ -97,9 +101,23 @@ NEWLINES = ("enter", "shift+enter", "forbid")
 ARG_TYPES = ("text", "number", "list", "choice")
 COND_KEYS = ("text", "regex", "gone", "name", "region", "app", "view", "ready", "before", "after")
 COMMON = ("do", "expect", "unless", "timeout_s", "label")
-INPUT = ("click", "type", "press", "scroll", "run", "write_file")
+INPUT = ("click", "type", "press", "scroll", "run", "write_file", "edit_file")
 # Refusals, where nothing more was sent: the input tools' codes (core.guard), and locked.
 REFUSALS = ("wrong_app", "irreversible", "input_leased", "user_active", "locked")
+# Codes of a failed step, beside the refusals, for the terminal: whether anything was sent
+# is in each one's reason.
+FAIL_CODES = {
+    "not_prepared": "no JK state prompt in the tab in front; nothing was sent",
+    "not_a_shell": "the tab in front runs a full-screen program (a TUI), not a shell; "
+    "nothing was sent",
+    "no_prompt": "no empty prompt at the bottom of the shell; nothing was sent",
+    "input_pending": "the shell's input already holds text; nothing was sent",
+    "echo_mismatch": "the sent line did not show as sent; Escape cleared it, nothing was run",
+    "still_running": "the command was sent and is still running",
+    "unknown": "the command was sent; whether it ended cannot be read now",
+    "edit_count": "the text to replace is not in the file exactly once; nothing was written",
+    "clipboard_mismatch": "the clipboard did not reach the session as sent; nothing written",
+}
 PARAMS: dict[str, tuple[str, ...]] = {
     "focus": ("app", "view", "switch", "spot"),
     "click": ("target", "button", "double"),
@@ -122,8 +140,9 @@ PARAMS: dict[str, tuple[str, ...]] = {
     "read": ("region", "as", "into", "fields", "exclude", "since", "last", "zoom", "mark"),
     "extract": ("region", "regex", "items", "field", "pick", "into", "required", "zoom"),
     "repeat": ("times", "each", "as", "until", "max", "step"),
-    "run": ("command", "region", "clear", "first", "setup", "result"),
+    "run": ("command", "region", "clear", "first", "setup", "result", "output", "count"),
     "write_file": ("path", "text", "region"),
+    "edit_file": ("path", "old", "new", "region"),
 }
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 TIMEOUT_S = 5.0
@@ -283,8 +302,11 @@ def _step(t: Any, where: str, names: set[str]) -> Step:
         "type": ("text",),
         "press": ("keys",),
         "click": ("target",),
-        "run": () if params.get("setup") or params.get("result") else ("command",),
+        "run": ()
+        if params.get("setup") or params.get("result") or params.get("output")
+        else ("command",),
         "write_file": ("path", "text"),
+        "edit_file": ("path", "old", "new"),
         "read": ("region", "into"),
         "scroll": ("region",),
     }.get(kind, ()):
@@ -460,9 +482,12 @@ class Result:
 
 
 class _Fail(Exception):
-    def __init__(self, reason: str, candidates: tuple[str, ...] = ()) -> None:
+    """A step that failed. code, when given, names the failure for a caller to branch on
+    (FAIL_CODES); the reason says it in words."""
+
+    def __init__(self, reason: str, candidates: tuple[str, ...] = (), code: str = "") -> None:
         super().__init__(reason)
-        self.reason, self.candidates = reason, candidates
+        self.reason, self.candidates, self.code = reason, candidates, code
 
 
 class _Refuse(Exception):
@@ -586,6 +611,8 @@ class Runner:
         except _Fail as e:
             res.ok = False
             res.failed = {"step": self._at, "reason": e.reason}
+            if e.code:
+                res.failed["code"] = e.code
             if e.candidates:
                 res.failed["candidates"] = list(e.candidates)
         except _Refuse as e:
@@ -1102,6 +1129,8 @@ class Runner:
             return self._setup(s, p)
         if p.get("result"):
             return self._result(s, p)
+        if p.get("output"):
+            return self._output(s, p)
         self._prepare(s, p)
         command = str(p["command"])
         if "\n" in command or "\r" in command:
@@ -1115,24 +1144,53 @@ class Runner:
         at a state prompt, the command before that prompt has ended. Waited for up to the
         step's timeout while it runs (its own `cls` takes the prompt off the screen), at
         once when it has ended. For a run that timed out: its command goes on, and this is
-        how its end is read, rather than a sleep and a guess."""
-        end = self.ex.now() + s.timeout_s
+        how its end is read, rather than a sleep and a guess. A long wait looks once a
+        second after its first ten: a six-minute test run needs no ten looks a second."""
+        start = self.ex.now()
+        end = start + s.timeout_s
         while True:
-            rows = self._rows(self._look(), p)
+            snap = self._look()
+            rows = self._rows(snap, p)
             if q := sh.idle(rows):
                 self.res.fields["prompt"] = q.n - 1
+                self.res.fields["state"] = "finished"
                 r = sh.reply(rows, q.n - 1, 0)
                 return self._answer(self._paged(s, p, r, 0))
             if self.ex.now() >= end:
                 ps = sh.prompts(rows)
                 self.res.output = sh.reply(rows, ps[-1].n if ps else 0, 0).lines
                 self.res.fields["finished"] = False
-                raise _Fail(
-                    f"the shell is not idle at a state prompt after {s.timeout_s:g} s: the "
-                    "command is still running (output holds what it printed so far: call "
-                    "terminal.result again), or text sits in the input (read terminal.body)"
-                )
-            self.ex.wait(POLL_S)
+                code, why = self._running(snap, rows)
+                self.res.fields["state"] = "running" if code == "still_running" else code
+                raise _Fail(f"after {s.timeout_s:g} s: {why}", code=code)
+            self.ex.wait(POLL_S if self.ex.now() - start < 10 else 1.0)
+
+    def _running(self, snap: Snapshot, rows: list[str]) -> tuple[str, str]:
+        """Why the shell in front is not idle at a state prompt, as a code: still_running
+        (the terminal in front, no prompt below the command: it goes on), input_pending
+        (text sits at the last prompt), or unknown (another app or a program is in front,
+        so nothing can be told)."""
+        if snap.app not in (self.action.app, GENERIC, None):
+            return "unknown", (
+                f"{snap.app} is in front, so whether the command ended cannot be read; "
+                "nothing more was sent. Bring the terminal forward and call terminal.result"
+            )
+        if what := sh.not_a_shell(rows):
+            return "unknown", (
+                f"the terminal tab in front runs a program, not the shell ({what!r}): bring "
+                "the prepared PowerShell tab forward and call terminal.result"
+            )
+        ps = sh.prompts(rows)
+        if ps and (got := sh.typed(rows, ps[-1])) and ps[-1].row + 2 >= len(rows):
+            return "input_pending", (
+                f"the last command has ended, but the input holds {got[:80]!r}: someone "
+                "typed into it; clear it (jharokha_act press escape) or read terminal.body"
+            )
+        return "still_running", (
+            "the command is still running (no state prompt below it; output holds what it "
+            "printed so far): call terminal.result again with a longer timeout_s, or press "
+            "ctrl+c with jharokha_act to stop it"
+        )
 
     def _answer(self, r: sh.Reply) -> str:
         """A command's reply as the result: its output, exit code, status and directory."""
@@ -1151,32 +1209,61 @@ class Runner:
             )
         return f"exit {r.prompt.code}"
 
+    def _shell_only(self, rows: list[str]) -> None:
+        """Refuses a tab whose rows show a full-screen program (Claude Code's TUI) instead
+        of a shell: nothing typed there is a command."""
+        if what := sh.not_a_shell(rows):
+            raise _Fail(
+                f"nothing was sent: the terminal tab in front runs a program, not a shell "
+                f"({what!r} is on screen). Bring the PowerShell tab forward (its tab title, "
+                "or ctrl+tab with jharokha_act) and retry",
+                code="not_a_shell",
+            )
+
     def _prepare(self, s: Step, p: dict[str, Any]) -> None:
-        """The tab prepared when its state prompt is not on screen, or when this executor
-        knows too few of its glyphs (a new process over a prepared tab): until then its
-        cells go to the engine, which garbles lookalikes, so a line checked letter by letter
-        fails on its own echo. Setup is sent unchecked and is safe to repeat: the counter
-        goes on."""
+        """A run goes only into a tab that shows its state prompt: one this server
+        prepared. A run that found none and prepared the tab in front by itself could take
+        a tab running Claude Code and paste the setup line into it. A tab is prepared only
+        by an explicit terminal.setup. In a prepared tab whose
+        glyphs this executor does not know yet (a new process), setup is sent again: its
+        cells otherwise go to the engine, which garbles lookalikes, so a line checked letter
+        by letter fails on its own echo; repeating it is safe, the counter goes on."""
         rows = self._rows(self._look(), p)
+        self._shell_only(rows)
+        if not sh.prepared(rows):
+            where = "brought forward" if self._switched else "in front"
+            raise _Fail(
+                f"nothing was sent: the terminal tab {where} shows no JK<n> state prompt, "
+                "so it is not a tab jharokha prepared (another tab, the user's own shell, a "
+                "program, or a command whose output fills the screen). Read terminal.body: "
+                "a command still running ends with terminal.result; if this is the "
+                "PowerShell tab to use, idle at its prompt, call terminal.setup there (only "
+                "with the user's say-so if it is their own shell)",
+                code="not_prepared",
+            )
         known = getattr(self.ex, "glyphs", None)
         n = known() if known else None
-        if not sh.prepared(rows) and self._switched:
-            # The window that came forward shows another tab (the user's own, perhaps):
-            # preparing it would change a shell nobody asked for.
-            raise _Fail(
-                "nothing was sent: the terminal brought forward shows no prepared tab. Ask "
-                "the user which tab to use, bring it forward, and run terminal.setup there"
-            )
-        if not sh.prepared(rows) or (n is not None and n < GLYPHS_MIN):
+        if n is not None and n < GLYPHS_MIN:
             self._setup(s, p)
 
     def _setup(self, s: Step, p: dict[str, Any]) -> str:
         """core.shell.SETUP sent and its first state prompt waited for, then the glyphs
-        learned from the alphabet it printed. The line cannot be checked letter by letter
-        before the font is known: it is sent once the screen holds still, and the state
-        row is what tells it ran."""
+        learned from the alphabet it printed. Only into a shell waiting at its prompt: not
+        a program's screen (Claude Code's TUI takes the line as a prompt of its own), not a
+        command still running. The line cannot be checked letter by letter before the font
+        is known: it is sent once the screen holds still, and the state row is what tells
+        it ran."""
         snap = self._look()
         self._guard(snap)
+        rows = self._rows(snap, p)
+        self._shell_only(rows)
+        if sh.idle(rows) is None and not sh.at_prompt(rows):
+            raise _Fail(
+                "nothing was sent: the tab in front shows no shell prompt waiting at its "
+                "bottom (a PowerShell `PS ...>` or a prepared `>`): a command may be running, "
+                "or a program has the tab. Read terminal.body",
+                code="no_prompt",
+            )
         how = self._put_line(sh.SETUP)
         self.ex.settle()
         self.ex.press("enter")
@@ -1192,9 +1279,8 @@ class Runner:
                 raise _Fail(
                     f"the setup line brought no state prompt up within {s.timeout_s:g} s. "
                     "Read terminal.body: the shell may be busy, or not the one in front; if "
-                    "it is idle, the keys are lost on this computer (another window holds "
-                    "the keyboard while clicks still reach the session): click once inside "
-                    "the session window and retry"
+                    "it is idle, its keys did not arrive",
+                    code="unknown",
                 )
             self.ex.wait(POLL_S)
         self.res.fields["prepared"] = True
@@ -1226,16 +1312,20 @@ class Runner:
         unless raw), ended by the next state prompt, its start fetched by paging when it
         scrolled off the top. typed sends it key by key whatever its length: a paste would
         replace the clipboard a write_file holds."""
-        try:
-            prompt = self._idle(s, p)
-        except _Fail as e:
-            raise _Fail(f"nothing was sent: {e.reason}") from None
+        prompt = self._ready(s, p)
         if raw:
             line = "cls; " + command if clear else command
         else:
             line = sh.wrapped(command, base, clear)
         self.res.fields["input"] = self._send(line, p, prompt, typed)
         return self._paged(s, p, self._reply(p, prompt.n, base, s.timeout_s), base)
+
+    def _ready(self, s: Step, p: dict[str, Any]) -> sh.Prompt:
+        """The idle prompt a line goes in after, or a failure that says nothing was sent."""
+        try:
+            return self._idle(s, p)
+        except _Fail as e:
+            raise _Fail(f"nothing was sent: {e.reason}", code=e.code) from None
 
     def _paged(self, s: Step, p: dict[str, Any], r: sh.Reply, base: int) -> sh.Reply:
         """r with the lines that scrolled off the top fetched again, a page at a time."""
@@ -1260,7 +1350,8 @@ class Runner:
             self.res.fields["missing_lines"] = [base + 1, r.first - 1]
             self._warn(
                 f"output lines {base + 1} to {r.first - 1} scrolled off the top and were not "
-                f"fetched again ({e.reason}); the command itself ran"
+                f"fetched again ({e.reason}); the command itself ran: terminal.output "
+                f"first={base + 1} fetches them"
             )
         if pages:
             self.res.fields["pages"] = pages + 1
@@ -1277,6 +1368,45 @@ class Runner:
         self.res.fields["input"] = self._send(sh.page(first, count, base), p, self._idle(s, p))
         return self._reply(p, n, first - 1, s.timeout_s)
 
+    def _output(self, s: Step, p: dict[str, Any]) -> str:
+        """Lines of the last command's output, from the variable the `jk` filter kept them
+        in (the shell's own buffer, not the screen's scrollback), a screenful per page
+        however few rows the pane shows: count lines from line first on, fewer at the end.
+        Without it, an agent pages long output by hand with `cls; $a[n..n+19]`, a call per
+        screen. Nothing is run again; the variable is left as it was."""
+        self._prepare(s, p)
+        start, want = int(p.get("first", 1)), int(p.get("count", 100))
+        at = start
+        lines: list[str] = []
+        total: int | None = None
+        fit = max(1, self._fit(p) - 1)  # the total's own row
+        tries = 0
+        while len(lines) < want and (total is None or at <= total):
+            k = min(fit, want - len(lines))
+            prompt = self._ready(s, p)
+            self.res.fields["input"] = self._send(sh.page_from(at, k), p, prompt)
+            r = self._reply(p, prompt.n, at - 1, s.timeout_s)
+            total = sh.total(self._rows(self._look(), p))
+            if not r.lines:
+                break
+            if r.first > at:
+                # The page overflowed the screen: fetch it again, smaller.
+                tries += 1
+                if tries > 3:
+                    raise _Fail(f"lines from {at} on do not fit on screen, even {k} at a time")
+                fit = max(1, k - (r.first - at) - 1)
+                continue
+            lines += r.lines[: want - len(lines)]
+            at = r.first + len(r.lines)
+        self.res.output = lines
+        self.res.fields["first"] = start
+        self.res.fields["last"] = start + len(lines) - 1 if lines else None
+        self.res.fields["total"] = total
+        self.res.fields["more"] = bool(total is not None and start + len(lines) <= total)
+        if total is None:
+            self._warn("the count of output lines was not read: page on by line number")
+        return f"{len(lines)} lines of {total}"
+
     def _fit(self, p: dict[str, Any]) -> int:
         """Lines a page may hold: the rows the shell's box shows, less the prompt's two
         and a margin for lines that wrap."""
@@ -1290,8 +1420,9 @@ class Runner:
     def _idle(self, s: Step, p: dict[str, Any]) -> sh.Prompt:
         """The empty prompt at the bottom of the screen, waited for a few seconds (the
         shell drawing its prompt after the command before); a view scrolled up is brought
-        down once. Fails when the input holds text (someone typed into the shell) or no
-        prompt comes (a command still running)."""
+        down once. Fails when the input holds text (someone typed into the shell), a
+        program has the tab (refused at once, never scrolled) or no prompt comes (a
+        command still running)."""
         end = self.ex.now() + TIMEOUT_S
         bottomed = False
         while True:
@@ -1299,6 +1430,7 @@ class Runner:
             rows = self._rows(snap, p)
             if p_ := sh.idle(rows):
                 return p_
+            self._shell_only(rows)
             if self.ex.now() >= end:
                 ps = sh.prompts(rows)
                 # Text after the last prompt with nothing under it, still there after the
@@ -1306,7 +1438,8 @@ class Runner:
                 if ps and (got := sh.typed(rows, ps[-1])) and ps[-1].row + 2 >= len(rows):
                     raise _Fail(
                         f"the shell's input already holds {got[:80]!r}: someone typed into "
-                        "it; clear it (jharokha_act press escape) and retry"
+                        "it; clear it (jharokha_act press escape) and retry",
+                        code="input_pending",
                     )
                 if not bottomed:
                     bottomed = True
@@ -1319,7 +1452,8 @@ class Runner:
                 raise _Fail(
                     "no empty prompt at the bottom of the shell: a command may still be "
                     "running (terminal.result waits for its end and returns its output; "
-                    "ctrl+c with jharokha_act stops it), or this is not the prepared tab"
+                    "ctrl+c with jharokha_act stops it), or this is not the prepared tab",
+                    code="no_prompt",
                 )
             self.ex.wait(POLL_S)
 
@@ -1340,6 +1474,40 @@ class Runner:
             self.ex.type(line)
             return "typed: " + str(e).removeprefix("paste_failed: ")
 
+    def _sent(self, line: str, typed: bool) -> str:
+        """line into the input, once more when the user's own key stopped it part-way: the
+        part that went is cleared (Escape, sent once the user is idle again, as all input
+        is), so no half line is left at the prompt. A second stop clears it again and
+        refuses."""
+        for attempt in (1, 2):
+            try:
+                if typed:
+                    self.ex.type(line)
+                    how = "typed"
+                else:
+                    how = self._put_line(line)
+                return how + ("; again after the user's key" if attempt > 1 else "")
+            except ScreenError as e:
+                if e.code != "user_active" or not e.sent:
+                    raise  # nothing of the line went: nothing to clear
+                why = str(e).removeprefix("user_active: ")
+                try:
+                    self.ex.press("escape")
+                except ScreenError as e2:
+                    raise ScreenError(
+                        "user_active",
+                        f"{why} The {e.sent} characters sent are still in the shell's "
+                        f"input: clearing them was refused ({e2.code}); press escape before "
+                        "the next command",
+                    ) from None
+                if attempt == 2:
+                    raise ScreenError(
+                        "user_active",
+                        f"{why} Stopped twice; what was sent is cleared (Escape) and nothing "
+                        "was run",
+                    ) from None
+        raise AssertionError("unreachable")
+
     def _send(self, line: str, p: dict[str, Any], prompt: sh.Prompt, typed: bool = False) -> str:
         """line into the input row after prompt, and Enter only once the row shows exactly
         it: a line is never run with a key dropped or half of it in. Sent again once when
@@ -1347,11 +1515,7 @@ class Runner:
         snap = self._look(fast=True)
         self._guard(snap)
         self._keys(snap, ["enter"])
-        if typed:
-            self.ex.type(line)
-            how = "typed"
-        else:
-            how = self._put_line(line)
+        how = self._sent(line, typed)
         for attempt in (1, 2):
             seen = self._arrived(line, p, prompt)
             if seen is None:
@@ -1363,10 +1527,8 @@ class Runner:
                 continue
             raise _Fail(
                 f"the shell's input showed {seen[:80]!r} where the sent line should be, "
-                "twice; Escape cleared it and nothing was run. Read terminal.body: the "
-                "shell may be busy, or not the one in front; if it is idle, keys are lost "
-                "on this computer (another window holds the keyboard while clicks still "
-                "reach the session): click once inside the session window and retry"
+                f"twice; Escape cleared it and nothing was run. {_why_not_shown(seen, line)}",
+                code="echo_mismatch",
             )
         self.ex.press("enter")
         return how
@@ -1396,13 +1558,15 @@ class Runner:
         """What command n printed, polled until the state prompt n+1 is on screen. At the
         timeout the view is brought to its bottom once (a view scrolled up does not follow
         new output) and looked at again; then what was printed so far goes into the
-        result with the failure."""
-        end = self.ex.now() + timeout
+        result with the failure, coded still_running or unknown."""
+        start = self.ex.now()
+        end = start + timeout
         bottomed = False
         while True:
             snap = self._look()
             box = self._shell_box(snap, p)
-            r = sh.reply(self._rows(snap, p), n, base)
+            rows = self._rows(snap, p)
+            r = sh.reply(rows, n, base)
             if r.prompt is not None:
                 return r
             if self.ex.now() >= end:
@@ -1410,11 +1574,13 @@ class Runner:
                     # The user may switch apps during a long command, which must not then
                     # fail wrong_app though it was typed and is running.
                     self.res.fields["finished"] = False
+                    self.res.fields["state"] = "unknown"
                     raise _Fail(
                         f"no state prompt within {timeout:g} s, and {snap.app} is in front "
                         "now: the command was typed and may still be running behind it; "
                         "nothing more was sent. Bring the terminal forward when the user is "
-                        "done and read terminal.body for its output"
+                        "done and call terminal.result",
+                        code="unknown",
                     )
                 if not bottomed:
                     bottomed = True
@@ -1424,13 +1590,10 @@ class Runner:
                     continue
                 self.res.output = r.lines
                 self.res.fields["finished"] = False
-                raise _Fail(
-                    f"no state prompt within {timeout:g} s: the command may still be running "
-                    "(output holds what it printed so far: terminal.result waits for its end "
-                    "and returns all of it; or press ctrl+c with jharokha_act), or it went "
-                    "somewhere else"
-                )
-            self.ex.wait(POLL_S)
+                code, why = self._running(snap, rows)
+                self.res.fields["state"] = "running" if code == "still_running" else code
+                raise _Fail(f"no state prompt within {timeout:g} s: {why}", code=code)
+            self.ex.wait(POLL_S if self.ex.now() - start < 10 else 1.0)
 
     def _write_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
         """The text into this machine's clipboard, one command that writes the clipboard
@@ -1461,6 +1624,56 @@ class Runner:
             )
         return f"{size} bytes, hash {check}"
 
+    def _edit_file(self, s: Step, p: dict[str, Any], env: dict[str, Any], _: str) -> str:
+        """old replaced by new in the file at path, only where old occurs exactly once:
+        both go through this machine's clipboard as plain JSON, and one typed command
+        (core.shell.edit_once) checks they arrived, counts old, writes the file and prints
+        its new SHA-256, so an agent need not type a replace helper of its own each time."""
+        path, old, new = str(p["path"]), str(p["old"]), str(p["new"])
+        hold = getattr(self.ex, "clipboard", None)
+        if hold is None:
+            raise _Fail("this executor cannot hold the clipboard; nothing was sent")
+        self._prepare(s, p)
+        restore = hold(sh.edit_payload(old, new))
+        try:
+            r = self._command(s, p, sh.edit_once(path, old, new), typed=True)
+        finally:
+            restore()
+        assert r.prompt is not None
+        self.res.exit_code = r.prompt.code
+        self.res.output = r.lines
+        kind, count, sha = sh.edit_result(r.lines)
+        if kind == "clip_bad":
+            raise _Fail(
+                "the clipboard did not reach the session as sent (old and new arrived with "
+                "other lengths); nothing was written. Retry",
+                code="clipboard_mismatch",
+            )
+        if kind == "unknown" or count is None:
+            shown = r.lines[0][:120] if r.lines else "nothing"
+            raise _Fail(
+                f"the edit printed no count but {shown!r}: the file may not exist or not be "
+                "readable; nothing was written",
+                code="edit_failed",
+            )
+        self.res.fields["count"] = count
+        if count != 1:
+            why = (
+                f"old occurs {count} times: give more of the text around it so it occurs once"
+                if count
+                else "old is not in the file (every space and line ending counts; read the "
+                "lines with terminal.read_file and copy them exactly)"
+            )
+            raise _Fail(f"nothing was written: {why}", code="edit_count")
+        if not r.prompt.ok:
+            raise _Fail(
+                f"the file could not be written: {' '.join(r.lines)[:160]!r}", code="edit_failed"
+            )
+        self.res.fields["sha256"] = sha
+        if sha is None:
+            self._warn("the new SHA-256 was not read off the screen; the edit was written")
+        return f"replaced once, sha256 {sha}"
+
     # Conditions
 
     def _until(self, cond: dict[str, Any], timeout: float, what: str) -> Snapshot:
@@ -1473,6 +1686,26 @@ class Runner:
             if self.ex.now() >= end:
                 raise _Fail(f"{what} {_describe(cond)} within {timeout:g} s: {why}")
             self.ex.wait(POLL_S)
+
+
+def _why_not_shown(seen: str, line: str) -> str:
+    """What a sent line that did not show as sent most likely means, by what showed."""
+    if not seen:
+        return (
+            "Nothing arrived: read terminal.body; the shell may be busy or not the one in "
+            "front, or the keys went to another window on this computer (jharokha_status: "
+            "foreground)"
+        )
+    if len(seen) < len(line) and sh.looks_like(seen, line[: len(seen)]):
+        return (
+            f"Its first {len(seen)} of {len(line)} characters showed: the rest most likely "
+            "wrapped onto a row below the terminal's region (jharokha_status warns "
+            "calibration_stale), not lost keys"
+        )
+    return (
+        "It showed otherwise than sent: a misread of the row or keys mixed with others. "
+        "Read terminal.body before retrying"
+    )
 
 
 def _on(snap: Snapshot) -> str:
@@ -1686,6 +1919,9 @@ def _plan(
         p.pop("step", None)
         if s.kind == "write_file":
             p["text"] = f"<{len(str(p.get('text', '')))} characters>"
+        if s.kind == "edit_file":
+            for k in ("old", "new"):
+                p[k] = f"<{len(str(p.get(k, '')))} characters>"
         row: dict[str, Any] = {"step": f"{prefix}{i + 1}", "do": s.kind}
         row |= {k: v for k, v in p.items()}
         for k, cond in (("unless", s.unless), ("expect", s.expect)):

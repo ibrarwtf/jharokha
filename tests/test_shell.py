@@ -181,3 +181,40 @@ def test_looks_like_is_exact_for_the_glyph_reader_and_loose_for_ocr():
     assert sh.looks_like(f"cls; . {{ gc Docker{u}ile }} 2>&1 | Out-String -Stream | jk", line)
     assert not sh.looks_like(f"cls; . {{ gc Docker{u}e }} 2>&1 | Out-String -Stream | jk", line)
     assert not sh.looks_like(u * 3 + line, line)
+
+
+def test_typed_stops_at_the_next_state_row():
+    """An Enter pressed by hand puts a new prompt under the one a run waits at; the run must
+    not read that whole prompt as its own input."""
+    rows = [state(49), "> ", state(50), "> cls; . {"]
+    assert sh.typed(rows, sh.prompts(rows)[0]) == ""
+    assert sh.typed(rows, sh.prompts(rows)[1]) == "cls; . {"
+
+
+def test_a_prompt_waiting_at_the_bottom():
+    assert sh.at_prompt(["PS C:\\Users\\X>", ""]) and sh.at_prompt([state(1), "> "])
+    assert sh.at_prompt([state(1), "v"])
+    assert not sh.at_prompt(["   collected 12 items", "tests/test_x.py ....."])
+    assert not sh.at_prompt([])
+
+
+def test_a_page_from_the_kept_lines_says_their_count():
+    line = sh.page_from(21, 19)
+    assert line == (
+        'cls; "total=$($__jk.Count)"; $__jk | Select-Object -Skip 20 -First 19 | jk 20 -p'
+    )
+    assert sh.total(["total=137", "  21 x"]) == 137 and sh.total(["  21 total=3"]) is None
+
+
+def test_edit_once_reads_plain_json_and_checks_what_arrived():
+    cmd = sh.edit_once("C:\\a\\it's.py", "é\n", "x")
+    assert "$p='C:\\a\\it''s.py'" in cmd and "Get-Clipboard -Raw|ConvertFrom-Json" in cmd
+    assert "-ne 2 -or $j.new.Length -ne 1" in cmd  # lengths in UTF-16 units, as .NET counts
+    assert sh.utf16_len("a😀") == 3
+    assert "\n" not in cmd and cmd.isascii()
+    assert sh.edit_payload("a\n", 'b"') == '{"old": "a\\n", "new": "b\\""}'
+    h = "0B1F" * 16
+    assert sh.edit_result(["count=1", f"sha256={h[:40]}", h[40:]]) == ("count", 1, h.lower())
+    assert sh.edit_result(["count=2"]) == ("count", 2, None)
+    assert sh.edit_result(["clip=bad"])[0] == "clip_bad"
+    assert sh.edit_result(["Exception: file not found"])[0] == "unknown"

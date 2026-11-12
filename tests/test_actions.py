@@ -34,6 +34,8 @@ def test_builtin_actions_parse():
         "terminal.result",
         "terminal.read_file",
         "terminal.write_file",
+        "terminal.output",
+        "terminal.edit_once",
         "teams.open_chat",
         "teams.messages",
         "teams.latest",
@@ -327,7 +329,8 @@ def test_terminal_run_brings_the_terminal_forward_and_never_prepares_a_tab_it_fo
     ex = Scripted(screens, "browser", spots={"session.taskbar.terminal": (90, 390)})
     r = Runner(ex).run(run, {"command": "Get-ChildItem"})
     assert ex.inputs == ["click 90,390"]
-    assert not r.ok and "shows no prepared tab" in r.failed["reason"]  # type: ignore[index]
+    assert not r.ok and r.failed["code"] == "not_prepared"  # type: ignore[index]
+    assert "brought forward shows no JK<n> state prompt" in r.failed["reason"]  # type: ignore[index]
 
 
 def test_steps_check_their_outcome_and_report_where_they_failed():
@@ -577,6 +580,9 @@ def test_a_row_the_terminal_wrapped_is_joined_to_the_next():
 ALPHABET = ("".join(chr(c) for c in range(33, 80)), "".join(chr(c) for c in range(80, 127)))
 _WRAPPED = re.compile(r"\. \{ (.*) \} 2>&1 \| Out-String -Stream \| jk(?: (\d+))?")
 _PAGE = re.compile(r"\$__jk\.GetRange\((\d+), (\d+)\) \| jk (\d+) -p")
+_FROM = re.compile(
+    r'"total=\$\(\$__jk\.Count\)"; \$__jk \| Select-Object -Skip (\d+) -First (\d+) \| jk (\d+) -p'
+)
 
 
 class Shell(Scripted):
@@ -585,6 +591,8 @@ class Shell(Scripted):
     (unless dropped), Enter runs it (cls clears the rows above), a wrapped command prints
     its output numbered, a page shows part of it again, and the next state prompt follows
     unless the command never finishes; the wheel moves the view a row a notch."""
+
+    height = 10  # rows the view shows
 
     def __init__(
         self, output: list[str], drop: int = 0, finish: bool = True, prepared: bool = True
@@ -613,8 +621,9 @@ class Shell(Scripted):
         # 80 columns: a longer row wraps, as a terminal's does.
         rows = [t[i : i + 80] or t for t in self._all() for i in range(0, max(1, len(t)), 80)]
         end = len(rows) - self.view
-        shown = rows[max(0, end - 10) : end]
-        lines = lines_for([(t, 10, 10 + 38 * i) for i, t in enumerate(shown) if t])
+        shown = rows[max(0, end - self.height) : end]
+        pitch = 380 // self.height
+        lines = lines_for([(t, 10, 10 + pitch * i) for i, t in enumerate(shown) if t])
         return Snapshot(self.fid, (640, 400), lines, "terminal", "shell", None, SCREEN_REGIONS)
 
     def type(self, text: str) -> None:
@@ -655,6 +664,10 @@ class Shell(Scripted):
             elif m := _PAGE.fullmatch(line):
                 a, c, b = (int(x) for x in m.groups())
                 self.rows += [f"{b + i + 1:4d} {t}" for i, t in enumerate(self.kept[a : a + c])]
+            elif m := _FROM.fullmatch(line):
+                a, c, b = (int(x) for x in m.groups())
+                self.rows += [f"total={len(self.kept)}"]
+                self.rows += [f"{b + i + 1:4d} {t}" for i, t in enumerate(self.kept[a : a + c])]
             else:
                 self.rows += [f"? {line}"]
             if self.finish:
@@ -664,7 +677,7 @@ class Shell(Scripted):
 
     def scroll(self, x: int, y: int, ticks: int) -> None:
         super().scroll(x, y, ticks)
-        self.view = max(0, min(self.view + ticks, len(self._all()) - 10))
+        self.view = max(0, min(self.view + ticks, len(self._all()) - self.height))
         self.view = max(0, self.view)
 
 
@@ -819,14 +832,60 @@ def test_a_shell_without_an_empty_prompt_is_not_typed_into():
     assert "scroll -300" in ex.inputs  # brought down once, in case it was scrolled up
 
 
-def test_an_unprepared_tab_is_prepared_first():
+def test_a_tab_is_prepared_only_by_an_explicit_setup():
+    """A run that finds no state prompt must not prepare the tab in front by itself: it may
+    be another program's, such as an agent's, and the setup line would go into its input."""
     ex = Shell(["out"], prepared=False)
-    r = run(ex)
-    assert r.ok and r.output == ["out"] and r.fields["prepared"] is True
+    for name, args in (
+        ("terminal.run", {"command": "Get-Thing"}),
+        ("terminal.read_file", {"path": "a.txt"}),
+        ("terminal.output", {}),
+        ("terminal.edit_once", {"path": "a.txt", "old": "a", "new": "b"}),
+    ):
+        r = Runner(ex).run(actions.builtin()[name], args)
+        assert not r.ok and r.failed["code"] == "not_prepared", name  # type: ignore[index]
+        assert r.failed["reason"].startswith("nothing was sent")  # type: ignore[index]
+    w = Runner(ex).run(actions.builtin()["terminal.write_file"], {"path": "a", "text": "t"})
+    assert not w.ok and w.failed["code"] == "not_prepared"  # type: ignore[index]
+    assert ex.inputs == [] and ex.held == []
+    r = Runner(ex).run(actions.builtin()["terminal.setup"], {})
+    assert r.ok and r.fields["prepared"] is True
     assert ex.inputs[0].startswith("type function prompt") and ex.inputs[1] == "press enter"
     assert "warning" in r.fields  # no glyph learner in this executor
     r = run(ex)
-    assert r.ok and not any("function prompt" in i for i in ex.inputs[4:])
+    assert r.ok and r.output == ["out"] and not any("function prompt" in i for i in ex.inputs[2:])
+
+
+# What Claude Code's TUI shows in a terminal tab (generic text of its own UI).
+TUI = [
+    "Ran 3 shell commands",
+    "* Crunched for 1m 10s · done 15:54",
+    "❯",
+    "auto mode on (shift+tab to cycle) · ← 2 agents",
+]
+
+
+def test_a_tab_running_claude_code_is_no_shell_for_any_terminal_action():
+    for cue in TUI[1:]:
+        assert sh.not_a_shell(["PS C:\\> claude", cue]) is not None, cue
+    # Output above an idle state prompt may say anything.
+    rows = ["   1 auto mode on (shift+tab to cycle)", "JK3 2030-11-05 15:59:00 True 0 C:\\x", "> "]
+    assert sh.not_a_shell(rows) is None and sh.idle(rows) is not None
+    for prepared in (False, True):
+        ex = Shell(["out"], prepared=prepared)
+        ex.rows, ex.running = list(TUI), True
+        for name, args in (
+            ("terminal.run", {"command": "Get-Thing"}),
+            ("terminal.setup", {}),
+            ("terminal.read_file", {"path": "a.txt"}),
+        ):
+            r = Runner(ex).run(actions.builtin()[name], args)
+            assert not r.ok and r.failed["code"] == "not_a_shell", name  # type: ignore[index]
+        assert ex.inputs == []  # nothing typed, not even a scroll to the bottom
+    ex = Shell([], prepared=False)
+    ex.rows, ex.running = ["Running tests...", "   collected 300 items"], True
+    r = Runner(ex).run(actions.builtin()["terminal.setup"], {})
+    assert not r.ok and r.failed["code"] == "no_prompt" and ex.inputs == []  # type: ignore[index]
 
 
 def test_setup_prepares_again_and_learns_the_font():
@@ -1191,3 +1250,127 @@ def test_a_collect_maps_the_merged_messages_by_the_people_map():
         (None, None),
         (None, "22/10 9:10"),
     ]
+
+
+# The terminal's long waits, paging, edits and the user's keys mid-line
+
+
+def test_a_result_says_still_running_or_unknown_by_code():
+    ex = Shell(["one"], finish=False)
+    r = run(ex, timeout_s=2)
+    assert r.failed["code"] == "still_running" and r.fields["state"] == "running"  # type: ignore[index]
+    result = actions.builtin()["terminal.result"]
+    r = Runner(ex).run(result, {"timeout_s": 1200})
+    assert not r.ok and r.failed["code"] == "still_running"  # type: ignore[index]
+    # A long wait looks once a second after its first ten, not ten times a second.
+    assert ex.t >= 1200 and ex.fid < 400
+
+    class Away(Shell):
+        looks = 0
+
+        def read(self) -> Snapshot:
+            self.looks += 1  # the user switches to the browser while it runs
+            snap = super().read()
+            return replace(snap, app="browser", view="page") if self.looks > 2 else snap
+
+    ex = Away(["one"], finish=False)
+    ex.running = True
+    r = Runner(ex).run(result, {"timeout_s": 2})
+    assert not r.ok and r.failed["code"] == "unknown" and r.fields["state"] == "unknown"  # type: ignore[index]
+    ex = Shell(["one"])
+    ex.typed = "gc x"
+    r = Runner(ex).run(result, {"timeout_s": 2})
+    assert r.failed["code"] == "input_pending"  # type: ignore[index]
+    bad = Runner(ex).run(result, {"timeout_s": 1801})
+    assert bad.failed["code"] == "bad_argument"  # type: ignore[index]
+
+
+def test_output_pages_the_last_commands_lines_from_the_shell_not_the_screen():
+    ex = Shell([f"row {i}" for i in range(1, 31)])
+    assert run(ex).ok
+    ran = list(ex.ran)
+    out = actions.builtin()["terminal.output"]
+    r = Runner(ex).run(out, {"first": 3, "count": 12})
+    assert r.ok and r.output == [f"row {i}" for i in range(3, 15)]
+    assert r.fields["total"] == 30 and r.fields["more"] is True and r.fields["last"] == 14
+    assert ex.ran == ran  # nothing ran again: pages of the kept lines
+    r = Runner(ex).run(out, {"first": 25, "count": 100})
+    assert r.ok and r.output == [f"row {i}" for i in range(25, 31)] and r.fields["more"] is False
+    r = Runner(ex).run(out, {"first": 40})
+    assert r.ok and r.output == [] and r.fields["total"] == 30
+
+
+def test_edit_once_replaces_only_a_text_found_once_through_the_clipboard():
+    edit = actions.builtin()["terminal.edit_once"]
+    sha = "ab" * 32
+
+    class Editing(Shell):
+        height = 20  # the command wraps over a dozen 80-column rows
+        prints: list[str] = []
+
+        def command(self, cmd: str) -> list[str]:
+            self.ran.append(cmd)
+            assert self.held and self.held[-1] == sh.edit_payload("a = 1", "a = 2")
+            return self.prints
+
+    ex = Editing([])
+    ex.prints = ["count=1", f"sha256={sha.upper()}"]
+    r = Runner(ex).run(edit, {"path": "C:\\x\\f.py", "old": "a = 1", "new": "a = 2"})
+    assert r.ok and r.fields["count"] == 1 and r.fields["sha256"] == sha
+    assert ex.held == [sh.edit_payload("a = 1", "a = 2"), None]
+    assert ex.ran == [sh.edit_once("C:\\x\\f.py", "a = 1", "a = 2")]
+    assert not any("a = 1" in i for i in ex.inputs)  # neither text typed
+    for prints, code in ((["count=2"], "edit_count"), (["count=0"], "edit_count")):
+        ex = Editing([])
+        ex.prints = prints
+        r = Runner(ex).run(edit, {"path": "f.py", "old": "a = 1", "new": "a = 2"})
+        assert not r.ok and r.failed["code"] == code and "nothing was written" in r.failed["reason"]  # type: ignore[index]
+    ex = Editing([])
+    ex.prints = ["clip=bad"]
+    r = Runner(ex).run(edit, {"path": "f.py", "old": "a = 1", "new": "a = 2"})
+    assert r.failed["code"] == "clipboard_mismatch"  # type: ignore[index]
+    r = Runner(ex).run(edit, {"path": "f.py", "old": "", "new": "x"})
+    assert r.failed["code"] == "bad_argument"  # type: ignore[index]
+    plan = Runner(ex).run(edit, {"path": "f.py", "old": "secret", "new": "x"}, dry_run=True)
+    assert "secret" not in str(plan.plan)
+
+
+def test_a_line_the_users_key_stopped_is_cleared_and_sent_again():
+    from jharokha.core.screen import ScreenError
+
+    class Interrupted(Shell):
+        stops = 1
+
+        def type(self, text: str) -> None:
+            if self.stops:
+                self.stops -= 1
+                self.typed = text[:5]
+                self.inputs.append(f"type {text[:5]}")
+                raise ScreenError("user_active", "someone used this computer", sent=5)
+            super().type(text)
+
+    ex = Interrupted(["out"])
+    r = run(ex)
+    assert r.ok and r.output == ["out"] and "again after the user's key" in r.fields["input"]
+    assert ex.inputs[1] == "press escape"
+    ex = Interrupted(["out"])
+    ex.stops = 2
+    r = run(ex)
+    assert not r.ok and r.failed["code"] == "user_active"  # type: ignore[index]
+    assert ex.inputs[-1] == "press escape" and ex.typed == "" and "press enter" not in ex.inputs
+
+
+def test_a_line_whose_end_wrapped_out_of_sight_is_not_called_lost_keys():
+    class Cut(Shell):
+        def read(self) -> Snapshot:
+            full, self.typed = self.typed, self.typed[:30]
+            try:
+                return super().read()
+            finally:
+                self.typed = full
+
+    r = run(Cut(["x"]))
+    assert not r.ok and r.failed["code"] == "echo_mismatch"  # type: ignore[index]
+    assert "wrapped onto a row below" in r.failed["reason"]  # type: ignore[index]
+    r = run(Shell(["x"], drop=2))
+    assert "Nothing arrived" in r.failed["reason"]  # type: ignore[index]

@@ -323,7 +323,7 @@ class Marked(Shell):
         return Frame(f.width, f.height, f.bgra, self.frame_id, f.ts)
 
 
-async def test_terminal_run_through_do_prepares_the_tab_and_reads_status_and_output():
+async def test_terminal_run_through_do_reads_status_and_output_once_setup_prepared_it():
     shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
     async with Client(build_server(shell, allow_input=True)) as c:
 
@@ -331,6 +331,10 @@ async def test_terminal_run_through_do_prepares_the_tab_and_reads_status_and_out
             args = {"action": "terminal.run", "args": {"command": command}}
             return await c.call_tool("jharokha_do", args)
 
+        r = text(await run("Get-Date"))  # a tab nobody prepared: refused, nothing sent
+        assert '"code": "not_prepared"' in r and not shell.typed
+        r = text(await c.call_tool("jharokha_do", {"action": "terminal.setup"}))
+        assert '"prepared": true' in r
         r = text(await run("Get-Date"))  # under the default allow: no flag for a command
         body = json.loads(r.split('untrusted="true">\n', 1)[1].rsplit("\n</screen_text>", 1)[0])
         assert body["ok"] and body["output"] == ["Friday 18 October"] and body["exit_code"] == 0
@@ -781,9 +785,7 @@ async def test_a_pasted_line_is_traced_not_refused(tmp_path):  # noqa: ANN001
     shell = Marked([("PS C:\\a> dir", 10, 10), ("old.txt", 10, 30), ("PS C:\\a>", 10, 50)])
     trace = Trace(tmp_path / "t.jsonl")
     async with Client(build_server(shell, allow_input=True, trace=trace)) as c:
-        r = await c.call_tool(
-            "jharokha_do", {"action": "terminal.run", "args": {"command": "Get-Date"}}
-        )
+        r = await c.call_tool("jharokha_do", {"action": "terminal.setup"})
         assert not r.is_error and '"prepared": true' in text(r)
     kinds = [
         json.loads(ln)["action"] for ln in (tmp_path / "t.jsonl").read_text("utf-8").splitlines()
