@@ -187,6 +187,16 @@ def held(hwnd: int) -> Iterator[None]:
             _bring_to_front(prev)
 
 
+def release(hwnd: int) -> None:
+    """Inside held(hwnd), the window in front before it gets the foreground back while the
+    action waits; its next input takes the session forward again. A session held in front
+    through a run's wait for its echo takes the user's own keys on this computer: they land
+    after the typed command in the session's shell."""
+    prev = _held.get(hwnd)
+    if prev and prev != hwnd and user32.GetForegroundWindow() == hwnd:
+        _bring_to_front(prev)
+
+
 @contextmanager
 def _active(hwnd: int, x: int | None = None, y: int | None = None) -> Iterator[None]:
     prev = user32.GetForegroundWindow()

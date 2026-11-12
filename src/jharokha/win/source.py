@@ -39,6 +39,13 @@ class WindowsSource:
 
         return input.held(w.hwnd)
 
+    def release(self, w: WindowInfo) -> None:
+        """Between an action's inputs, while it waits: the user's window back in front
+        (win.input.release), so their keys go where they type them."""
+        from jharokha.win import input
+
+        input.release(w.hwnd)
+
     def window(self, window_title: str | None) -> WindowInfo | None:
         found = window.find_window(window_title, self.processes)
         return window.window_info(*found) if found else None

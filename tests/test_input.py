@@ -212,3 +212,67 @@ def test_an_action_holds_the_session_in_front_and_gives_it_back_once(monkeypatch
     # In once for the first scroll, back to the user's window once at the end.
     assert fronts == [SESSION, SESSION, SESSION, OTHER]
     assert state["front"] == OTHER
+
+
+def test_an_action_gives_the_keyboard_back_while_it_waits(monkeypatch):
+    """A session held in front through a run's wait for its echo would take the user's own
+    keys, landing them after the typed command in the session's shell."""
+    from jharokha.win import input
+
+    fronts: list[int] = []
+    state = {"front": OTHER}
+
+    class User32:
+        def GetForegroundWindow(self) -> int:  # noqa: N802
+            return state["front"]
+
+        def GetCursorPos(self, p: object) -> int:  # noqa: N802
+            return 1
+
+        def SetCursorPos(self, x: int, y: int) -> int:  # noqa: N802
+            return 1
+
+    def bring(hwnd: int) -> None:
+        state["front"] = hwnd
+        fronts.append(hwnd)
+
+    monkeypatch.setattr(input, "user32", User32())
+    monkeypatch.setattr(input, "_bring_to_front", bring)
+    monkeypatch.setattr(input.time, "sleep", lambda s: None)
+    input.release(SESSION)  # outside an action: nothing to give back
+    assert fronts == []
+    with input.held(SESSION):
+        with input._active(SESSION):
+            pass
+        input.release(SESSION)
+        assert state["front"] == OTHER
+        input.release(SESSION)  # once is enough
+        with input._active(SESSION):
+            pass
+        assert state["front"] == SESSION
+    assert fronts == [SESSION, OTHER, SESSION, OTHER] and state["front"] == OTHER
+
+
+def test_the_executor_gives_the_window_back_on_its_first_wait_after_an_input(monkeypatch):
+    from jharokha.core import apps
+    from jharokha.core.executor import SessionExecutor
+    from jharokha.core.screen import Screen
+    from jharokha.core.session import Session
+
+    from .conftest import FakeSource
+
+    released: list[str] = []
+
+    class Releasing(FakeSource):
+        def release(self, w) -> None:  # noqa: ANN001
+            released.append(w.title)
+
+    src = Releasing([("hello", 10, 10)])
+    ex = SessionExecutor(Session(Screen(src), apps.load(None)))
+    monkeypatch.setattr("jharokha.core.executor.time.sleep", lambda s: None)
+    ex.wait(0.1)  # nothing sent yet: nothing to give back
+    assert released == []
+    ex.press("escape")
+    ex.wait(0.1)
+    ex.wait(0.1)
+    assert released == [src.title]

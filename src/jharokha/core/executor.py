@@ -31,6 +31,7 @@ class SessionExecutor:
         self._glanced: Snapshot | None = None  # a fast read: Windows OCR's text only
         self.reads = 0  # screens OCR'd and identified
         self.inputs: list[str] = []  # what was sent, in order
+        self._released = True  # the session window given back since the last input
 
     @property
     def front(self) -> str | None:
@@ -137,6 +138,7 @@ class SessionExecutor:
                 self.on_input(kind, fields, e.code)
             raise
         self.inputs.append(f"{kind} {said}")
+        self._released = False
         if self.on_input:
             self.on_input(kind, fields, "sent")
 
@@ -183,6 +185,15 @@ class SessionExecutor:
         return self.session.screen.settle(self.title, box=box)
 
     def wait(self, seconds: float) -> None:
+        """A pause between looks; the first after an input gives this computer's keyboard
+        back to the user's window (Source.release) until the next input takes it."""
+        release = getattr(self.session.screen.source, "release", None)
+        if release is not None and not self._released:
+            self._released = True
+            try:
+                release(self._window())
+            except ScreenError:
+                pass  # no window to give back: the next input says so
         time.sleep(seconds)
 
     def now(self) -> float:
