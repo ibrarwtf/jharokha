@@ -140,7 +140,7 @@ def detect(frame: Frame, lines: list[Line]) -> list[Element]:
         x, y, w, h = ln.box
         e[max(0, y - 3) : y + h + 3, max(0, x - 3) : x + w + 3] = False
     hc, wc = frame.height // CELL, frame.width // CELL
-    c = e[: hc * CELL, : wc * CELL].reshape(hc, CELL, wc, CELL).any(axis=(1, 3))
+    c = np.asarray(e[: hc * CELL, : wc * CELL].reshape(hc, CELL, wc, CELL).any(axis=(1, 3)))
     raw: list[tuple[str, Box]] = []
     for x0, y0, x1, y1, n in _components(c):
         bw, bh = (x1 - x0 + 1) * CELL, (y1 - y0 + 1) * CELL
