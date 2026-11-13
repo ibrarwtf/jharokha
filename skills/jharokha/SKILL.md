@@ -34,7 +34,7 @@ If `jharokha_act` is not listed the server is read-only: `jharokha_do` only show
    - The terminal is PowerShell in a tab jharokha prepares itself (`terminal.setup`: a state prompt with a counter, status and exit code, numbered output, no colours, the font learned from a printed alphabet). `terminal.run` prepares it when the prompt is missing; run `terminal.setup` again after a zoom, font or window size change, or when a read's header says `unknown_cells`.
    - `terminal.run` takes one line of PowerShell, sent bare: no end markers, no `cls`, no wrapping of your own. It is done when the next prompt shows; on a timeout `fields.finished` is false and the command goes on: call `terminal.result {timeout_s}` (again while `finished` stays false) for its output and exit code. Never sleep, wait on a regex, or run it again.
    - For a file in the session use `terminal.write_file` (through the clipboard, SHA-256 checked) and `terminal.read_file` (numbered pages); never type a file's contents into a terminal.
-5. `jharokha_act` only when no action fits: `op="click"` with a `target`, `"type"`/`"paste"` with `text`, `"press"` with `keys`, `"scroll"` with `ticks` (< 0 down). A target is a text to find (`"Inbox"`), a locator (`{"text": "Inbox", "region": "outlook.folders"}`, `{"right_of": "To"}`, `{"region": "teams.list", "nth": 2}`, `{"spot": "taskbar.teams"}`, a point an app's definition names `{"spot": "tickets.refresh"}`), or `[x, y]` from a find. Never estimate coordinates from a screenshot. For type, paste and press the target is clicked first. Send inputs one at a time.
+5. `jharokha_act` only when no action fits: `op="click"` with a `target`, `"type"`/`"paste"` with `text`, `"press"` with `keys`, `"scroll"` with `ticks` (< 0 down). A target is a text to find (`"Inbox"`), a locator (`{"text": "Inbox", "region": "outlook.folders"}`, `{"right_of": "To"}`, `{"region": "teams.list", "nth": 2}`, `{"spot": "taskbar.teams"}`, a point an app's definition names `{"spot": "tickets.refresh"}`), an icon, field or picture without text as `{"element": n}` (`jharokha_read(format="panes")` lists them as `E<n> [box] icon right of "Refresh"` or `toolbar icon 3 of 7`; a target that moved since is refused, read again), or `[x, y]` from a find. Never estimate coordinates from a screenshot. For type, paste and press the target is clicked first. Send inputs one at a time.
    - Its reply says what the input did: `now=app.view` in front (`was=` when that switched), the lines added and removed anywhere on screen, or the new view's text when it switched; "Nothing changed on screen" means the click missed or did not take. That is your check: do not take a screenshot to see whether an input worked or which app is in front. Keep the default `show`; `show="none"` only for a burst of inputs you read once after.
    - Always pass `expect`, the app or `app.view` the input is for (`expect="teams.chat"`).
    - `until` waits after the input: a text (`until="KX7R4C"`), or `{"regex": ..., "timeout_s": 20}`, `{"gone": ...}`, `{"ready": true}`.
@@ -43,6 +43,22 @@ If `jharokha_act` is not listed the server is read-only: `jharokha_do` only show
 6. `jharokha_find` for one thing (`query`, case-insensitive, lookalike-tolerant, or `regex=true`), or a target by where it is (`locator`). `all=true` lists every match.
 7. `jharokha_wait` instead of reading in a loop: `text`, `regex`, `gone`, `ready=true`, or nothing to wait until the screen holds still. At most 30 s a call.
 8. `jharokha_screenshot` only when what you need is a picture: an image, diagram or screenshot someone posted, an icon without text, a colour, or a value where `verify` still disagrees. Not as a first look, not to check an input, not to see which app is in front (`jharokha_status`). When you do take one, say in a word why text was not enough.
+
+## Fewer calls
+
+Each call costs you a turn of several seconds; jharokha's own read takes well under one, so most of a task's time goes to turns between calls. So:
+
+- One `jharokha_do` instead of a chain of acts; one `terminal.run` with read-only commands joined by `;` instead of one each; `terminal.output {first, count}` for long output.
+- After `jharokha_act`, its reply is the check: no `status`, `read` or screenshot after it. Put the wait in the act (`until=`) instead of a `jharokha_wait` after it.
+- `since="last"` instead of reading again; `jharokha_find` when you need one thing, not a screen read.
+- Something that runs for minutes: one `terminal.run` with its `timeout_s`, then `terminal.result {timeout_s}` once with the time it needs. Never `wait` or screenshot in a loop.
+
+## Before input
+
+- `jharokha_status` once: the session window must hold this computer's keyboard focus (`foreground` true; when false, typed text is lost) and no `input_leased` or `user_active`.
+- Terminal: the tab in front shows an `JK<n>` prompt (yours, from `terminal.setup`). A tab where another program or agent runs is never typed into; open a new tab instead.
+- Browser: Enter submits (refused without `allow`). Typed text that does not land in a page's field (the reply says nothing changed) is not retried: say so and ask the user to type it.
+- A shell inside a page (web SSH): `op="type"` with `until={"regex": "<its prompt>"}`; a paste can arrive as a bare Enter.
 
 ## When input is refused
 
