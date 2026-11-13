@@ -182,8 +182,8 @@ def test_teams_holds_with_a_draft_and_pictures():
 
 
 def test_teams_holds_with_its_anchor_misread_and_no_rail_labels():
-    """At 1300 px wide OCR can read the search box as `Search (Ctrl* E)` and no rail label at
-    all; Teams must still score above the input guard's 0.6."""
+    """In a wider window OCR can read the search box as `Search (Ctrl* E)` and no rail label
+    at all; Teams must still score above the input guard's 0.6."""
     w = 1300
     text = [
         ("Q Search (Ctrl* E)", 425, 21),
@@ -231,7 +231,7 @@ def test_a_browser_page_with_a_side_nav_is_not_teams():
 
 def test_session_spots_keep_their_pixels_when_the_window_is_resized():
     """Taskbar icons keep their distance from the left and bottom edges: a fraction measured
-    at 1200 px wide would click 17 px right of the terminal's icon at 1300."""
+    at 1200 px wide would click 15 px right of the terminal's icon at 1300."""
     toml = (
         "format = 1\n[calibration.session]\nsize = [1200, 1200]\n"
         "spots = { 'taskbar.terminal' = [0.15, 0.975] }\n"
@@ -263,7 +263,7 @@ def _taskbar(xs: list[int], size: tuple[int, int] = (1200, 1200)) -> Frame:
 
 def test_a_spot_as_a_slot_is_the_nth_taskbar_icon_wherever_it_moved():
     """More running apps move the pinned icons closer (55 to 40 px apart), so a Teams spot
-    measured as a fraction would click the icon two places right of Teams'."""
+    measured as a fraction would click the icon right of Teams'."""
     from jharokha.core.elements import taskbar_icons
     from jharokha.core.session import Session, Where
 

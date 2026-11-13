@@ -584,7 +584,7 @@ class Catalog:
         icon is a target only while its app is on screen. With the size the session's spots
         were measured at, they are moved to this window size: a taskbar icon keeps its
         distance in pixels from the left and bottom edges and does not grow with the window
-        (from 1200 to 1300 px wide, a fraction lands 17 px right of an icon). Spots are
+        (from 1200 to 1300 px wide, a fraction lands 15 px right of an icon). Spots are
         measured on a taskbar at the bottom; with bar at the top, a spot in the bottom half
         keeps its distance from the top edge instead (otherwise icons drawn 30 px from the
         top get clicked 30 px from the bottom, inside the app). An app's own spots move

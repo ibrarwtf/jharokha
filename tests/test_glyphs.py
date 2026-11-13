@@ -153,7 +153,7 @@ def test_a_bar_cursor_after_the_prompt_is_a_blank_not_a_glyph():
 
 def test_the_cursor_spilling_into_the_cell_above_does_not_change_its_glyph():
     """The bar cursor after `> ` can reach a pixel into the cell above, the `2` of the state
-    row `JK2`; that cell must still match its template, not read the row as `IAA`."""
+    row `JK2`; that cell must still match its template, not read the row as `JKA`."""
     store = learned()
     frame = draw(["JK2 x", "> "])
     px = np.frombuffer(frame.bgra, np.uint8).reshape(H, W, 4).copy()
@@ -210,7 +210,7 @@ def test_refine_puts_a_shifted_grid_back_on_its_cells():
 def test_the_alphabet_is_learned_on_the_whole_pitch_the_screen_fits():
     """The pitch measured from the ink can be 23.5 (or 24) for a 23 px font; the two alphabet
     rows learn fine with it, but the rows below drift off their cells and `;` reads `i`."""
-    below = ["JK7 2030-01-02 03:04:05 True 0 C:\\x", "> cls; . { gc Ana_Alder.txt }"] * 5
+    below = ["JK7 2026-01-02 03:04:05 True 0 C:\\x", "> cls; . { gc Ana_Alder.txt }"] * 5
     frame = draw(ALPHA_ROWS + below)
     for off in (0.5, 1.0, -0.5):
         store = glyphs.learn_fitted(frame, replace(GRID, pitch=PITCH + off), BOX)

@@ -82,7 +82,7 @@ class _Evidence:
             # A focused box's blinking caret sits on a placeholder's first letter, and OCR
             # drops it every other frame (`ype a message`); a long cue holds without it.
             short = q[1:] if len(q) >= CARET_MIN else None
-            # OCR misreads punctuation most (`Search (Ctrl* E)` at 1300 px wide, which loses
+            # OCR misreads punctuation most (`Search (Ctrl* E)` in a wider window, which loses
             # Teams its anchor): a long cue also holds on its letters and digits alone.
             bare = _bare(q) if len(q) >= CARET_MIN else None
             for ln, f in zip(self.lines, self.folded, strict=True):

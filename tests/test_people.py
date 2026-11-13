@@ -144,17 +144,17 @@ def test_a_bare_clock_names_no_day(pm: people.People):
 
 
 def test_a_dated_stamp_names_its_day(pm: people.People):
-    lines = _thread([(130, 80, "Ana Alder 08/10 17:32"), (130, 100, "hello")])
+    lines = _thread([(130, 80, "Ana Alder 03/10 17:32"), (130, 100, "hello")])
     recs = listread.records(listread.items(lines, BOX, "messages"), pm, datetime(2030, 10, 22))
-    assert recs[0]["day"] == "2030-10-08"
+    assert recs[0]["day"] == "2030-10-03"
     assert recs[0]["time"] == "17:32"
 
 
 def test_a_weekday_stamp_is_the_most_recent_one(pm: people.People):
     lines = _thread([(130, 80, "Ana Alder Wednesday 21:40"), (130, 100, "hello")])
-    # The capture day below is a Tuesday: the Wednesday before is the 21st.
+    # The capture day below is a Tuesday: the Wednesday before is the 16th.
     recs = listread.records(listread.items(lines, BOX, "messages"), pm, datetime(2030, 10, 22))
-    assert recs[0]["day"] == "2030-10-21"
+    assert recs[0]["day"] == "2030-10-16"
 
 
 def test_a_message_cut_at_the_top_has_no_who_and_no_time(pm: people.People):

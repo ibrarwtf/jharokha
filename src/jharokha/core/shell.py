@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -148,7 +149,7 @@ def typed(rows: list[str], p: Prompt) -> str | None:
     """What the input row after prompt p holds (its wraps joined, up to the next state
     row), or None when the row is not on screen. An Enter pressed by hand puts a new
     prompt under the one a run waits at, and the run must not take that whole prompt for
-    its own input ("showed 'JK50 2030-01-31 ... > cls; . {'")."""
+    its own input ("showed 'JK50 2026-01-31 ... > cls; . {'")."""
     if p.row + 1 >= len(rows):
         return None
     m = _INPUT.match(rows[p.row + 1])

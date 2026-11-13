@@ -314,7 +314,7 @@ def _read_rows(
                     label[i, col] = ch
             elif len(cols_in) == 1:
                 # One cell the engine could not be lined up with: unreadable, never a
-                # neighbour's letter (`JK2` read as `IAA` loses the counter).
+                # neighbour's letter (`JK2` read as `JKA` loses the counter).
                 label[i, cols_in[0]] = UNREADABLE
             else:
                 # Not one glyph per cell (wide or joined characters): the engine's text,

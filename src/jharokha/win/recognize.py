@@ -37,7 +37,7 @@ class Recognizer:
             # The arena keeps the peak of the widest strip ever read; without it memory
             # goes back after each read.
             opts.enable_cpu_mem_arena = False
-            # Measured on a 4-core CPU: 2 threads read a line as fast as the default 4
+            # On a 4-core CPU, 2 threads read a line as fast as the default 4
             # at half the CPU, and without spinning the threads stop burning ~300 ms of CPU
             # in the second after every read.
             opts.intra_op_num_threads = 2
