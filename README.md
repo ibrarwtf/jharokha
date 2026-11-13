@@ -44,7 +44,7 @@ The same verbs run in a shell, each the tool called in-process: `jharokha status
 
 ## Apps and actions
 
-An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, the taskbar icons as spots so actions can switch apps) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`). So does a people map, `[people.<id>]` and `[chats.<id>]` with the names the screen shows each by: the Teams actions then take an id (`chat = "team"`) and find that chat in the list and header under any of its names, cut short or not. The messages `jharokha_read` and the Teams actions return then also carry `who` (the sender's id), `day` (ISO) and `time` as `HH:MM` (`~HH:MM` when borrowed from the message above).
+An app is data (`src/jharokha/apps/*.toml`): the text and panes it is recognised by, its views, their named regions and how each is read, and its input policy. Built in: Windows Terminal, Teams, Outlook, a browser, Windows' search panel; anything else is `generic`, read by panels. Calibration for your screen (zoom variants, the taskbar icons as spots so actions can switch apps) goes in a git-ignored `apps.toml` (`--apps PATH`; see `apps.example.toml`). So does a people map, `[people.<id>]` and `[chats.<id>]` with the names the screen shows each by: the Teams actions then take an id (`chat = "team"`) and find that chat in the list and header under any of its names, cut short or not. The messages `jharokha_read` and the Teams actions return then also carry `who` (the sender's id), `day` (ISO) and `time` as `HH:MM` (`~HH:MM` when borrowed from the message above).
 
 An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/apps/actions/*.toml`; your own go in `apps.toml`):
 
@@ -55,7 +55,11 @@ An action is a checked sequence of steps run by `jharokha_do` (`src/jharokha/app
 | `outlook.unread {folder}`, `outlook.open {subject}` | A folder's unread mails; one mail's reading pane. |
 | `terminal.run {command}` | A command's output, exit code and status, read up to the shell's next state prompt; long output paged back from the shell. |
 | `terminal.read_file {path, from, count}`, `terminal.write_file {path, text}` | A page of a file's lines, numbered; a file written from this machine's clipboard and checked by its SHA-256, nothing of it typed. |
-| `terminal.setup` | Prepares the PowerShell tab: a prompt that shows the command counter, date, time, status, exit code and directory, no colours or predictions, and the font learned from the alphabet it prints. `terminal.run` does it itself when the prompt is not there. |
+| `terminal.setup` | Prepares the PowerShell tab: a prompt that shows the command counter, date, time, status, exit code and directory, no colours or predictions, and the font learned from the alphabet it prints. Only this action prepares a tab: the others refuse a tab without the prompt (`not_prepared`) or running a program (`not_a_shell`), sending nothing. |
+| `terminal.result {timeout_s}`, `terminal.output {first, count}` | A run that outlived its timeout, waited for up to 1800 s; a page of the last command's output. |
+| `terminal.edit_once {path, old, new}` | Replace text in a file only where it occurs exactly once, through the clipboard. |
+| `teams.new {chat}`, `teams.latest {chat, n}` | What came into a chat since its last check; the newest messages on screen. |
+| `<app>.switch {window}` | Bring an app forward by its taskbar icon; when the icon opens a picker of the app's windows, the one titled like `window`. |
 | `browser.goto`, `browser.click_sequence` | Go to a URL; click buttons in order. |
 
 ## Input safety
@@ -79,7 +83,7 @@ An action does in one call what an agent would otherwise do in many scrolls and 
 ## Limits
 
 - RDP sends no frames to a minimized window; covered is fine.
-- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (`terminal.setup`, which `terminal.run` does itself), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
+- Windows OCR confuses lookalikes (`0`/`O`, `1`/`l`); `verify` re-reads lines with a second engine. A terminal is read by matching its cells against glyphs learned from the screen (`terminal.setup`, once per tab), so it has no lookalike problem; a glyph it has not seen is read by the second engine and counted as unknown.
 - Keep the session window one size: calibration holds at the size and zoom it was measured at. Taskbar spots follow a resize when `[calibration.session]` has the `size` they were measured at.
 - Apps are recognised by their English UI text.
 - Windows only; a port would sit beside `src/jharokha/win/` and reuse `core/`.

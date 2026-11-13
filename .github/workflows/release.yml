@@ -1,0 +1,39 @@
+name: release
+# The version in pyproject.toml is the release: once ci passes on main for a commit whose
+# version has no tag yet, that commit is tagged v<version> and a GitHub release made from
+# its CHANGELOG section. Tags and releases were made by hand before and fell behind the
+# changelog (tags stopped at 0.35.0, releases at 0.25.3).
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Tag and release the version if it is new
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "v$v is tagged already"; exit 0
+          fi
+          python3 - "$v" > notes.md <<'EOF'
+          import re, sys
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"^## v{re.escape(sys.argv[1])}\n(.*?)(?=^## v|\Z)", text, re.S | re.M)
+          print(m.group(1).strip() if m else f"See CHANGELOG.md for v{sys.argv[1]}.")
+          EOF
+          gh release create "v$v" --target "$SHA" --title "v$v" --notes-file notes.md

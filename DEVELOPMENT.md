@@ -17,8 +17,9 @@ outside the repo.
 
 ## Release
 
-By hand: bump `pyproject.toml`, add the CHANGELOG section, commit `vX.Y.Z — summary`, tag
-`vX.Y.Z`, push.
+Bump `pyproject.toml`, add a `## vX.Y.Z` section to CHANGELOG.md, commit, push to `main`.
+Once ci is green, `.github/workflows/release.yml` tags `vX.Y.Z` and makes the GitHub
+release from that section. Do not tag by hand.
 
 ## Secrets
 

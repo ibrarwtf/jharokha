@@ -4,7 +4,7 @@
 # jharokha_read(format="panes") and a screenshot of the taskbar for its spots.
 #
 # Built in (src/jharokha/apps/): terminal (shell), teams (chat), outlook (mail, calendar),
-# browser (page) and generic. Everything below adds to them or replaces them. Positions are
+# browser (page), windows (search) and generic. Everything below adds to them or replaces them. Positions are
 # fractions 0..1 of the client area, so one file fits any window size.
 format = 1
 
