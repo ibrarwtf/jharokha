@@ -232,3 +232,30 @@ def test_snapped_puts_a_grid_on_whole_pixels():
     g = glyphs.snapped(G(48.67, 23.13, 9.78, 12.0, 46, 95))
     assert (g.origin_y, g.pitch, g.origin_x, g.char_w) == (49.0, 23.0, 10.0, 12.0)
     assert glyphs.snapped(G(1.0, 23.5, 1.0, 11.4, 1, 1)).pitch == 23.5  # too far: kept
+
+
+def _profile(tops: list[float], rng: random.Random) -> np.ndarray:
+    """Ink per pixel row of text rows starting at tops: 17 px of ink each, every row's
+    amounts its own (other words), over an empty 6 px gap."""
+    out = np.zeros(int(max(tops)) + 40)
+    for top in tops:
+        for i in range(17):
+            out[round(top) + i] += rng.randrange(40, 200)
+    return out
+
+
+def test_the_pitch_is_the_whole_period_the_rows_fold_onto():
+    """Three to eight rows on screen fit any period near the pitch (20.15, 24 and 25.25 for
+    23), since each puts its boundaries in a gap; folded, only 23 lands the rows on each
+    other."""
+    from jharokha.core import rows
+
+    rng = random.Random(3)
+    for tops in ([0, 23, 46, 115], [0, 46, 92, 138], [23 * k for k in range(40)]):
+        found = rows._whole(_profile([40.0 + t for t in tops], rng), 19, 37)  # noqa: SLF001
+        assert found is not None and found[0] == 23.0
+        assert 17 <= (found[1] - 40) % 23 < 23  # a boundary in the gap under a row
+    # One row, or rows 23.5 apart, fold onto no whole period: left to the gap fit.
+    assert rows._whole(_profile([40.0], rng), 19, 37) is None  # noqa: SLF001
+    half = _profile([40 + 23.5 * k for k in range(30)], rng)
+    assert rows._whole(half, 19, 37) is None  # noqa: SLF001

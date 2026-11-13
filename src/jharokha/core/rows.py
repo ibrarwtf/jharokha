@@ -10,6 +10,7 @@ edge."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ Reader = Callable[[list[Box]], list[str]]
 
 _FIT = 0.1  # how much worse than the best fit a period may be and still be the period
 _RUN = 1.5  # pitches: a vertical run of ink this long is a scrollbar or a border, no glyph
+_CLEAR = 0.95  # the best fold's width against a period a pixel off, for it to stand out
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,12 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
         return None
     if text_h is None:
         text_h = _median_band(across)
-    found = _period(across.astype(np.float64), 0.8 * text_h, 2.5 * text_h, gain=10)
+    # A row's ink, ascender to descender, takes more than half its cell: no period below
+    # the tallest row's ink, none at twice it (rows with a blank line between each).
+    band = _median_band(across)
+    found = _whole(across, band, 2 * band - 1) or _period(
+        across.astype(np.float64), 0.8 * text_h, 2.5 * text_h, gain=10
+    )
     if found is None:
         return None
     pitch, phase_y = found
@@ -122,7 +129,9 @@ def calibrate(frame: Frame, lines: Sequence[Line], box: Box) -> Grid | None:
     down = _drop_runs(text, axis=1, longest=int(4 * hi) + 1).sum(axis=0)
     if not down.any():
         return None
-    found = _period(down.astype(np.float64), lo, hi)
+    # A monospace cell is about half as wide as its row's ink is tall; OCR's word widths
+    # (halved by a word it read as twice its letters) only bound the fallback.
+    found = _whole(down, 0.45 * band, 0.85 * band) or _period(down.astype(np.float64), lo, hi)
     if found is None:
         return None
     char_w, phase_x = found
@@ -163,6 +172,45 @@ def bounded(grid: Grid, frame: Frame, box: Box) -> Grid:
     edge = bx + _edge(ink & ~edges, edges, bw)
     cols = int((edge - grid.origin_x) / grid.char_w + 0.25)
     return replace(grid, cols=cols) if 0 < cols < grid.cols else grid
+
+
+def _whole(profile: np.ndarray, lo: float, hi: float) -> tuple[float, float] | None:
+    """The whole period in lo..hi the profile repeats at, and the offset of a boundary, or
+    None when no whole period stands out.
+
+    A terminal draws its cells a whole number of pixels apart, so the profile folded at
+    the period (every pixel added to its place within the cell) piles each row's ink on
+    the same few places, and at any other period smears it across the cell. How piled up
+    a fold is is the comb of the profile's autocorrelation at that period, here as the
+    share of the cell the ink takes up. That uses every row and no gap between them, so
+    it holds on two rows, where any period near the pitch puts boundaries in gaps. When
+    the best fold is hardly sharper than the next, or the ink fills the cell (a pitch that
+    is no whole number, one row), the period is not measurable this way."""
+    nz = np.flatnonzero(profile)
+    if not len(nz):
+        return None
+    first = int(nz[0])
+    prof = profile[first : int(nz[-1]) + 1].astype(np.float64)
+    total = float(prof.sum())
+    at = np.arange(len(prof))
+    first_p, last_p = max(3, math.ceil(lo)), min(int(hi), len(prof) - 1)
+    if last_p <= first_p:
+        return None
+    # How many pixels of the cell the folded ink takes up, the neighbours of the range too.
+    folds = {
+        p: np.bincount(at % p, weights=prof, minlength=p) for p in range(first_p - 1, last_p + 2)
+    }
+    width = {p: total * total / float((f * f).sum()) for p, f in folds.items()}
+    best = min(range(first_p, last_p + 1), key=lambda p: width[p] / p)
+    # A pixel off, the rows no longer land on each other and the fold widens; when it
+    # does not, the rows on screen are too few or too unlike to say.
+    if width[best] > _CLEAR * min(width[best - 1], width[best + 1]):
+        return None
+    f = folds[best]
+    # The boundary is the middle of the emptiest quarter of the cell.
+    k = max(1, best // 4)
+    win = np.convolve(np.concatenate([f, f[:k]]), np.ones(k), "valid")[:best]
+    return float(best), float((first + int(np.argmin(win)) + k / 2) % best)
 
 
 def _period(
