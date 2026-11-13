@@ -1,5 +1,5 @@
 # Windows' own panels over the session's apps: the search panel the taskbar's search box
-# opens. Measured on a maximised session window with the taskbar at the top: a panel from
+# opens. Measured at 1200x1200 with the taskbar at the top: a panel from
 # x=16 to 984 under the bar, its headings at the left. A click on the search box can open
 # nothing; an agent that takes it for the open panel types into the app in front instead.
 # With the panel a view of its own, `now=windows.search` says it is open, and

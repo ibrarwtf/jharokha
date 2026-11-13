@@ -152,7 +152,7 @@ def test_a_dated_stamp_names_its_day(pm: people.People):
 
 def test_a_weekday_stamp_is_the_most_recent_one(pm: people.People):
     lines = _thread([(130, 80, "Ana Alder Wednesday 21:40"), (130, 100, "hello")])
-    # 2030-10-27 is a Tuesday: the Wednesday before is the 21st.
+    # The capture day below is a Tuesday: the Wednesday before is the 21st.
     recs = listread.records(listread.items(lines, BOX, "messages"), pm, datetime(2030, 10, 22))
     assert recs[0]["day"] == "2030-10-21"
 

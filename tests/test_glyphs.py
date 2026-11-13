@@ -153,7 +153,7 @@ def test_a_bar_cursor_after_the_prompt_is_a_blank_not_a_glyph():
 
 def test_the_cursor_spilling_into_the_cell_above_does_not_change_its_glyph():
     """The bar cursor after `> ` can reach a pixel into the cell above, the `2` of the state
-    row `JK2`; that cell must still match its template, not read the row as `JKA`."""
+    row `JK2`; that cell must still match its template, not read the row as `IAA`."""
     store = learned()
     frame = draw(["JK2 x", "> "])
     px = np.frombuffer(frame.bgra, np.uint8).reshape(H, W, 4).copy()

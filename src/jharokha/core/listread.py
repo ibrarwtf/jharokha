@@ -44,7 +44,7 @@ Grouping rules, all of them:
   on a name, title or subtitle is cut off and the item marked truncated.
 
 Numeric dates are day first (dd/mm), as most locales outside the US print them; month
-names are read either way round (`21 March`, `Mar 21`)."""
+names are read either way round (`21 March`, `Oct 16`)."""
 
 from __future__ import annotations
 

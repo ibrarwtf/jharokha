@@ -25,7 +25,7 @@ weight = 3
 
 # A prompt at the start of a line: PowerShell's, cmd's, user@host:path$ (OCR may space the
 # colon, drop a drive letter or read ~ as N), or the state row of a tab core.shell prepared
-# (`JK12 2030-01-31 18:17:42 True 0 ..\dir`; any two-letter marker, see JHAROKHA_MARK).
+# (`JK12 2026-01-31 18:17:42 True 0 ..\dir`).
 [[app.terminal.cue]]
 regex = '\b(bash|pwsh)\b|^(PS [A-Za-z] ?:|[A-Za-z]? ?: ?\\[^>]*>|[\w.-]+@[\w.-]+ ?:.*[$#]\s*$|[A-Z1l]{2}\d+ ?\d{4}-\d\d-\d\d ?\d\d:\d\d:\d\d)'
 weight = 3
