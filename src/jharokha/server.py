@@ -583,7 +583,46 @@ def build_server(
             out.append("session: " + "; ".join(sess))
         if here := session.spots(at, ident.app):
             out.append("spots: " + "; ".join(f"{k} {_nums(p[:2])}" for k, p in here.items()))
+        els = session.elements(at)
+        session.listed = dict(enumerate(els, 1))
+        if els:
+            rows = [
+                f"E{n} {_nums(e.box)} {e.kind} " + ", ".join(t for t in (e.row, e.hint) if t)
+                for n, e in session.listed.items()
+            ]
+            out.append('elements without text (target {"element": n}):')
+            out.append(wrap_untrusted("\n".join(r.rstrip() for r in rows)))
         return "\n".join(out)
+
+    def element_hit(title: str | None, loc_t: dict[str, Any]) -> tuple[Frame, list[Hit] | Miss]:
+        """{"element": n}: E<n> as read(format='panes') last listed it, if it is still there.
+        Matched by its kind and box, not its number: a screen that changed since the read
+        must not turn a click on one icon into a click on another."""
+        n = loc_t.get("element")
+        if set(loc_t) != {"element"} or not isinstance(n, int) or isinstance(n, bool):
+            raise ScreenError(
+                "bad_argument",
+                "locator element is a number E<n> from read(format='panes'), on its own",
+            )
+        frame, _, at = whole(title)
+        was = session.listed.get(n)
+        if was is None:
+            return frame, Miss(f"no element E{n} listed: read(format='panes') first")
+        now = next(
+            (
+                e
+                for e in session.elements(at)
+                if e.kind == was.kind
+                and all(abs(a - b) <= 6 for a, b in zip(e.box, was.box, strict=True))
+            ),
+            None,
+        )
+        if now is None:
+            return frame, Miss(
+                f"E{n} ({was.kind} at {_nums(was.box)}) is not there any more: the screen "
+                "changed since it was listed; read(format='panes') again"
+            )
+        return frame, [Hit(now.box, now.center, f"element E{n} {now.kind}")]
 
     def jharokha_status() -> str:
         """Call this first. Is there a remote-desktop window and can it be read (state:
@@ -800,7 +839,8 @@ def build_server(
         people map in apps.toml also who and day, and time as HH:MM}, mails and entries
         {title, subtitle, time, text}, a table {header, rows}, a form {label, value}), detailed
         (lines as JSON with word boxes and lookalike flags), panes (how the screen is divided
-        now: panels, the view's regions with boxes, spots).
+        now: panels, the view's regions with boxes, spots, and the icons, fields and pictures
+        without text as E<n>, each a target {"element": n} for act and find).
         since: 'last' gives only what changed since your last read of the same region (lines
         + added, - removed; or new items); a time such as '21/03 11:40', 'Yesterday' or
         '09:15' keeps a list's items from then on. verify: flagged (lines with digits or
@@ -873,6 +913,8 @@ def build_server(
         title: str | None, loc_t: dict[str, Any], region: Region, all_: bool
     ) -> tuple[Frame, list[Hit] | Miss]:
         """What a locator points at now: one hit, or every one with all_."""
+        if "element" in loc_t:
+            return element_hit(title, loc_t)
         try:
             loc = parse_locator(loc_t)
         except ValueError as e:
@@ -903,7 +945,8 @@ def build_server(
         returns every match. region as in jharokha_read. locator names a target by where
         it is, for things without text: {"right_of": "To"} (the field beside a label;
         left_of, below, above too), {"region": "teams.list", "nth": 2} (a list's second
-        item), {"spot": "taskbar.teams"} (a point named in apps.toml). verify as in
+        item), {"spot": "taskbar.teams"} (a point named in apps.toml), {"element": 4} (an icon
+        or field read format='panes' listed as E4). verify as in
         jharokha_read: a regex for an ID then matches what the second engine read."""
         loc_t = dict(locator or {})
         if not loc_t:

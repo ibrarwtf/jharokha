@@ -24,6 +24,8 @@ from jharokha.core.watch import changed_bbox
 
 if TYPE_CHECKING:
     import numpy as np
+
+    from jharokha.core.elements import Element
 else:
     np = LazyNumpy(globals())
 
@@ -97,6 +99,20 @@ class Session:
         self.unknown = 0
         self.glyphs: int | None = None
         self._dark: dict[bytes, str] = {}  # second readings of light-on-dark lines
+        # The elements of the last frame they were found on (by its pixels), and those a
+        # read last listed as E<n>, which an {"element": n} target is checked against.
+        self._elements: tuple[bytes, list[Element]] | None = None
+        self.listed: dict[int, Element] = {}
+
+    def elements(self, at: Where) -> list[Element]:
+        """Icons, fields and pictures on the frame (core.elements), found once per pixels."""
+        f = at.frame
+        key = hashlib.blake2b(f.bgra, digest_size=16).digest()
+        if self._elements is None or self._elements[0] != key:
+            from jharokha.core.elements import detect  # numpy: the server starts without it
+
+            self._elements = (key, detect(f, at.lines))
+        return self._elements[1]
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
         """The app and view on a frame, from the whole screen's lines. The screen's cache

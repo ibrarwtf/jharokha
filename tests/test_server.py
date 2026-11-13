@@ -867,3 +867,31 @@ async def test_an_unexpected_failure_inside_a_tool_carries_a_code(source, monkey
         r = await c.call_tool("jharokha_read", {"region": "screen"})
         assert r.is_error and text(r).startswith("internal_error: jharokha_read failed")
         assert "ZeroDivisionError" in text(r)
+
+
+async def test_icons_are_listed_and_clicked_as_elements_while_they_stay(source):
+    from PIL import Image, ImageDraw
+
+    plain = source.frame
+    at = {"xy": (400, 150)}
+
+    def with_icon(w: Any) -> Frame:
+        f = plain(w)
+        img = Image.frombuffer("RGBA", (f.width, f.height), f.bgra, "raw", "BGRA", 0, 1).copy()
+        x, y = at["xy"]
+        ImageDraw.Draw(img).ellipse((x, y, x + 24, y + 24), outline="black", width=2)
+        return Frame(f.width, f.height, img.tobytes("raw", "BGRA"), f.frame_id, f.ts)
+
+    source.frame = with_icon  # type: ignore[method-assign]
+    async with Client(build_server(source, allow_input=True)) as c:
+        r = await c.call_tool("jharokha_act", {"op": "click", "target": {"element": 1}})
+        assert r.is_error and "read(format='panes') first" in text(r)
+        r = await c.call_tool("jharokha_read", {"format": "panes"})
+        listed = re.search(r"E(\d+) \[(\d+),(\d+),\d+,\d+\] icon", text(r))
+        assert listed and abs(int(listed[2]) - 400) <= 8 and abs(int(listed[3]) - 150) <= 8
+        n = int(listed[1])
+        r = await c.call_tool("jharokha_act", {"op": "click", "target": {"element": n}})
+        assert not r.is_error and f"element E{n} icon" in text(r)
+        at["xy"] = (500, 300)  # the screen changed: E<n> is not clicked somewhere else
+        r = await c.call_tool("jharokha_act", {"op": "click", "target": {"element": n}})
+        assert r.is_error and "not there any more" in text(r)
