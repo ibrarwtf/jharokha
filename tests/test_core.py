@@ -298,3 +298,28 @@ def test_changes_drop_rereads_and_keep_real_changes() -> None:
     added, removed = changes(old, new)
     assert [a.text for _, a in added] == ["4 unread"]
     assert [r.text for r in removed] == ["3 unread"]
+
+
+def test_light_on_dark_lines_take_the_second_reading_once() -> None:
+    from PIL import Image
+
+    from jharokha.core import apps
+    from jharokha.core.session import Session
+
+    img = Image.new("RGBA", (200, 60), (255, 255, 255, 255))
+    img.paste((20, 20, 20, 255), (0, 30, 200, 60))  # a dark band: a web terminal
+    f = Frame(200, 60, img.tobytes("raw", "BGRA"), 1, 0.0)
+    calls: list[list[int]] = []
+
+    class Screen:
+        def verify(self, frame: Frame, lines: list[Line], which: list[int]) -> dict[int, str]:
+            calls.append(which)
+            return dict.fromkeys(which, "2030-01-02 12345")
+
+    s = Session(Screen(), apps.load(None))  # type: ignore[arg-type]
+    lines = [Line("light", (5, 5, 50, 12), ()), Line("2938-81-82 IZ3US", (5, 40, 150, 12), ())]
+    got = s._light_on_dark(f, lines, [])  # pyright: ignore[reportPrivateUsage]
+    assert [ln.text for ln in got] == ["light", "2030-01-02 12345"] and calls == [[1]]
+    s._light_on_dark(f, lines, [])  # pyright: ignore[reportPrivateUsage]
+    assert calls == [[1]]  # the same pixels are not read again
+    assert s._light_on_dark(f, lines, [(0, 30, 200, 30)])[1].text == "2938-81-82 IZ3US"  # pyright: ignore[reportPrivateUsage]

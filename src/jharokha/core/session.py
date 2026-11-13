@@ -5,22 +5,39 @@ read a screen the same way."""
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jharokha.core import apps, glyphs, rows, taskbar
 from jharokha.core.apps import SESSION, Catalog
 from jharokha.core.capture import Capture
 from jharokha.core.identify import Identity, identify
+from jharokha.core.lazy import LazyNumpy
 from jharokha.core.locate import RegionInfo, Spot, spot_px
 from jharokha.core.models import Box, Frame, Line, inside, iou
 from jharokha.core.panes import background, panes
-from jharokha.core.screen import Screen, ScreenError
+from jharokha.core.screen import MAX_VERIFY, Screen, ScreenError
 from jharokha.core.taskbar import Bar
-from jharokha.core.text import grid
+from jharokha.core.text import apply_verified, grid
 from jharokha.core.watch import changed_bbox
 
+if TYPE_CHECKING:
+    import numpy as np
+else:
+    np = LazyNumpy(globals())
+
 TASKBAR = f"{SESSION}.taskbar"
+DARK_GREY = 80  # a line whose box's median grey is below this is light text on dark
+DARK_KEPT = 4000  # second readings kept by pixels before the memo starts over
+DARK_MAX = 80  # dark lines read again per read: a page of web-terminal output, ~4 s
+
+
+def _patch(f: Frame, box: Box) -> np.ndarray | None:
+    x, y, w, h = box
+    a = np.frombuffer(f.bgra, np.uint8).reshape(f.height, f.width, 4)
+    p = a[max(0, y) : y + h, max(0, x) : x + w, :3]
+    return p if p.size else None
 
 
 class Where:
@@ -79,6 +96,7 @@ class Session:
         # it read (None: it read no terminal grid).
         self.unknown = 0
         self.glyphs: int | None = None
+        self._dark: dict[bytes, str] = {}  # second readings of light-on-dark lines
 
     def where(self, frame: Frame, lines: list[Line]) -> Where:
         """The app and view on a frame, from the whole screen's lines. The screen's cache
@@ -209,8 +227,11 @@ class Session:
         self.unknown, self.glyphs = 0, None
         if ident.app is None or ident.view is None:
             return lines
+        grids: list[Box] = []
         for name in self.catalog.apps[ident.app].views[ident.view].grids:
             placed = self.place(at, ident.app, ident.view, name)
+            if placed:
+                grids.append(placed[0])
             if placed and (region is None or iou(placed[0], region) > 0):
                 g = self.catalog.grid(
                     ident.app, ident.view, name, ident.found, f.width, f.height, self.bar(at)
@@ -222,7 +243,46 @@ class Session:
                     lines = grid(lines, placed[0], g.pitch, g.char_width, g.origin)
                 else:
                     lines = _swap(lines, placed[0], region, got)
-        return lines
+        return self._light_on_dark(f, lines, grids)
+
+    def _light_on_dark(self, f: Frame, lines: list[Line], grids: list[Box]) -> list[Line]:
+        """Lines of light text on a dark background (a web terminal, a selected field, a
+        dark page), outside the grids, take the second engine's reading. On a web SSH shell
+        in a browser, Windows OCR reads few dates, times, IPs and ports right (a 2 for each
+        0 of a date, "UUUUS" for a port) and the second engine most of them. Readings are
+        kept by the line's pixels, so unchanged text is read once."""
+        todo: list[int] = []
+        alt: dict[int, str] = {}
+        keys: dict[int, bytes] = {}
+        for i, ln in enumerate(lines):
+            x, y, w, h = ln.box
+            cx, cy = x + w // 2, y + h // 2
+            if any(gx <= cx < gx + gw and gy <= cy < gy + gh for gx, gy, gw, gh in grids):
+                continue
+            patch = _patch(f, ln.box)
+            if patch is None or float(np.median(patch.mean(axis=2))) >= DARK_GREY:
+                continue
+            key = hashlib.blake2b(patch.tobytes(), digest_size=16, person=b"dark").digest()
+            keys[i] = key
+            if key in self._dark:
+                alt[i] = self._dark[key]
+            else:
+                todo.append(i)
+        got: dict[int, str] = {}
+        # screen.verify reads at most MAX_VERIFY lines a call; a web terminal's page of
+        # output is more, and a first read that fixed half of it was half wrong.
+        for start in range(0, min(len(todo), DARK_MAX), MAX_VERIFY):
+            try:
+                got |= self.screen.verify(f, lines, todo[start : start + MAX_VERIFY])
+            except ScreenError:
+                break  # no second engine: Windows OCR's reading stands
+        if got:
+            for i, t in got.items():
+                if len(self._dark) >= DARK_KEPT:
+                    self._dark.clear()
+                self._dark[keys[i]] = t
+                alt[i] = t
+        return apply_verified(lines, alt) if alt else lines
 
     def _grid(self, at: Where, name: str, box: Box, cal: apps.Grid) -> rows.Grid | None:
         """The grid of region name on this frame: the one the glyphs were learned on while
