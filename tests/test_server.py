@@ -159,6 +159,7 @@ async def test_act_is_opt_in_one_tool_for_every_input(source):
         assert "L0 [10,-10] Build succeeded" in text(r)
         r = await c.call_tool("jharokha_act", {"op": "scroll", "ticks": 1})
         assert "(no text changed)" in text(r)  # lines moved, none appeared
+        assert "Nothing changed on screen" in text(r)
         r = await c.call_tool("jharokha_act", {"op": "scroll", "target": [9999, 0]})
         assert r.is_error and text(r).startswith("region_out_of_bounds")
         r = await c.call_tool("jharokha_act", {"op": "click"})
@@ -168,8 +169,9 @@ async def test_act_is_opt_in_one_tool_for_every_input(source):
 async def test_input_returns_what_changed_after_the_screen_settles(source):
     async with Client(build_server(source, allow_input=True)) as c:
         r = await c.call_tool("jharokha_act", {"op": "type", "text": "hello"})
-        assert "settled_ms=" in text(r) and "changed:" in text(r)
+        assert "settled_ms=" in text(r) and "changed:" in text(r) and " now=" in text(r)
         assert "+ L3 [10,230] typed hello" in text(r)
+        assert "Nothing changed" not in text(r) and " was=" not in text(r)
         assert "Build succeeded" not in text(r)
         r = await c.call_tool("jharokha_act", {"op": "press", "keys": "enter", "show": "none"})
         assert text(r).startswith("op=press settled_ms=") and "screen_text" not in text(r)

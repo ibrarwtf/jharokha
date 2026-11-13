@@ -64,6 +64,66 @@ def format_diff(old: list[Line], new: list[Line]) -> str:
     return wrap_untrusted("\n".join(out) or "(no text changed)")
 
 
+ROW_PX = 6  # lines this close vertically sit on one row
+
+
+def _reread(a: str, b: str) -> bool:
+    """The same text read twice: equal but for case, spaces and punctuation, or with one
+    character cut at an edge. A changed digit or word is a change ("3 unread", "4 unread")."""
+    if a == b:
+        return True
+    short, long = sorted((a, b), key=len)
+    return len(long) - len(short) == 1 and (long.startswith(short) or long.endswith(short))
+
+
+def _rows(lines: list[tuple[int, Line]]) -> dict[int, list[tuple[int, Line]]]:
+    rows: dict[int, list[tuple[int, Line]]] = {}
+    for i, ln in lines:
+        key = next((y for y in rows if abs(y - ln.box[1]) <= ROW_PX), ln.box[1])
+        rows.setdefault(key, []).append((i, ln))
+    return rows
+
+
+def _joined(row: list[tuple[int, Line]]) -> str:
+    text = "".join(ln.text for _, ln in sorted(row, key=lambda t: t[1].box[0]))
+    return "".join(c for c in text.lower() if c.isalnum())
+
+
+def changes(old: list[Line], new: list[Line]) -> tuple[list[tuple[int, Line]], list[Line]]:
+    """diff_lines without re-reads: the added lines (with their index in new) and the removed
+    ones, minus each row whose text before and after is the same read twice. The same pixels
+    read twice can give "Name.. +2" then "Name." and "+2", or lose a first letter, and an
+    input's reply full of those hides what the input did."""
+    sm = difflib.SequenceMatcher(None, [ln.text for ln in old], [ln.text for ln in new])
+    added: list[tuple[int, Line]] = []
+    removed: list[tuple[int, Line]] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag in ("replace", "delete"):
+            removed.extend((i, old[i]) for i in range(i1, i2))
+        if tag in ("replace", "insert"):
+            added.extend((j, new[j]) for j in range(j1, j2))
+    arows, rrows = _rows(added), _rows(removed)
+    same: set[int] = set()
+    for ay, arow in arows.items():
+        for ry, rrow in rrows.items():
+            if abs(ay - ry) > ROW_PX:
+                continue
+            a, r = _joined(arow), _joined(rrow)
+            if _reread(a, r):
+                same.update(id(ln) for _, ln in arow + rrow)
+    return (
+        [(j, ln) for j, ln in added if id(ln) not in same],
+        [ln for _, ln in removed if id(ln) not in same],
+    )
+
+
+def format_changes(added: list[tuple[int, Line]], removed: list[Line]) -> str:
+    """changes() as format_diff shows a diff: `- [x,y] text`, then `+ L<n> [x,y] text`."""
+    out = [f"- [{ln.box[0]},{ln.box[1]}] {clean(ln.text)}" for ln in removed]
+    out += [f"+ L{j} [{ln.box[0]},{ln.box[1]}] {clean(ln.text)}" for j, ln in added]
+    return wrap_untrusted("\n".join(out) or "(no text changed)")
+
+
 def changed_bbox(old: Frame | None, new: Frame) -> Box | None:
     """Where the pixels differ, or None when the frames are the same for our purposes."""
     if old is None or (old.width, old.height) != (new.width, new.height):

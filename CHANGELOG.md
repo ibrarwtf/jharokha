@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- act's reply answers "what did the input do" without a screenshot. Before, the reply diffed only the focus region, which could hide the change (a menu, a dialog, another pane) and say "(no text changed)" where the screen had changed, so callers took screenshots instead. Now `show="changed"` heads with `now=app.view` (and `was=` when it switched), diffs the whole screen, gives the new view's focus text (at most 40 lines) when the view switched or most of it changed, and says "Nothing changed on screen" when nothing did. Lines read twice differently (case, punctuation, a letter cut at an edge) no longer count as changes (`watch.changes`); a changed digit or word still does.
+- Skill: act's reply is the check after an input; a screenshot only when what is needed is a picture.
+
 ## v0.36.0
 
 - Terminal: only a tab jharokha prepared takes input. run, read_file, write_file, output and edit_once refuse (nothing sent) when no `JK<n>` state prompt is on screen (`not_prepared`): a run used to prepare whatever tab it found, even one running another program, and paste the setup line into it. terminal.setup is the only way a tab gets prepared, and every terminal action refuses a tab showing Claude Code's TUI (`not_a_shell`) or, for setup, no prompt waiting (`no_prompt`). `shell.typed` stops at the next state row.

@@ -284,3 +284,17 @@ def test_grid_takes_calibrated_pitch_width_and_origin():
     ]
     out = text.grid(lines, (0, 0, 200, 100), pitch=20, char_width=10, origin=(10, 2))
     assert [ln.text for ln in out] == ["ab", "   cd"]
+
+
+def test_changes_drop_rereads_and_keep_real_changes() -> None:
+    from jharokha.core.watch import changes
+
+    def ln(t: str, x: int, y: int) -> Line:
+        return Line(t, (x, y, 10 * len(t), 12), (Word(t, (x, y, 10 * len(t), 12)),))
+
+    old = [ln("Alex.. +2", 449, 84), ln("Type a message", 516, 1114), ln("3 unread", 10, 40)]
+    new = [ln("Alex.", 449, 84), ln("+2", 524, 84), ln("ype a message", 525, 1118)]
+    new.append(ln("4 unread", 10, 40))
+    added, removed = changes(old, new)
+    assert [a.text for _, a in added] == ["4 unread"]
+    assert [r.text for r in removed] == ["3 unread"]
