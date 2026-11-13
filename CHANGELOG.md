@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.38.0
 
 - `<app>.switch {window}` (outlook, teams, browser, terminal) and every action's switch step: an app with several windows answers its taskbar icon with a picker of their titles, which no click on the icon or Esc closes while the pointer rests there; the switch reads the titles that appear in the band past the bar around the icon and clicks the one holding `window`, else the first (titles OCR read as one line are cut at the gap between them). An app with two windows never came forward before. Titles already showing count only when every one ends in the picker's ellipsis, so text of the app's own is never clicked.
 - Windows' search panel is a view, `windows.search` (its "Top apps" or "Best match" heading where the panel puts it): `now=` says when it is open, typing with `expect="windows.search"` is refused when it is not (so a click that opened nothing is not followed by typing into the app in front), and Enter there, which opens the highlighted result, needs `allow="irreversible"`. Identification is otherwise unchanged.
