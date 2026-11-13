@@ -36,7 +36,7 @@ TEAMS_TEXT = [
 
 def test_builtins_load_and_name_generic_anchors_only():
     cat = apps.catalog()
-    assert set(cat.apps) == {"browser", "generic", "outlook", "teams", "terminal"}
+    assert set(cat.apps) == {"browser", "generic", "outlook", "teams", "terminal", "windows"}
     assert list(cat.apps["outlook"].views) == ["mail", "calendar"]
     assert cat.apps["teams"].views["chat"].focus == "thread"
     assert cat.apps["terminal"].views["shell"].grids == ["body"]

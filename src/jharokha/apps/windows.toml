@@ -1,0 +1,24 @@
+# Windows' own panels over the session's apps: the search panel the taskbar's search box
+# opens. Measured on a maximised session window with the taskbar at the top: a panel from
+# x=16 to 984 under the bar, its headings at the left. A click on the search box can open
+# nothing; an agent that takes it for the open panel types into the app in front instead.
+# With the panel a view of its own, `now=windows.search` says it is open, and
+# expect="windows.search" refuses typing when it is not.
+format = 1
+
+[app.windows]
+name = "Windows search"
+
+# Empty, the panel heads its first row "Top apps"; with a query, "Best match": at its left,
+# under the search field. Words such as Apps, Recent or Web alone are on many screens: as
+# cues they would take those screens for the panel.
+[[app.windows.cue]]
+text = ["Top apps", "Best match"]
+at = [0.072, 0.194]
+weight = 3
+
+# Enter opens the highlighted result: it starts an app, a document or a web search.
+[app.windows.policy]
+irreversible_keys = ["enter"]
+
+[app.windows.view.search]
