@@ -30,6 +30,10 @@ def test_builtin_actions_parse():
     acts = actions.builtin()
     assert set(acts) == {
         "terminal.run",
+        "terminal.switch",
+        "teams.switch",
+        "outlook.switch",
+        "browser.switch",
         "terminal.setup",
         "terminal.result",
         "terminal.read_file",
@@ -1374,3 +1378,35 @@ def test_a_line_whose_end_wrapped_out_of_sight_is_not_called_lost_keys():
     assert "wrapped onto a row below" in r.failed["reason"]  # type: ignore[index]
     r = run(Shell(["x"], drop=2))
     assert "Nothing arrived" in r.failed["reason"]  # type: ignore[index]
+
+
+def test_a_taskbar_window_picker_gives_its_titles_and_only_them() -> None:
+    from jharokha.core.models import Line, Word
+
+    def ln(*words: tuple[str, int]) -> Line:
+        ws = tuple(Word(t, (x, 96, 7 * len(t), 14)) for t, x in words)
+        x0 = ws[0].box[0]
+        return Line(
+            " ".join(w.text for w in ws), (x0, 96, ws[-1].box[0] + ws[-1].box[2] - x0, 14), ws
+        )
+
+    def snap(*lines: Line) -> Snapshot:
+        return Snapshot(1, (1200, 1200), list(lines), "teams", "chat")
+
+    icon = (426, 30)
+    header = ln(("Ana", 600), ("Alder", 640))  # the app's own text in the band
+    a, b = ln(("Calendar", 305), ("-", 366), ("l...", 377)), ln(("Weekly", 467), ("notes...", 514))
+    # a picker the click opened: its titles are new
+    assert [t.text for t in actions.picked(snap(header), snap(header, a, b), icon)] == [
+        a.text,
+        b.text,
+    ]
+    # left open under the pointer: old lines count when named, or all cut with an ellipsis
+    assert not actions.picked(snap(header, a, b), snap(header, a, b), icon)  # one not cut
+    assert not actions.picked(snap(header), snap(header), icon)  # never the app's text
+    assert not actions.picked(snap(header), snap(header), icon)
+    # two titles OCR read as one line over a dark terminal are two targets
+    joined = ln(("Team-report...", 195), ("TKT0001234...", 357))
+    got = actions.picked(snap(), snap(joined), (317, 30))
+    assert [t.text for t in got] == ["Team-report...", "TKT0001234..."]
+    assert got[1].box[0] == 357

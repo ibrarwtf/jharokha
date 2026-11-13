@@ -177,3 +177,13 @@ newline = "shift+enter"
 # A long draft grows the compose box up over the thread, past the compose region's box:
 # its end is looked for anywhere on screen.
 expect = { text = "{text}" }
+
+[action.teams.switch]
+summary = """Bring Teams forward by its taskbar icon. When it has several windows the icon
+opens a picker of their titles: the one titled like window opens, else the first."""
+args.window = { type = "text", max_len = 200, default = "", doc = "part of the window's title, e.g. Calendar; omit for the first" }
+
+[[action.teams.switch.step]]
+do = "focus"
+switch = true
+window = "{window}"

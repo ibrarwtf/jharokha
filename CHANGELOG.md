@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `<app>.switch {window}` (outlook, teams, browser, terminal) and every action's switch step: an app with several windows answers its taskbar icon with a picker of their titles, which no click on the icon or Esc closes while the pointer rests there; the switch reads the titles that appear in the band past the bar around the icon and clicks the one holding `window`, else the first (titles OCR read as one line are cut at the gap between them). An app with two windows never came forward before. Titles already showing count only when every one ends in the picker's ellipsis, so text of the app's own is never clicked.
+- Windows' search panel is a view, `windows.search` (its "Top apps" or "Best match" heading where the panel puts it): `now=` says when it is open, typing with `expect="windows.search"` is refused when it is not (so a click that opened nothing is not followed by typing into the app in front), and Enter there, which opens the highlighted result, needs `allow="irreversible"`. Identification is otherwise unchanged.
+- Skill: switching apps with `<app>.switch`; Win-key shortcuts and Alt+Tab reach a windowed session only when the client sends them there.
+
 ## v0.37.0
 
 - act's reply answers "what did the input do" without a screenshot. The reply diffed only the focus region, which hid changes made elsewhere (a menu, a dialog, another pane) and could say "(no text changed)" where the screen had changed. Now `show="changed"` heads with `now=app.view` (and `was=` when it switched), diffs the whole screen, gives the new view's focus text (at most 40 lines) when the view switched or most of it changed, and says "Nothing changed on screen" when nothing did. Lines read twice differently (case, punctuation, a letter cut at an edge) no longer count as changes (`watch.changes`); a changed digit or word still does.

@@ -91,7 +91,7 @@ from jharokha.core.locate import (
     row_texts,
     unwrapped,
 )
-from jharokha.core.models import Box, Frame, Line, inside
+from jharokha.core.models import Box, Frame, Line, Word, inside, union
 from jharokha.core.people import People
 from jharokha.core.screen import ScreenError, Settled
 from jharokha.core.text import find, fold
@@ -119,7 +119,7 @@ FAIL_CODES = {
     "clipboard_mismatch": "the clipboard did not reach the session as sent; nothing written",
 }
 PARAMS: dict[str, tuple[str, ...]] = {
-    "focus": ("app", "view", "switch", "spot"),
+    "focus": ("app", "view", "switch", "spot", "window"),
     "click": ("target", "button", "double"),
     "type": ("text", "newline", "target"),
     "press": ("keys",),
@@ -395,6 +395,75 @@ def load(*texts: str) -> dict[str, Action]:
     for i, t in enumerate(texts):
         out.update(parse(t, f"actions {i}"))
     return out
+
+
+PICKER_BAND = (12, 110)  # px past the taskbar icon's centre where a window picker's titles sit
+PICKER_REACH = 420  # px left and right of the icon a picker's titles reach
+PICKER_FADE_S = 0.5  # s a taskbar window picker takes to open or close
+
+
+def picked(before: Snapshot, after: Snapshot, icon: tuple[int, int]) -> list[Line]:
+    """The window titles of the picker a taskbar click opened, left to right: lines in the
+    band just past the bar (below a bar at the top, above one at the bottom), around the
+    icon, that the click brought. The pointer resting on the icon keeps its picker open
+    (neither Esc nor another click closes it), so titles already there count too
+    when every one of them ends in the ellipsis a picker cuts titles with, so that a name
+    in the app's own text there is never clicked. Empty when no picker shows."""
+    x, y = icon
+    top = y < after.size[1] / 2
+    lo, hi = (
+        (y + PICKER_BAND[0], y + PICKER_BAND[1])
+        if top
+        else (y - PICKER_BAND[1], y - PICKER_BAND[0])
+    )
+    band = sorted(
+        (
+            ln
+            for whole in after.lines
+            for ln in _titles(whole)
+            if lo <= ln.box[1] + ln.box[3] // 2 <= hi
+            and abs(ln.box[0] + ln.box[2] // 2 - x) <= PICKER_REACH
+            and len(ln.text.strip()) >= 3
+        ),
+        key=lambda ln: ln.box[0],
+    )
+    seen = {(ln.text, ln.box[0] // 4, ln.box[1] // 4) for ln in before.lines}
+    if new := [ln for ln in band if (ln.text, ln.box[0] // 4, ln.box[1] // 4) not in seen]:
+        return new
+    cut = [ln for ln in band if _ELLIPSIS_END.search(ln.text)]
+    return band if band and len(cut) == len(band) else []
+
+
+_ELLIPSIS_END = re.compile(r"(\.\.\.|…)\s*$")
+TITLE_GAP = 24  # px between words that parts two picker titles OCR read as one line
+
+
+def _titles(ln: Line) -> list[Line]:
+    """A line cut where its words stand far apart: over a dark terminal OCR read two picker
+    titles side by side as one line, whose centre lies between the two windows."""
+    if len(ln.words) < 2:
+        return [ln]
+    parts: list[list[Word]] = [[ln.words[0]]]
+    for w in ln.words[1:]:
+        prev = parts[-1][-1].box
+        if w.box[0] - (prev[0] + prev[2]) > TITLE_GAP:
+            parts.append([w])
+        else:
+            parts[-1].append(w)
+    if len(parts) == 1:
+        return [ln]
+    return [Line(" ".join(w.text for w in p), union([w.box for w in p]), tuple(p)) for p in parts]
+
+
+def _titled(title: str, want: str) -> bool:
+    """A picker title, cut with an ellipsis, names the window the user means."""
+    t = re.sub(r"(\.\.\.|…)\s*$", "", title).strip().lower()
+    w = want.strip().lower()
+    return bool(t) and (w in t or w.startswith(t))
+
+
+def _center(b: Box) -> tuple[int, int]:
+    return b[0] + b[2] // 2, b[1] + b[3] // 2
 
 
 # What the runner needs from a session
@@ -695,8 +764,31 @@ class Runner:
                     f"cannot switch to {app}: {hit.reason}. Add its taskbar icon as the spot "
                     f"taskbar.{app} in apps.toml, or bring the app forward yourself"
                 )
-            self.ex.click(*hit.center)
-            self.ex.settle()
+            # An app with two windows or more answers its icon with a picker of their titles,
+            # not a window, so a click alone never brings it forward.
+            # A click that showed neither the app nor a picker is followed by one more.
+            want = str(p.get("window") or "")
+            before, titles = snap, []
+            after = snap
+            for _click in range(2):
+                self.ex.click(*hit.center)
+                self.ex.settle()
+                self.ex.wait(PICKER_FADE_S)  # a picker fades in after the click
+                after = self._look(fast=True)
+                if after.app == app or (titles := picked(before, after, hit.center)):
+                    break
+                before = after
+            if after.app != app and titles:
+                choice = next((t for t in titles if want and _titled(t.text, want)), None)
+                if want and choice is None:
+                    raise _Fail(
+                        f"{app} has windows {[t.text for t in titles]}, none titled {want!r}; "
+                        "its window picker is open: call again with one of them"
+                    )
+                choice = choice or titles[0]
+                self.ex.click(*_center(choice.box))
+                self.ex.settle()
+                self.res.fields["window"] = choice.text
             snap = self._until({"app": app}, s.timeout_s, f"switching to {app}")
             self._switched = True
         self._guard(snap, app)
